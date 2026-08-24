@@ -20,6 +20,7 @@ import {
 import { clamp, clamp01, damp, dist2, TAU } from '../core/math';
 import { Rng } from '../core/rng';
 import { BEATS_PER_BAR, Transport } from '../core/transport';
+import { PLAYFIELD_H, PLAYFIELD_W } from './arena';
 import { BulletFlag, BulletPool } from './bullets';
 import { Camera } from './camera';
 import {
@@ -66,44 +67,24 @@ import {
 export type BannerKind = 'wave' | 'boss' | 'phase' | 'grade' | 'archetype' | 'item';
 
 /*
- * The field, widened from 720x960.
+ * The field is declared in `./arena`, and nothing here restates it.
  *
- * "Perhaps expand the map size", asked for alongside "enemies that shoot should
- * be rare, they should move slower, and take a few more hits" — the same wish
- * from two directions. A bigger field is what makes fewer, tougher enemies read
- * as a stage you pick apart instead of a swarm you flinch at: there is somewhere
- * to go, and a bullet crossing it gives you time to decide.
+ * It used to be declared *here*, and then again as two `<canvas>` attributes in
+ * `index.html`, again as an `aspect-ratio` in `src/style.css` (beside a second,
+ * stale copy in the height clamp next to it), and read back out of this file by
+ * a regex in `electron/main.cjs` with a hardcoded fallback. The comment that
+ * stood here said the field was the wrong shape for a survivor arena and that
+ * it was not being fixed *because* the number lived in three places in two
+ * languages — and it recorded what happened the last time it moved anyway: it
+ * silently zeroed `tools/contrast.mjs`, which kept its own copy and then
+ * reported a total readability failure that was entirely its own.
  *
- * Widened proportionally more than it is heightened (0.75 -> 0.80 aspect)
- * because lateral room is the axis dodging actually uses, and because the stage
- * is height-limited on screen — a wider field is physically larger in the
- * window as well as in simulation units, which puts the horizontal space a
- * 1440px window was wasting to work.
- *
- * Everything downstream reads `world.width`/`world.height`; only the two canvas
- * elements and the CSS aspect-ratio carry the numbers separately.
+ * That whole argument is now in `arena.ts`, along with the history and with
+ * what still has to move by hand when the world grows. Re-exported here because
+ * this is where the name has always lived; `world.width` / `world.height` stay
+ * the way everything downstream reads it.
  */
-/*
- * DELIBERATELY UNCHANGED BY THE ARENA CONVERSION, and this is the wrong shape.
- *
- * A survivor arena wants to be square or landscape; 900x1120 is a shmup's
- * aspect ratio and it means the ring the enemies arrive on is 25% further away
- * north and south than east and west. The conversion works anyway — `edgePoint`
- * spawns against the rectangle so the geometry is correct, it is just not
- * symmetric — but a squarer field would be better and 1000x1000 is the
- * recommendation.
- *
- * It is not changed here because the number lives in three places and only one
- * of them is in this file: `src/style.css` carries a hardcoded
- * `aspect-ratio: 900 / 1120` and the two canvas elements in `index.html` carry
- * their own copies, and both belong to another workstream. Moving the field
- * without moving those makes the simulation and the viewport disagree, and the
- * last time this constant moved it silently broke `tools/contrast.mjs`
- * completely — that tool kept its own copy and then reported a total
- * readability failure that was entirely its own.
- */
-export const PLAYFIELD_W = 900;
-export const PLAYFIELD_H = 1120;
+export { PLAYFIELD_H, PLAYFIELD_W } from './arena';
 
 /** Radii used by the threat analysis, in pixels. */
 const DANGER_RADIUS = 110;

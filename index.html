@@ -8,12 +8,58 @@
     <meta name="theme-color" content="#05060c" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305060c'/%3E%3Cpath d='M16 4 L26 26 L16 21 L6 26 Z' fill='%2335e6ff'/%3E%3Ccircle cx='16' cy='18' r='3' fill='%23ff2e6e'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
+
+    <!--
+      Publish the world's dimensions to the document, from the one place they
+      are declared.
+
+      `src/style.css` needs the world's aspect ratio and CSS cannot import
+      TypeScript, so somebody has to carry it across. Before this, the answer
+      was that CSS kept its own copy — plus a SECOND copy, stale by two field
+      sizes, in the height clamp on the very next line. The last time this
+      constant moved it silently broke a verification tool that had done the
+      same thing; a viewport quietly disagreeing with the simulation is the
+      same failure wearing the player's clothes.
+
+      `#stage` is `visibility: hidden` until `data-arena` is set below, so there
+      is no frame in which the stage is laid out at a shape that came from
+      anywhere but `arena.ts`. That is why the stylesheet has no fallback pair
+      in `var()`: a fallback is a copy, a copy drifts, and the drift is
+      invisible for exactly as long as it takes to matter.
+
+      Module scripts are deferred, so this runs after the parser has built the
+      canvases and before `main.ts` — which is what lets it size them without
+      another `getElementById` dance in the game's own entry point.
+    -->
+    <script type="module">
+      import { PLAYFIELD_H, PLAYFIELD_W } from '/src/game/arena.ts';
+
+      const root = document.documentElement;
+      root.style.setProperty('--world-w', String(PLAYFIELD_W));
+      root.style.setProperty('--world-h', String(PLAYFIELD_H));
+      for (const id of ['playfield', 'overlay']) {
+        const c = document.getElementById(id);
+        if (c) {
+          c.width = PLAYFIELD_W;
+          c.height = PLAYFIELD_H;
+        }
+      }
+      root.dataset.arena = `${PLAYFIELD_W}x${PLAYFIELD_H}`;
+    </script>
   </head>
   <body>
     <div id="app">
       <main id="stage">
-        <canvas id="playfield" width="900" height="1120"></canvas>
-        <canvas id="overlay" width="900" height="1120"></canvas>
+        <!--
+          Neither canvas carries a width/height attribute, and that is the
+          point: they used to carry their own copy of the world size, which is
+          declared in `src/game/arena.ts`. The boot script in <head> sizes them
+          before the first frame, and `renderer.ts` resizes them again to match
+          the device pixel ratio on every layout change — so the attribute was
+          only ever the value the page flashed at before either ran.
+        -->
+        <canvas id="playfield"></canvas>
+        <canvas id="overlay"></canvas>
 
         <!--
           The opening.

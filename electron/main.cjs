@@ -34,17 +34,12 @@ const DEV_URL = process.env.MUSICWARS_DEV_URL || 'http://localhost:5173/';
  * The playfield is read out of the source rather than hard-coded, because the
  * simulation's dimensions are somebody else's to change and a desktop window
  * that letterboxes the game is a bug nobody would think to look for here.
+ *
+ * The reader moved to `electron/arena.cjs` so `tools/fieldsize.mjs` can require
+ * it — including its packaged-build fallback — and fail when either drifts from
+ * `src/game/arena.ts`. Requiring `main.cjs` itself would pull in `electron`.
  */
-function playfieldSize() {
-  const fallback = { w: 900, h: 1120 };
-  try {
-    const src = fs.readFileSync(path.join(ROOT, 'src/game/world.ts'), 'utf8');
-    const w = /PLAYFIELD_W\s*=\s*(\d+)/.exec(src);
-    const h = /PLAYFIELD_H\s*=\s*(\d+)/.exec(src);
-    if (w && h) return { w: Number(w[1]), h: Number(h[1]) };
-  } catch { /* packaged builds have no src/; the fallback is the shipped size */ }
-  return fallback;
-}
+const { playfieldSize } = require('./arena.cjs');
 
 /*
  * Audio switches, applied before app ready because Chromium reads them at

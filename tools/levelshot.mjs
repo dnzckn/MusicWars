@@ -77,6 +77,22 @@ await installDriver(p, 'dodge');
 // behind it would flatter the screenshots.
 await p.waitForTimeout(9000);
 
+/*
+ * The field size comes from the running game, not from a copy kept here.
+ *
+ * `ui.rects()` are in world coordinates, so the on-canvas assertion below needs
+ * the world's size — and it used to spell it `900` and `1120` in the comparison
+ * and again in the failure message. That is the shape of the `contrast`
+ * incident: a tool holding its own copy of a constant the program owns starts
+ * lying on the day the constant moves, and lies in the direction of a
+ * confident, wrong verdict.
+ */
+const FIELD = await p.evaluate(() => ({
+  w: window.__musicwars.world.width,
+  h: window.__musicwars.world.height,
+}));
+console.log(`  field: the game reports ${FIELD.w}x${FIELD.h}`);
+
 /** Mean alpha of the overlay canvas over a rectangle, 0..255. */
 const alphaOver = (rect) =>
   p.evaluate((r) => {
@@ -235,8 +251,10 @@ for (const st of STATES) {
   if (bad.length) fail(`${st.name}: hitTest disagrees with layout at ${bad.join(', ')}`);
   else pass(`${st.name}: hitTest returns the drawn card at every centre`);
 
-  const off = got.rects.filter((r) => r.x < 0 || r.y < 0 || r.x + r.w > 900 || r.y + r.h > 1120);
-  if (off.length) fail(`${st.name}: ${off.length} card(s) fall outside the 900x1120 field`);
+  const off = got.rects.filter(
+    (r) => r.x < 0 || r.y < 0 || r.x + r.w > FIELD.w || r.y + r.h > FIELD.h,
+  );
+  if (off.length) fail(`${st.name}: ${off.length} card(s) fall outside the ${FIELD.w}x${FIELD.h} field`);
 
   let overlap = 0;
   for (let i = 0; i < got.rects.length; i++) {

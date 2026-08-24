@@ -52,9 +52,19 @@ import './lib/ts.mjs';
  */
 let LevelUpOverlay;
 let emptySnapshot;
+/*
+ * The real field size is imported, not restated. This sweep is *about* what the
+ * overlay does at sizes it was not laid out for, so it has to know which of the
+ * sizes below is the real one — and a tool holding its own copy of that answer
+ * is the `contrast` incident, where a stale copy of the field turned a working
+ * check into a reported total failure.
+ */
+let PLAYFIELD_W;
+let PLAYFIELD_H;
 try {
   ({ LevelUpOverlay } = await import('../src/render/levelup.ts'));
   ({ emptySnapshot } = await import('../src/core/events.ts'));
+  ({ PLAYFIELD_W, PLAYFIELD_H } = await import('../src/game/arena.ts'));
 } catch (err) {
   if (String(err).includes('UNSUPPORTED_TYPESCRIPT_SYNTAX')) {
     console.error('\nlevelupdraw: run this with the transform flag:\n');
@@ -207,7 +217,7 @@ const STATES = [
 
 /** Field sizes: the real one, the old one, and two deliberately cruel ones. */
 const SIZES = [
-  [900, 1120],
+  [PLAYFIELD_W, PLAYFIELD_H],
   [720, 960],
   [560, 820],
   [440, 620],
@@ -413,7 +423,7 @@ for (const [kind, a, b, to] of [
   // Well past a union's 6.2s life, so the teardown is covered too.
   for (let t = 0; t < 8; t += 0.05) {
     const { g, calls } = recorder(`${kind} t=${t.toFixed(2)}`);
-    ui.draw(g, snap, 0.05, 900, 1120, t * 2.17, 0.4);
+    ui.draw(g, snap, 0.05, PLAYFIELD_W, PLAYFIELD_H, t * 2.17, 0.4);
     frames++;
     if (calls.length) painted++;
   }
@@ -436,7 +446,7 @@ for (const [kind, a, b, to] of [
   ui.celebrate('evolution', 'chime', 'resonance', 'carillon', 'one bell becomes a tower');
   ui.celebrate('union', 'chorale', 'cathedral', 'requiem', 'the choir and the room become one');
   const snap = snapshot({}, 3, 3, false);
-  for (let t = 0; t < 8; t += 0.1) ui.draw(recorder(`stacked t=${t.toFixed(1)}`).g, snap, 0.1, 900, 1120, t * 2.17, 0.4);
+  for (let t = 0; t < 8; t += 0.1) ui.draw(recorder(`stacked t=${t.toFixed(1)}`).g, snap, 0.1, PLAYFIELD_W, PLAYFIELD_H, t * 2.17, 0.4);
   pass('two celebrations at once draw without a non-finite value');
 }
 

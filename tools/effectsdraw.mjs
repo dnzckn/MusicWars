@@ -27,6 +27,17 @@
  */
 import './lib/ts.mjs';
 
+/*
+ * The world size comes from the game, never from a copy.
+ *
+ * The recording context and the duck-typed world below both have to claim a
+ * field size, and both used to claim `900 x 1120` in their own words. A mock
+ * that carries its own copy of a constant the program owns lies the day that
+ * constant moves — which is precisely how `tools/contrast.mjs` once reported a
+ * total readability failure that was entirely its own.
+ */
+const { PLAYFIELD_H, PLAYFIELD_W } = await import('../src/game/arena.ts');
+
 let Renderer;
 try {
   ({ Renderer } = await import('../src/render/renderer.ts'));
@@ -74,7 +85,7 @@ function recorder(sink) {
     },
   });
   const g = {
-    canvas: { width: 900, height: 1120 },
+    canvas: { width: PLAYFIELD_W, height: PLAYFIELD_H },
     save() {}, restore() {}, beginPath() {}, closePath() {}, clip() {},
     fill() { ops.push({ op: 'fill', style: String(fill) }); },
     stroke() { ops.push({ op: 'stroke', style: String(stroke) }); },
@@ -119,7 +130,7 @@ function recorder(sink) {
   for (const p of ['font', 'textAlign', 'textBaseline', 'lineCap', 'lineJoin', 'globalCompositeOperation', 'filter']) g[p] = '';
   // Assigned after `g` exists: the renderer is handed a canvas and calls
   // `getContext` on it, and the bloom pass reads `g.canvas` back.
-  g.canvas = { width: 900, height: 1120, getContext: () => g };
+  g.canvas = { width: PLAYFIELD_W, height: PLAYFIELD_H, getContext: () => g };
   return { g, ops };
 }
 
@@ -142,7 +153,7 @@ const effect = (over) => ({
 /** A duck-typed world. `Renderer` imports `World` as a type only. */
 function makeWorld(effects, novas = []) {
   return {
-    width: 900, height: 1120,
+    width: PLAYFIELD_W, height: PLAYFIELD_H,
     camera: { x: 0, y: 0, flash: 0, flashHue: 0 },
     // Every field `drawPlayer` and `drawDrones` read. An absent one becomes
     // `undefined`, which reaches `translate()` as NaN — and a NaN in a colour

@@ -119,12 +119,42 @@ body::before {
   align-items: center;
 }
 
+/*
+ * The stage is the world, shaped by the world.
+ *
+ * `--world-w` / `--world-h` are published on <html> by the boot script in
+ * `index.html`, straight from `src/game/arena.ts`. Nothing here restates them,
+ * and there is deliberately no `var(--world-w, 900)` fallback: a fallback is a
+ * second copy of the constant, and this rule is where the last two copies were
+ * found. One said `aspect-ratio: 900 / 1120`. The line under it said
+ * `calc(100vw - 300px) * 960 / 720` — the height clamp, still carrying the
+ * 720x960 field from two sizes ago, so on a narrow tall window the stage was
+ * allowed to be 7% wider than the space reserved for it and quietly overhung
+ * the panel. Nobody saw it because nobody was looking at a tall window; the
+ * clamp only binds when `100vw` is small and the window is tall.
+ *
+ * Both numbers now come from the same place, so the clamp says what it means:
+ * never let the stage grow taller than the height at which its width would
+ * exceed the room left beside the panel.
+ *
+ * `visibility` is the flash guard. With no fallback pair, a stage laid out
+ * before the boot script has run would have no aspect ratio at all and collapse
+ * to zero width — so it is not shown until the script has published the
+ * constant it is shaped by. It is `visibility`, not `display`, so the box is
+ * laid out the whole time and `renderer.ts`'s ResizeObserver never sees a zero
+ * height.
+ */
 #stage {
   position: relative;
-  aspect-ratio: 900 / 1120;
-  height: min(100%, calc(100vw - 300px) * 960 / 720);
+  aspect-ratio: var(--world-w) / var(--world-h);
+  height: min(100%, calc((100vw - 300px) * var(--world-h) / var(--world-w)));
   max-height: 100%;
   flex: 0 0 auto;
+  visibility: hidden;
+}
+
+html[data-arena] #stage {
+  visibility: visible;
 }
 
 #stage canvas {
@@ -581,8 +611,9 @@ kbd {
   /*
    * The panel takes the width the playfield cannot use.
    *
-   * The stage is a fixed 3:4 portrait — conventional for the genre, and the
-   * simulation is 720x960, so stretching it would distort the game. That makes
+   * The stage is a fixed portrait rectangle — conventional for the genre, and
+   * it is the shape the simulation actually is (`src/game/arena.ts`), so
+   * stretching it would distort the game. That makes
    * the leftover space on a wide screen horizontal and, at 268px fixed, it was
    * simply wasted: on a 1440px window roughly 490px sat empty while the piano
    * roll and the generated code — the thing this project is actually about —
