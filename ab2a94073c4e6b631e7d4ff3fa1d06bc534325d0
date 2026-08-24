@@ -1,0 +1,13 @@
+CORRECTION to this commit message.
+
+The message says 'this tree has NOT been typechecked'. That was true when it was
+written and is now false: the tsc run that was wedged had a sibling that
+completed after the commit landed, exit 0, over the full working tree — this
+branch's arena files plus the main.ts seed contract included. So the tree DOES
+typecheck.
+
+What stands unchanged: nothing here has been RUN or adversarially verified, the
+no-op proof for the arena unification was never completed, and audio numbers
+from this box remain suspect while node_modules/superdough/ola-processor.js is
+unreadable. Typechecking is the weakest of the three claims and it is the only
+one that now holds.
