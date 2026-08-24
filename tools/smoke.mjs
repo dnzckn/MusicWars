@@ -149,7 +149,16 @@ const powerFx = await page.evaluate(async () => {
    * test failed for a reason that had nothing to do with the powerup. Reading
    * back-to-back holds everything else constant.
    */
-  const hats = () => mw.director.sourceLines().find((l) => l.label === 'hats').code;
+  // The lane is `hats` in STEM_IDS but `sourceLines()` labels it 'motor', because
+  // it plays a pitched inner voice rather than a hi-hat. This read said 'hats'
+  // and had been throwing on `undefined.code` ever since that rename — invisible
+  // on a box where the browser could not launch at all. Throw a legible error
+  // rather than a TypeError if the label moves again.
+  const hats = () => {
+    const line = mw.director.sourceLines().find((l) => l.label === 'motor');
+    if (!line) throw new Error(`no 'motor' line; labels are: ${mw.director.sourceLines().map((l) => l.label).join(', ')}`);
+    return line.code;
+  };
   delete mw.world.player.powerups.timewarp;
   const hatsBefore = hats();
   mw.world.player.powerups.timewarp = 1;

@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+// Resolve a readable Chromium first; see tools/lib/chromepath.mjs.
+import './lib/chromepath.mjs';
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required','--mute-audio'] });
 const page = await browser.newPage();
 await page.addInitScript(() => {

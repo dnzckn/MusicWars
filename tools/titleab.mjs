@@ -14,6 +14,8 @@
  * director running underneath.
  */
 import { chromium } from 'playwright';
+// Resolve a readable Chromium first; see tools/lib/chromepath.mjs.
+import './lib/chromepath.mjs';
 
 const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
 const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
