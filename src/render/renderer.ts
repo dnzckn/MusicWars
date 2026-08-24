@@ -1,0 +1,1395 @@
+/**
+ * Canvas 2D renderer.
+ *
+ * Two canvases: the playfield (redrawn every frame) and an overlay for the
+ * boss bar and flashes. The bullet loop is deliberately dumb — one `drawImage`
+ * per bullet from a pre-rendered sprite, no state changes, no transforms — and
+ * everything expensive (gradients, glows, rotation) was baked at load time.
+ *
+ * Exactly one thing answers the beat at full strength — the enemies breathe —
+ * and everything else in the background is either steady or responds to
+ * gameplay. The coupling between the music and the game still has to be legible
+ * at a glance, but it is carried by the things the player is already looking at
+ * rather than by the whole field flashing: five layers keeping the same time in
+ * the periphery reads as strobing, not as rhythm.
+ */
+
+import { clamp01, lerp, TAU } from '../core/math';
+import type { Transport } from '../core/transport';
+import type { Effect, World } from '../game/world';
+import { beatsUntilFire } from '../game/enemies';
+import { INVULN_ON_HIT } from '../game/player';
+import { ParticleShape } from '../game/particles';
+import { powerupDef } from '../game/powerups';
+import { SHARD_HUES } from '../game/world';
+import { WarpGrid } from './grid';
+import { fusionLine, LevelUpOverlay } from './levelup';
+import { enemyBulletSprites, playerBulletSprites, ROTATIONS, softDot } from './sprites';
+
+const STAR_COUNT = 140;
+
+interface Star {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export class Renderer {
+  private g: CanvasRenderingContext2D;
+  private og: CanvasRenderingContext2D;
+  private stars: Star[] = [];
+  private dots = new Map<number, HTMLCanvasElement>();
+  /** Smoothed beat pulse, 1 on the beat decaying to 0. */
+  private pulse = 0;
+  private lastBeatIndex = -1;
+  /** Set on the frame a beat lands, so the grid is kicked exactly once. */
+  private pulseFired = false;
+  /** Whether the beat that just landed was a downbeat. */
+  private downbeat = false;
+  /** Vignettes are quantised to 5% tension steps and cached; building a radial
+   *  gradient every frame showed up in profiles for no visible benefit. */
+  private vignettes = new Map<number, CanvasGradient>();
+  private grid: WarpGrid;
+  /** Quarter-resolution buffer for the bloom pass. */
+  private bloom: HTMLCanvasElement;
+  private bloomG: CanvasRenderingContext2D;
+  bloomEnabled = true;
+  /**
+   * Adaptive quality.
+   *
+   * Bloom costs about 14fps once the endgame is throwing 20+ enemies and 180
+   * bullets around — measured at wave 27, 40fps with it and 55 without. Rather
+   * than lose the look everywhere to protect the worst case, it sheds itself
+   * when the frame budget is actually tight and comes back when it is not. The
+   * thresholds are far apart so it cannot oscillate frame to frame, and it needs
+   * a sustained reading in either direction before it acts.
+   */
+  private bloomAuto = true;
+  private lowFrames = 0;
+  private highFrames = 0;
+
+  private updateQuality(fps: number): void {
+    if (!this.bloomAuto || fps <= 1) return;
+    if (fps < 46) {
+      this.lowFrames++;
+      this.highFrames = 0;
+    } else if (fps > 57) {
+      this.highFrames++;
+      this.lowFrames = 0;
+    } else {
+      this.lowFrames = 0;
+      this.highFrames = 0;
+    }
+    if (this.lowFrames > 45) {
+      this.bloomEnabled = false;
+      this.lowFrames = 0;
+    } else if (this.highFrames > 90 && !this.bloomEnabled) {
+      this.bloomEnabled = true;
+      this.highFrames = 0;
+    }
+  }
+
+  /**
+   * The level-up screen, the ensemble readout and the fusion payoff.
+   *
+   * Public so `main.ts` can route a click or a number key into `hitTest` /
+   * `select` / `resolve` without re-deriving the card rectangles. Everything it
+   * needs it takes itself: `world.bus` for the events and `world.snapshot` for
+   * the loadout, both already public and readonly on `World`. That is why
+   * adding this screen needed no change to `main.ts` at all.
+   */
+  readonly levelUp = new LevelUpOverlay();
+
+  /*
+   * Put the pre-fix strobe constants back, at runtime.
+   *
+   * The five things that used to answer the beat — grid alpha, grid lightness,
+   * a full-field `breathe()` convulsion, the bloom and the horizon — are all
+   * restored together when this is set, so `tools/strobe.mjs` can measure the
+   * old screen against the new one **in a single browser session**.
+   *
+   * Interleaving rather than comparing two builds is not fussiness. This box's
+   * I/O throughput swings by an order of magnitude minute to minute, and
+   * `tools/README.md` is largely a record of measurements that turned out to
+   * describe the harness rather than the game — `hudab` measured the same HUD
+   * as costing 7.7fps and then nothing at all, and the rule that came out of it
+   * was that any A/B smaller than the run-to-run noise band must interleave.
+   *
+   * The values below are reconstructed from the line references in the original
+   * complaint, not recovered from source control: this repository has no
+   * commits, and the fixes were already applied when this switch was written.
+   * They are the right shape and the right order of magnitude; treat the
+   * absolute "before" number as indicative and the ratio as the finding.
+   */
+  legacyStrobe = false;
+
+  private readonly world: World;
+
+  /* `world` is an explicit field, not a parameter property — see the note on
+   * `Latch` in `core/math.ts`. */
+  /**
+   * The two gameplay canvases, and the scale their backing stores are at.
+   *
+   * Both were a fixed 900x1120 bitmap stretched by CSS to fill `#stage`, whose
+   * height is `min(100%, calc(100vw - 300px) * 960/720)` with no cap. On any
+   * window where that resolves taller than 1120 CSS pixels — a maximised
+   * browser on a 1440p monitor, and more so once the device pixel ratio is
+   * applied — the browser upscaled the whole playfield, softening exactly the
+   * things a bullet hell cannot afford to soften: the bullets, the ship, and
+   * the hitbox dot.
+   *
+   * `hud.ts` already solved this for the notation canvas and records the same
+   * finding in its own words ("the most distinctive thing on the page was also
+   * the blurriest"). The gameplay canvases never got the same treatment.
+   *
+   * Everything here draws in WORLD coordinates (`w.width` x `w.height`), never
+   * in canvas coordinates, and `toPlayfield` in `main.ts` maps pointers via
+   * `getBoundingClientRect` rather than the backing store — so the fix is
+   * entirely a matter of sizing the bitmap and scaling the context, with no
+   * change to any drawing or hit-testing code.
+   *
+   * WHAT THIS DOES NOT FIX: the projectile sprites in `sprites.ts` are
+   * pre-rendered once at world scale and blitted 1:1, so they are resampled by
+   * the context transform just as they were previously resampled by the
+   * browser. They are no softer than before and no sharper. Everything drawn
+   * as vectors — the ship, the hitbox dot, the grid, the glows, the overlay
+   * text — does get the full backing-store resolution. Making the sprites
+   * sharp too means re-baking the atlas whenever the scale changes, which is a
+   * larger change and wants a frame-rate measurement first.
+   */
+  private readonly canvasEl: HTMLCanvasElement;
+
+  private readonly overlayEl: HTMLCanvasElement;
+
+  private scale = 1;
+
+  private resized = true;
+
+  constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement, world: World) {
+    this.world = world;
+    this.canvasEl = canvas;
+    this.overlayEl = overlay;
+    this.g = canvas.getContext('2d', { alpha: false })!;
+    this.og = overlay.getContext('2d')!;
+    const ro = new ResizeObserver(() => {
+      this.resized = true;
+    });
+    ro.observe(canvas);
+    addEventListener('resize', () => {
+      this.resized = true;
+    });
+    this.grid = new WarpGrid(world.width, world.height);
+    this.wireProgression(world);
+    this.bloom = document.createElement('canvas');
+    this.bloom.width = Math.round(world.width / 4);
+    this.bloom.height = Math.round(world.height / 4);
+    this.bloomG = this.bloom.getContext('2d', { alpha: true })!;
+    for (let i = 0; i < STAR_COUNT; i++) {
+      this.stars.push({
+        x: Math.random() * world.width,
+        y: Math.random() * world.height,
+        z: 0.25 + Math.random() * 0.75,
+      });
+    }
+  }
+
+  /**
+   * Subscribe the level-up screen to the progression events.
+   *
+   * Done here rather than in `main.ts` because everything needed is already on
+   * `World`, and because the renderer owning its own overlay means the screen
+   * cannot be half-wired: there is no call site to forget.
+   *
+   * `level:skip` resolves with -1, which plays the exit animation without
+   * flaring a card — a skip should look like the question being withdrawn
+   * rather than like an answer.
+   */
+  private wireProgression(world: World): void {
+    world.bus.on('level:offer', (p) => this.levelUp.open(p, world.snapshot));
+    world.bus.on('level:choice', (p) => this.levelUp.resolveChoice(p.id, p.grace));
+    world.bus.on('level:skip', () => this.levelUp.resolve(-1));
+    world.bus.on('ability:evolve', (p) => {
+      this.levelUp.celebrate('evolution', p.from, p.catalyst, p.to, fusionLine(p.to));
+    });
+    world.bus.on('ability:union', (p) => {
+      this.levelUp.celebrate('union', p.a, p.b, p.to, fusionLine(p.to));
+    });
+    world.bus.on('ability:duet', (p) => {
+      this.levelUp.celebrate('duet', p.a, p.b, p.to, 'two players, one stand');
+    });
+
+    /*
+     * A way to hold the screen open without playing to a level-up.
+     *
+     * The arena conversion is landing in another workstream, so for most of
+     * this screen's development there was no way to reach it in a running game
+     * at all — and a screenshot is the only instrument that can judge a layout.
+     * This lets a tool put any offer on screen in one `page.evaluate`.
+     *
+     * It is *re-attached every frame* rather than installed once here, because
+     * `main.ts` does `window.__musicwars = { … }` — a whole-object assignment,
+     * and it runs after this constructor. Installing the hook once would put it
+     * on an object that is thrown away a few lines later, and the symptom would
+     * be a tool failing with "cannot read properties of undefined" against code
+     * that is demonstrably present. See `attachHook`.
+     */
+    this.uiHook = {
+      offer: (payload: Parameters<LevelUpOverlay['forceOffer']>[0]) =>
+        this.levelUp.forceOffer(payload, world.snapshot),
+      close: () => this.levelUp.clearForced(),
+      select: (i: number) => this.levelUp.select(i),
+      resolve: (i: number) => this.levelUp.resolve(i),
+      // Layout and hit-test, side by side, so a check can assert they agree.
+      // The failure they exist to catch is silent: cards drawn in one place and
+      // hit-tested in another means the player clicks one instrument and gets
+      // another, and nothing on screen looks wrong when it happens.
+      rects: () => this.levelUp.rects(),
+      summary: () => this.levelUp.summary(),
+      hitTest: (x: number, y: number) => this.levelUp.hitTest(x, y),
+      hitTestControl: (x: number, y: number) => this.levelUp.hitTestControl(x, y),
+      celebrate: (kind: 'evolution' | 'union', a: string, b: string, to: string) =>
+        this.levelUp.celebrate(
+          kind,
+          a as Parameters<LevelUpOverlay['celebrate']>[1],
+          b as Parameters<LevelUpOverlay['celebrate']>[2],
+          to as Parameters<LevelUpOverlay['celebrate']>[3],
+          fusionLine(to),
+        ),
+    };
+  }
+
+  /** The debug hook, built once and re-attached whenever `main` replaces it. */
+  private uiHook: Record<string, unknown> = {};
+
+  /**
+   * Put `__musicwars.ui` back if it has gone.
+   *
+   * One property read and a compare per frame. `main.ts` assigns the whole
+   * `__musicwars` object after the renderer is constructed, and a hot reload
+   * can do it again mid-session, so "install once in the constructor" silently
+   * loses the hook and leaves a tool failing against code that is plainly
+   * there.
+   */
+  private attachHook(): void {
+    const w = window as unknown as { __musicwars?: Record<string, unknown> };
+    if (!w.__musicwars) w.__musicwars = {};
+    if (w.__musicwars.ui !== this.uiHook) w.__musicwars.ui = this.uiHook;
+  }
+
+  private dot(hue: number): HTMLCanvasElement {
+    const key = Math.round(hue / 10) * 10;
+    let c = this.dots.get(key);
+    if (!c) {
+      c = softDot(key, 12);
+      this.dots.set(key, c);
+    }
+    return c;
+  }
+
+  /** The current musical caption, set by main each frame. */
+  bannerDetail = '';
+
+  /**
+   * Base hue for the playfield, set from the current groove each frame and
+   * eased so a change reads as the room shifting rather than a cut.
+   */
+  private hue = 205;
+  targetHue = 205;
+
+  /**
+   * Match both backing stores to the box they are displayed in.
+   *
+   * Gated on a flag set by the observer rather than measured every frame:
+   * reading `clientHeight` forces a layout, and this runs immediately before a
+   * frame that writes styles elsewhere, which is the classic read-after-write
+   * stall `hud.ts` calls out.
+   *
+   * The 1.5 cap is a PERFORMANCE GUARD CHOSEN WITHOUT MEASUREMENT, and should
+   * be revisited. At 1.5 the fill cost is 2.25x the old fixed bitmap, which is
+   * the most this seemed worth risking on a bullet hell while no browser on
+   * this machine can run `tools/framecheck.mjs` to check the frame budget. An
+   * uncapped ideal on a large high-DPI display lands somewhere in the 1.3-1.9
+   * range depending on panel size, OS scaling and how much browser chrome is
+   * in the way — illustrative, not derived, and reviewed as such: a peer
+   * recomputed an earlier single figure here several ways and got a spread,
+   * not that number. Do not lean on it later as if it were measured.
+   *
+   * The floor matters less than it looks: when the stage is displayed SMALLER
+   * than 900x1120 — an ordinary 1080p window — the scale drops below 1 and the
+   * game renders fewer pixels than it used to, at exactly display resolution
+   * instead of rendering 900x1120 and having the browser resample it down.
+   * That case is both sharper and cheaper than before.
+   */
+  private fitCanvases(): void {
+    if (!this.resized) return;
+    const w = this.world;
+    /*
+     * A zero height means the element is not laid out yet, on the very first
+     * frame. Do NOT consume the flag in that case: clamping a height of 0
+     * would latch the minimum scale and leave the game permanently rendering
+     * at 540x672 if no further resize event ever arrived. Retry next frame
+     * instead.
+     */
+    const cssH = this.canvasEl.clientHeight;
+    if (cssH <= 0) return;
+    this.resized = false;
+    const dpr = Math.min(3, Math.max(1, devicePixelRatio || 1));
+    /*
+     * Height alone is enough ONLY because `#stage` carries
+     * `aspect-ratio: 900 / 1120` in `style.css`, so the box can never have a
+     * different shape from the world. If that rule is ever removed this must
+     * take the smaller of the two ratios instead, or the playfield will
+     * stretch.
+     */
+    const scale = Math.min(1.5, Math.max(0.6, (cssH * dpr) / w.height));
+    this.scale = scale;
+    const bw = Math.round(w.width * scale);
+    const bh = Math.round(w.height * scale);
+    for (const el of [this.canvasEl, this.overlayEl]) {
+      // Assigning width/height resets all context state, transform included,
+      // so only do it when it actually changed and re-apply the transform after.
+      if (el.width !== bw || el.height !== bh) {
+        el.width = bw;
+        el.height = bh;
+      }
+    }
+  }
+
+  render(alpha: number, dt: number, transport: Transport, rawTension: number, fps = 60): void {
+    this.fitCanvases();
+    const w = this.world;
+    const g = this.g;
+    // Colour strings built from NaN throw inside addColorStop, and the frame
+    // dies after the background has been cleared — i.e. a black screen.
+    const tension = Number.isFinite(rawTension) ? clamp01(rawTension) : 0;
+    this.updateQuality(fps);
+    // Shortest way round the colour wheel, so 8 -> 282 goes down through 0
+    // rather than sweeping through every hue in between.
+    let d = ((this.targetHue - this.hue + 540) % 360) - 180;
+    this.hue = (this.hue + d * Math.min(1, dt * 1.6) + 360) % 360;
+
+    // Beat pulse. `crossings` is authoritative (it is synced to the audio
+    // clock); the decay just makes it look like a light rather than a switch.
+    const beatIndex = Math.floor(transport.beat);
+    if (beatIndex !== this.lastBeatIndex) {
+      this.lastBeatIndex = beatIndex;
+      // Downbeats hit harder.
+      this.pulse = beatIndex % 4 === 0 ? 1 : 0.55;
+      this.pulseFired = true;
+      this.downbeat = beatIndex % 4 === 0;
+    }
+    this.pulse = Math.max(0, this.pulse - dt * 4.2);
+
+    g.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    this.drawBackground(g, dt, tension);
+
+    g.save();
+    g.translate(w.camera.x, w.camera.y);
+
+    this.updateGrid(dt, tension);
+    /*
+     * The lattice holds still.
+     *
+     * Both of these used to carry the beat pulse — alpha swung 0.135 -> 0.225
+     * and the line lightness 52% -> 78% twice a second, over the whole field.
+     * A background that changes brightness at 2Hz in the player's peripheral
+     * vision is fatiguing whatever else is on screen, and it was one of five
+     * things doing it on the same clock. Tension still moves both, but slowly:
+     * the grid brightens over a wave rather than flashing over a bar.
+     *
+     * The steady alpha is set to the old *resting* value rather than its mean,
+     * so the lattice looks the way it did between beats — which is where the
+     * eye spent most of its time anyway. With 20% less stroked length at the
+     * wider spacing that is about a quarter less grid on screen, which is the
+     * clutter coming out, not the game going dark.
+     */
+    this.grid.legacy = this.legacyStrobe;
+    this.grid.draw(g, {
+      hue: this.hue + tension * 26,
+      // The legacy pair is what the complaint was about: the lattice swinging
+      // 0.135 -> 0.225 in alpha and 52% -> 78% in lightness, twice a second,
+      // across the whole field.
+      alpha: this.legacyStrobe ? 0.1 + tension * 0.1 + this.pulse * 0.09 : 0.105 + tension * 0.085,
+      glow: this.legacyStrobe ? this.pulse : tension * 0.4,
+    });
+
+    this.drawDrops(g);
+    this.drawEnemies(g, alpha);
+    this.drawNotes(g);
+    this.drawParticles(g);
+    this.drawNovas(g);
+    // Under the bullets and the ship, over the enemies they are hitting: a beam
+    // is something the player is projecting, so it must not obscure the thing
+    // it is aimed at, and it must not compete with incoming fire for attention.
+    this.drawEffects(g);
+    this.drawBullets(g, alpha);
+    this.drawPlayer(g, alpha);
+    this.drawDrones(g);
+
+    g.restore();
+
+    if (this.bloomEnabled) this.applyBloom(g, tension);
+    // Text after bloom: blurring type just makes it hard to read.
+    g.save();
+    g.translate(w.camera.x, w.camera.y);
+    this.drawPopups(g);
+    g.restore();
+    this.drawOverlay(tension, dt, transport.beat);
+  }
+
+  /**
+   * Feed the grid: gameplay shocks, the player's wake, and a breath on the bar.
+   *
+   * This used to convulse the entire sheet on every beat — `breathe()` at up to
+   * -220 at 130bpm is a full-field geometric spasm twice a second, and it was
+   * the single loudest source of background clutter. The rule now is that the
+   * grid is a surface that gets *hit*: explosions and near-misses move it, the
+   * ship drags it, and the transport is present as one gentle swell per bar
+   * plus a small kick under the ship. Everything that reads as violence on it
+   * is now something that actually happened in the game.
+   */
+  private updateGrid(dt: number, tension: number): void {
+    const w = this.world;
+    for (const s of w.shocks) this.grid.impulse(s.x, s.y, s.radius, s.strength);
+    w.shocks.length = 0;
+
+    if (this.pulseFired) {
+      this.pulseFired = false;
+      if (this.legacyStrobe) {
+        // Every beat, at full strength: a full-field geometric convulsion twice
+        // a second, which was the single loudest source of background clutter.
+        this.grid.breathe(-90 - tension * 130);
+        this.grid.impulse(w.player.x, w.player.y, 200, 90 + tension * 90);
+      } else {
+        // Once a bar rather than four times, and a quarter of the old strength.
+        if (this.downbeat) this.grid.breathe(-20 - tension * 26);
+        // The beat still lands where the player is already looking: local to the
+        // ship, small enough not to compete with the bullets around it.
+        this.grid.impulse(w.player.x, w.player.y, 150, 90 + tension * 90);
+      }
+    }
+
+    // The ship drags the sheet along behind it.
+    if (!w.player.dead) this.grid.impulse(w.player.x, w.player.y, 74, -170);
+    this.grid.update(dt);
+  }
+
+  /**
+   * Cheap additive bloom: downscale to a quarter, blur *there* (blurring 180x240
+   * costs a fraction of blurring 720x960), then composite back with 'lighter'.
+   */
+  private applyBloom(g: CanvasRenderingContext2D, tension: number): void {
+    const w = this.world;
+    const bg = this.bloomG;
+    bg.globalCompositeOperation = 'copy';
+    bg.filter = 'blur(2.5px)';
+    bg.drawImage(g.canvas, 0, 0, this.bloom.width, this.bloom.height);
+    bg.filter = 'none';
+
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    // Tension only. A bloom that pulses on the beat brightens *everything* at
+    // once, which is the least selective way a screen can keep time — and it
+    // washes the bullets into the background it is lifting with them.
+    g.globalAlpha = 0.3 + tension * 0.16 + (this.legacyStrobe ? this.pulse * 0.1 : 0);
+    g.drawImage(this.bloom, 0, 0, w.width, w.height);
+    g.restore();
+  }
+
+  private drawBackground(g: CanvasRenderingContext2D, dt: number, tension: number): void {
+    const w = this.world;
+    g.fillStyle = '#04050a';
+    g.fillRect(0, 0, w.width, w.height);
+
+    // Starfield, speed scaling with tension so the world literally accelerates
+    // as the track does.
+    const speed = 40 + tension * 220;
+    g.fillStyle = `hsl(${this.hue + 12}, 32%, 72%)`;
+    for (const s of this.stars) {
+      s.y += speed * s.z * dt;
+      if (s.y > w.height) {
+        s.y -= w.height;
+        s.x = Math.random() * w.width;
+      }
+      g.globalAlpha = 0.16 + s.z * 0.4;
+      const size = s.z * 1.9;
+      g.fillRect(s.x, s.y, size, size * (1 + tension * 2.5));
+    }
+    g.globalAlpha = 1;
+
+    // Horizon glow that swells with tension — and with tension only. It used to
+    // carry the beat as well, which made the bottom of the field breathe in
+    // step with the grid, the bloom and the enemies.
+    const grad = g.createLinearGradient(0, w.height, 0, w.height * 0.55);
+    const horizonBeat = this.legacyStrobe ? this.pulse * 0.05 : 0;
+    grad.addColorStop(0, `hsla(${this.hue + tension * 40}, 90%, 50%, ${0.05 + tension * 0.12 + horizonBeat})`);
+    grad.addColorStop(1, `hsla(${this.hue}, 90%, 50%, 0)`);
+    g.fillStyle = grad;
+    g.fillRect(0, w.height * 0.55, w.width, w.height * 0.45);
+  }
+
+  private drawBullets(g: CanvasRenderingContext2D, alpha: number): void {
+    g.globalCompositeOperation = 'lighter';
+
+    const eset = enemyBulletSprites();
+    const eb = this.world.enemyBullets;
+    for (let i = 0; i < eb.count; i++) {
+      const t = eb.type[i] % eset.frames.length;
+      const set = eset.frames[t];
+      const spr = eset.rotating[t]
+        ? set[(((Math.round((eb.angle[i] / TAU) * ROTATIONS) % ROTATIONS) + ROTATIONS) % ROTATIONS)]
+        : set[0];
+      const x = lerp(eb.px[i], eb.x[i], alpha) - spr.ox;
+      const y = lerp(eb.py[i], eb.y[i], alpha) - spr.oy;
+      g.drawImage(spr.canvas, x, y);
+    }
+
+    const pset = playerBulletSprites();
+    const pb = this.world.playerBullets;
+    for (let i = 0; i < pb.count; i++) {
+      const t = pb.type[i] % pset.frames.length;
+      const set = pset.frames[t];
+      const spr = pset.rotating[t]
+        ? set[(((Math.round((pb.angle[i] / TAU) * ROTATIONS) % ROTATIONS) + ROTATIONS) % ROTATIONS)]
+        : set[0];
+      const x = lerp(pb.px[i], pb.x[i], alpha) - spr.ox;
+      const y = lerp(pb.py[i], pb.y[i], alpha) - spr.oy;
+      g.drawImage(spr.canvas, x, y);
+    }
+
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  private drawEnemies(g: CanvasRenderingContext2D, alpha: number): void {
+    for (const e of this.world.enemies) {
+      const x = lerp(e.prevX, e.x, alpha);
+      const y = lerp(e.prevY, e.y, alpha);
+      const flash = e.hitFlash > 0;
+      const hpFrac = clamp01(e.hp / e.maxHp);
+
+      g.save();
+      g.translate(x, y);
+      g.rotate(Math.sin(e.age * 1.4) * 0.08);
+      /*
+       * The one thing that still answers the beat at full strength.
+       *
+       * Five things used to pulse on this clock — grid alpha, grid lightness, a
+       * full-field grid convulsion, the bloom and the horizon — and together
+       * they read as the screen strobing rather than as the game keeping time.
+       * The enemies keep it instead: it is small, it is local, it is on the
+       * things the player is already tracking, and an ensemble that visibly
+       * moves with the music is the premise of the game rather than decoration.
+       */
+      if (this.pulse > 0.01) {
+        const breathe = 1 + this.pulse * 0.07;
+        g.scale(breathe, breathe);
+      }
+
+      // Each member of the ensemble gets its own silhouette, so a glance at the
+      // stage tells you what you are about to hear.
+      const r = e.radius;
+      /*
+       * Damage has to read across several hits, not one.
+       *
+       * These ranges were set when almost everything died in a hit or two, so a
+       * wounded enemy shifted lightness by about ten points — invisible unless
+       * you were staring at it. Enemies now take a handful of hits by design
+       * (fewer, slower, tougher), which only feels like toughness rather than
+       * unresponsiveness if you can see the thing wearing down: the body drains
+       * toward black, the outline heats up, and the line thins as it goes.
+       */
+      g.fillStyle = flash ? '#ffffff' : `hsla(${e.hue}, 72%, ${6 + hpFrac * 26}%, 0.95)`;
+      g.strokeStyle = flash
+        ? '#ffffff'
+        : `hsla(${e.hue - (1 - hpFrac) * 18}, 100%, ${52 + (1 - hpFrac) * 34}%, 0.95)`;
+      g.lineWidth = 1.2 + hpFrac * 1.2;
+      g.lineCap = 'round';
+
+      switch (e.archetype) {
+        case 'arpeggiator': {
+          // A sequencer wheel: ring plus spokes that turn as it fires.
+          g.beginPath();
+          g.arc(0, 0, r * 0.72, 0, TAU);
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = e.age * 1.7 + (i / 6) * TAU;
+            g.moveTo(Math.cos(a) * r * 0.72, Math.sin(a) * r * 0.72);
+            g.lineTo(Math.cos(a) * r * 1.15, Math.sin(a) * r * 1.15);
+          }
+          g.stroke();
+          break;
+        }
+        case 'stutter': {
+          // Hi-hat: two cymbals, the top one chattering.
+          const gap = r * 0.34 + Math.abs(Math.sin(e.age * 9)) * r * 0.3;
+          g.beginPath();
+          g.ellipse(0, gap, r * 1.15, r * 0.34, 0, 0, TAU);
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          g.ellipse(0, -gap, r * 1.15, r * 0.34, 0, 0, TAU);
+          g.fill();
+          g.stroke();
+          break;
+        }
+        case 'subdrop': {
+          // A speaker cone.
+          g.beginPath();
+          g.arc(0, 0, r, 0, TAU);
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          g.arc(0, 0, r * 0.58, 0, TAU);
+          g.stroke();
+          g.beginPath();
+          g.arc(0, 0, r * 0.26 + Math.sin(e.age * 7) * r * 0.06, 0, TAU);
+          g.fill();
+          g.stroke();
+          break;
+        }
+        case 'glissando': {
+          // A slur: a swept ribbon leaning into its direction of travel.
+          g.beginPath();
+          g.moveTo(-r, r * 0.5);
+          g.quadraticCurveTo(0, -r * 1.25, r, r * 0.5);
+          g.quadraticCurveTo(0, -r * 0.35, -r, r * 0.5);
+          g.closePath();
+          g.fill();
+          g.stroke();
+          break;
+        }
+        case 'conductor': {
+          // Podium and baton: wide shoulders, a raised arm keeping time.
+          g.beginPath();
+          g.moveTo(0, r * 1.05);
+          g.lineTo(-r * 1.5, 0);
+          g.lineTo(-r * 0.7, -r * 0.85);
+          g.lineTo(r * 0.7, -r * 0.85);
+          g.lineTo(r * 1.5, 0);
+          g.closePath();
+          g.fill();
+          g.stroke();
+          g.beginPath();
+          const beat = Math.sin(e.age * 4.4);
+          g.moveTo(r * 0.55, -r * 0.7);
+          g.lineTo(r * 0.55 + beat * r * 0.7, -r * 1.5);
+          g.lineWidth = 3;
+          g.stroke();
+          break;
+        }
+        default: {
+          // Pluck: a guitar pick.
+          g.beginPath();
+          g.moveTo(0, r);
+          g.quadraticCurveTo(-r * 1.05, r * 0.1, -r * 0.62, -r * 0.8);
+          g.quadraticCurveTo(0, -r * 1.05, r * 0.62, -r * 0.8);
+          g.quadraticCurveTo(r * 1.05, r * 0.1, 0, r);
+          g.closePath();
+          g.fill();
+          g.stroke();
+          break;
+        }
+      }
+
+      /*
+       * Windup.
+       *
+       * A ring that contracts onto the enemy over the last half-beat before it
+       * fires. Half a beat is ~0.23s at 130bpm — long enough to read and react,
+       * short enough that it is a warning rather than a countdown. It also
+       * makes the beat visible on every armed enemy at once, which is the whole
+       * point: the track is telling you when to move.
+       */
+      const beats = beatsUntilFire(e, this.world.warpedBeatNow);
+      if (beats < 0.5) {
+        const charge = 1 - beats / 0.5;
+        g.strokeStyle = `hsla(${e.hue}, 100%, 78%, ${0.25 + charge * 0.6})`;
+        g.lineWidth = 1 + charge * 1.6;
+        g.beginPath();
+        g.arc(0, 0, e.radius + 20 - charge * 16, 0, TAU);
+        g.stroke();
+      }
+
+      // Core light, brighter as it gets closer to death.
+      g.globalCompositeOperation = 'lighter';
+      const d = this.dot(e.hue);
+      const s = e.radius * (0.9 + (1 - hpFrac) * 0.7);
+      g.globalAlpha = 0.4 + (1 - hpFrac) * 0.5;
+      g.drawImage(d, -s, -s, s * 2, s * 2);
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+
+      g.restore();
+    }
+  }
+
+  private drawPlayer(g: CanvasRenderingContext2D, alpha: number): void {
+    const p = this.world.player;
+    if (p.dead) return;
+    const x = lerp(p.prevX, p.x, alpha);
+    const y = lerp(p.prevY, p.y, alpha);
+    /*
+     * Invulnerability PULSES; it does not strobe.
+     *
+     * This was `Math.floor(p.invuln * 16) % 2 === 0` driving a hard cut
+     * between alpha 0.4 and 1 — a binary flip sixteen times a second, so the
+     * ship flashed at 8Hz for the whole 3.2s of invulnerability, and 4.8s
+     * after losing a life. Three things wrong with that, in rising order of
+     * importance:
+     *
+     *   - WCAG 2.3.1 puts the ceiling for flashing content at three per
+     *     second. 8Hz is not near that line. The sprite is small enough that
+     *     the "large area" clause does not bite, but the run also opens with a
+     *     background beat pulse that `tools/strobe.mjs` exists to keep in
+     *     check, and this was the one flashing thing in the frame that nothing
+     *     measured at all.
+     *   - It is worst exactly when it can least afford to be. The player is
+     *     invulnerable because they were just hit, which is the moment they
+     *     most need to find their own ship and get out of whatever killed
+     *     them; a hard flicker is the least trackable thing to put on screen
+     *     there.
+     *   - It threw away information it was already holding. The old blink was
+     *     the same at 3.2s remaining as at 0.2s, so the moment protection ran
+     *     out arrived with no warning.
+     *
+     * A smooth cosine is not a flash — the luminance change is gradual rather
+     * than a transition — and the floor is lifted from 0.4 to 0.55 so the hull
+     * stays readable throughout. The rate rides the remaining time, running
+     * about 1Hz when freshly hit and reaching 3Hz as it lapses, so the pulse
+     * quickening IS the warning. It stays at or under the WCAG rate at its
+     * fastest.
+     */
+    const invulnFrac = clamp01(p.invuln / INVULN_ON_HIT);
+    const pulse = p.invuln > 0
+      ? 0.55 + 0.45 * (0.5 + 0.5 * Math.cos(p.invuln * (3 - invulnFrac * 2) * TAU))
+      : 1;
+
+    g.save();
+    g.translate(x, y);
+    g.globalAlpha = pulse;
+    g.rotate(p.bank * 0.22);
+
+    g.beginPath();
+    g.moveTo(0, -18);
+    g.lineTo(-12, 12);
+    g.lineTo(0, 6);
+    g.lineTo(12, 12);
+    g.closePath();
+    g.fillStyle = '#0b1728';
+    g.fill();
+    g.strokeStyle = '#6ff0ff';
+    g.lineWidth = 2;
+    g.stroke();
+
+    // Engine trail.
+    g.globalCompositeOperation = 'lighter';
+    const flame = this.dot(200);
+    const fs = 9 + Math.sin(performance.now() * 0.03) * 2;
+    g.drawImage(flame, -fs, 6 - fs * 0.4, fs * 2, fs * 2);
+
+    // The hitbox. Always drawn, bright when focused — a bullet hell that hides
+    // its hitbox is just being coy.
+    const hb = this.dot(p.focused ? 350 : 190);
+    const hs = p.focused ? 9 : 5;
+    g.globalAlpha = p.focused ? 1 : 0.55;
+    g.drawImage(hb, -hs, -hs, hs * 2, hs * 2);
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+
+    // Shield arc: health drawn on the thing the player is already looking at.
+    // A side-panel readout is useless when your eyes are locked to your hitbox.
+    const hpFrac = p.maxHp > 0 ? clamp01(p.hp / p.maxHp) : 0;
+    if (hpFrac < 1 || p.invuln > 0) {
+      const hue = hpFrac > 0.66 ? 150 : hpFrac > 0.33 ? 45 : 350;
+      g.lineWidth = 2.5;
+      g.strokeStyle = `hsla(${hue}, 100%, 62%, 0.8)`;
+      g.beginPath();
+      // Starts at 12 o'clock and fills clockwise, so "how much is left" is the
+      // arc length rather than something you have to decode.
+      g.arc(0, 0, 25, -Math.PI / 2, -Math.PI / 2 + TAU * hpFrac);
+      g.stroke();
+      g.lineWidth = 2.5;
+      g.strokeStyle = 'rgba(255,255,255,0.09)';
+      g.beginPath();
+      g.arc(0, 0, 25, -Math.PI / 2 + TAU * hpFrac, -Math.PI / 2 + TAU);
+      g.stroke();
+    }
+
+    if (p.focused) {
+      g.strokeStyle = 'rgba(255,255,255,0.45)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const a = p.ringPhase + (i / 3) * TAU;
+        g.moveTo(Math.cos(a) * 18, Math.sin(a) * 18);
+        g.arc(0, 0, 18, a, a + 0.9);
+      }
+      g.stroke();
+    }
+
+    g.restore();
+  }
+
+  /** Floating score text at the point of the kill. */
+  private drawPopups(g: CanvasRenderingContext2D): void {
+    const pops = this.world.popups;
+    if (!pops.length) return;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    // Canvas text is the most expensive thing in this renderer: `strokeText` in
+    // particular re-rasterises the glyph outline every call. Only the big ones
+    // (bosses, extends) get an outline; the rest lean on a dark shadow, which
+    // costs a fraction and reads the same at 12px.
+    let font = '';
+    for (const p of pops) {
+      const t = p.age / 0.95;
+      // Pop out fast, then settle — a linear fade reads as a glitch.
+      const scale = p.age < 0.1 ? 0.6 + (p.age / 0.1) * 0.55 : 1.15 - (t - 0.1) * 0.15;
+      const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
+      const size = (p.big ? 17 : 12) * scale;
+      const next = `700 ${size.toFixed(1)}px ui-monospace, monospace`;
+      if (next !== font) {
+        font = next;
+        g.font = next;
+      }
+      if (p.big) {
+        g.lineWidth = 3;
+        g.strokeStyle = `rgba(4,5,10,${alpha * 0.85})`;
+        g.strokeText(p.text, p.x, p.y);
+      } else {
+        g.fillStyle = `rgba(4,5,10,${alpha * 0.7})`;
+        g.fillText(p.text, p.x + 1, p.y + 1);
+      }
+      g.fillStyle = `hsla(${p.hue}, 100%, ${p.big ? 78 : 86}%, ${alpha})`;
+      g.fillText(p.text, p.x, p.y);
+    }
+  }
+
+  /** Collectible note shards. Small, gold, unmistakably not a threat. */
+  private drawNotes(g: CanvasRenderingContext2D): void {
+    const notes = this.world.notes;
+    if (!notes.length) return;
+    g.globalCompositeOperation = 'lighter';
+    for (const n of notes) {
+      // Fade the last second so a shard about to expire is visibly leaving.
+      const fade = n.age > 10 ? 1 - (n.age - 10) : 1;
+      g.globalAlpha = 0.5 * fade;
+      /*
+       * Per TIER, not a fixed green. See `SHARD_HUES` in world.ts for what was
+       * wrong with `dot(150)`: every shard looked the same while they are
+       * worth different amounts, so the decision the core loop is built on —
+       * is that one worth the trip — had nothing to go on.
+       *
+       * The mint core below stays common to all three on purpose. Shape and
+       * core say "this is a shard"; the halo hue says which kind. Encoding the
+       * category in the shape and the identity in the colour is also what
+       * keeps this legible without colour vision: a drop is a square with
+       * letters, a shard is a round notehead, and that distinction survives
+       * any amount of hue collapse. `npm run colourblind` checks the rest.
+       */
+      g.drawImage(this.dot(SHARD_HUES[n.tier]), n.x - 9, n.y - 9, 18, 18);
+      g.globalAlpha = fade;
+      g.fillStyle = '#b6ffd9';
+      g.beginPath();
+      g.ellipse(n.x, n.y, 3.1, 2.3, -0.36, 0, TAU);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  /**
+   * Nova pulses: expanding ledger lines that agree with the beat grid.
+   *
+   * Two bugs fixed here, both of the same kind — a value the world took care to
+   * publish that the renderer then ignored.
+   *
+   * `n.hue` was hardcoded to 150, so all six auras were the same green when the
+   * world writes a hue per instrument precisely so that six different auras look
+   * like six different instruments. And the fade ran against a fixed 155 while
+   * `maxR` reaches 520 for REQUIEM, so the largest ring in the game — the payoff
+   * of a roughly one-in-240 run — was invisible for four fifths of its
+   * expansion. Both now read what the world actually said.
+   */
+  private drawNovas(g: CanvasRenderingContext2D): void {
+    const novas = this.world.novas;
+    if (!novas.length) return;
+    g.globalCompositeOperation = 'lighter';
+    g.lineWidth = 1.4;
+    for (const n of novas) {
+      // Against its own ceiling, so a small ring and a huge one both fade
+      // across their whole travel rather than one of them vanishing early.
+      const fade = clamp01(1 - n.r / Math.max(1, n.maxR));
+      for (let k = 0; k < 4; k++) {
+        const r = n.r - k * 5;
+        if (r <= 0) continue;
+        g.strokeStyle = `hsla(${n.hue}, 100%, ${68 - k * 6}%, ${fade * (0.75 - k * 0.16)})`;
+        g.beginPath();
+        g.arc(n.x, n.y, r, 0, TAU);
+        g.stroke();
+      }
+    }
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  /**
+   * Beams, sweeps and fields — the instrument shapes that are not projectiles.
+   *
+   * `World.effects` carries a doc comment headed "THIS IS THE RENDERER'S
+   * CONTRACT" and, until now, **no renderer implemented it**. ROSIN BOW and
+   * HARMONICS (`beam`) and SNARE ROLL and BLAST BEAT (`arc` at zero speed,
+   * which routes to `sweep`) dealt damage and left no mark whatsoever.
+   *
+   * That is not a cosmetic gap. In the soloist probe, `snare` is last of the
+   * roster at 5.2 kills/min and `bow` third from last at 11.0 — **the two
+   * weakest instruments in the game are two of the four you cannot see.** A
+   * player cannot learn a weapon that leaves no trace, so they never invest in
+   * it, so it stays weak. Drawing them is the balance fix.
+   *
+   * Geometry is taken verbatim from the contract: a beam is a rectangle from
+   * (x,y) along `angle`, `length` long and `radius` half-wide; a sweep is a
+   * wedge spanning `arc` about `angle` out to `length`; a field is a circle of
+   * `radius`. `age / life` is the fade, and `hue` is the colour — read from the
+   * effect rather than hardcoded, which is the mistake `drawNovas` above just
+   * had corrected.
+   */
+  private drawEffects(g: CanvasRenderingContext2D): void {
+    const effects = this.world.effects;
+    if (!effects.length) return;
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+
+    for (const e of effects) {
+      // Ease the tail rather than cutting it: these persist for whole seconds,
+      // so a linear fade to nothing reads as the weapon switching off.
+      const t = clamp01(1 - e.age / Math.max(0.0001, e.life));
+      const fade = t * t * (3 - 2 * t);
+      if (fade <= 0.01) continue;
+
+      if (e.kind === 'beam') this.drawBeam(g, e, fade);
+      else if (e.kind === 'sweep') this.drawSweep(g, e, fade);
+      else this.drawField(g, e, fade);
+    }
+
+    g.restore();
+  }
+
+  /**
+   * A bowed string: a bright core inside a soft halo, dimming toward the tip.
+   *
+   * The gradient along the beam is the point — a bow has more presence at the
+   * frog than at the point, and a flat rectangle of colour reads as a laser,
+   * which is the one thing this instrument is not.
+   */
+  private drawBeam(g: CanvasRenderingContext2D, e: Effect, fade: number): void {
+    g.save();
+    g.translate(e.x, e.y);
+    g.rotate(e.angle);
+
+    const len = Math.max(1, e.length);
+    const half = Math.max(1, e.radius);
+    const wash = g.createLinearGradient(0, 0, len, 0);
+    wash.addColorStop(0, `hsla(${e.hue}, 95%, 62%, ${fade * 0.5})`);
+    wash.addColorStop(0.7, `hsla(${e.hue}, 95%, 58%, ${fade * 0.26})`);
+    wash.addColorStop(1, `hsla(${e.hue}, 95%, 55%, 0)`);
+    g.fillStyle = wash;
+    g.fillRect(0, -half, len, half * 2);
+
+    // The string itself. Kept narrow and near-white so it stays legible over
+    // the halo at any hue.
+    const core = g.createLinearGradient(0, 0, len, 0);
+    core.addColorStop(0, `hsla(${e.hue}, 100%, 92%, ${fade * 0.95})`);
+    core.addColorStop(1, `hsla(${e.hue}, 100%, 80%, 0)`);
+    g.fillStyle = core;
+    g.fillRect(0, -half * 0.22, len, half * 0.44);
+
+    // A bright root where the bow meets the ship, so the beam reads as coming
+    // from the player rather than floating in the field.
+    g.fillStyle = `hsla(${e.hue}, 100%, 88%, ${fade * 0.8})`;
+    g.beginPath();
+    g.ellipse(0, 0, half * 0.5, half, 0, 0, TAU);
+    g.fill();
+
+    g.restore();
+  }
+
+  /**
+   * A struck arc: dim through the swept area, bright along the leading rim.
+   *
+   * The contract calls this an annular wedge, and the damage volume it
+   * describes reaches all the way in to (x,y). So this fills the **whole**
+   * wedge — nothing that damages goes unmarked — and puts the emphasis on the
+   * outer rim, which gives the annular read without leaving a hole where a
+   * player would be hit by something invisible. A drum is struck at the rim.
+   */
+  private drawSweep(g: CanvasRenderingContext2D, e: Effect, fade: number): void {
+    const len = Math.max(1, e.length);
+    const from = e.angle - e.arc / 2;
+    const to = e.angle + e.arc / 2;
+
+    g.save();
+    g.translate(e.x, e.y);
+
+    const body = g.createRadialGradient(0, 0, 0, 0, 0, len);
+    body.addColorStop(0, `hsla(${e.hue}, 90%, 60%, ${fade * 0.06})`);
+    body.addColorStop(0.72, `hsla(${e.hue}, 95%, 62%, ${fade * 0.2})`);
+    body.addColorStop(1, `hsla(${e.hue}, 100%, 70%, ${fade * 0.34})`);
+    g.fillStyle = body;
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.arc(0, 0, len, from, to);
+    g.closePath();
+    g.fill();
+
+    // The strike edge.
+    g.strokeStyle = `hsla(${e.hue}, 100%, 84%, ${fade * 0.9})`;
+    g.lineWidth = 2.2;
+    g.beginPath();
+    g.arc(0, 0, len, from, to);
+    g.stroke();
+
+    // The two radial edges, thinner, so the wedge has a shape rather than
+    // fading out sideways into the background.
+    g.strokeStyle = `hsla(${e.hue}, 100%, 78%, ${fade * 0.35})`;
+    g.lineWidth = 1;
+    g.beginPath();
+    for (const a of [from, to]) {
+      g.moveTo(0, 0);
+      g.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+    }
+    g.stroke();
+
+    g.restore();
+  }
+
+  /**
+   * A field: a soft disc with a defined rim, plus inward ticks when it pulls.
+   *
+   * The rim matters more than the fill. A field's edge is where the player
+   * needs to know the boundary is, and a pure radial blur has no edge to read.
+   */
+  private drawField(g: CanvasRenderingContext2D, e: Effect, fade: number): void {
+    const r = Math.max(1, e.radius);
+    g.save();
+    g.translate(e.x, e.y);
+
+    const disc = g.createRadialGradient(0, 0, 0, 0, 0, r);
+    disc.addColorStop(0, `hsla(${e.hue}, 90%, 58%, ${fade * 0.3})`);
+    disc.addColorStop(0.65, `hsla(${e.hue}, 90%, 55%, ${fade * 0.13})`);
+    disc.addColorStop(1, `hsla(${e.hue}, 95%, 60%, ${fade * 0.04})`);
+    g.fillStyle = disc;
+    g.beginPath();
+    g.arc(0, 0, r, 0, TAU);
+    g.fill();
+
+    g.strokeStyle = `hsla(${e.hue}, 100%, 74%, ${fade * 0.55})`;
+    g.lineWidth = 1.4;
+    g.beginPath();
+    g.arc(0, 0, r, 0, TAU);
+    g.stroke();
+
+    /*
+     * Six ticks marching inward, so a field that pulls looks like it pulls.
+     * Driven by `age` rather than by the transport: this is a property of the
+     * effect, not of the beat, and the playfield has one thing keeping time
+     * already.
+     */
+    if (e.pull > 0) {
+      const march = (e.age * 0.9) % 1;
+      g.strokeStyle = `hsla(${e.hue}, 100%, 82%, ${fade * 0.4})`;
+      g.lineWidth = 1.6;
+      g.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * TAU + e.age * 0.35;
+        const outer = r * (1 - march * 0.55);
+        const inner = outer - r * 0.14;
+        if (inner <= 0) continue;
+        g.moveTo(Math.cos(a) * outer, Math.sin(a) * outer);
+        g.lineTo(Math.cos(a) * inner, Math.sin(a) * inner);
+      }
+      g.stroke();
+    }
+
+    g.restore();
+  }
+
+  /**
+   * Drone pods: filled noteheads with a radial stem, on a faint dotted orbit.
+   * A pod on cooldown becomes a hollow outline, so "not filled in" reads
+   * immediately as "this one already saved you".
+   */
+  private drawDrones(g: CanvasRenderingContext2D): void {
+    const p = this.world.player;
+    const n = p.droneAngle.length;
+    if (!n || p.dead) return;
+
+    g.save();
+    g.translate(p.x, p.y);
+    g.strokeStyle = 'rgba(180,140,255,0.16)';
+    g.lineWidth = 1;
+    g.setLineDash([2, 5]);
+    g.beginPath();
+    g.arc(0, 0, p.droneRadius(), 0, TAU);
+    g.stroke();
+    g.setLineDash([]);
+    g.restore();
+
+    for (let i = 0; i < n; i++) {
+      const pos = p.dronePos(i);
+      const live = p.droneCooldown[i] <= 0;
+      const a = p.droneAngle[i] + (i / n) * TAU;
+      g.save();
+      g.translate(pos.x, pos.y);
+
+      // Stem points radially outward, so the pods read as notes in orbit.
+      g.strokeStyle = live ? 'hsla(265, 100%, 78%, 0.95)' : 'hsla(265, 40%, 60%, 0.4)';
+      g.lineWidth = 1.6;
+      g.beginPath();
+      g.moveTo(Math.cos(a) * 3, Math.sin(a) * 3);
+      g.lineTo(Math.cos(a) * 12, Math.sin(a) * 12);
+      g.stroke();
+
+      g.rotate(-0.36);
+      g.beginPath();
+      g.ellipse(0, 0, 5.4, 4, 0, 0, TAU);
+      if (live) {
+        g.fillStyle = 'hsla(265, 100%, 86%, 0.98)';
+        g.fill();
+      } else {
+        g.stroke();
+      }
+      g.restore();
+
+      if (live) {
+        g.globalCompositeOperation = 'lighter';
+        const d = this.dot(265);
+        g.globalAlpha = 0.5;
+        g.drawImage(d, pos.x - 11, pos.y - 11, 22, 22);
+        g.globalAlpha = 1;
+        g.globalCompositeOperation = 'source-over';
+      }
+    }
+  }
+
+  private drawParticles(g: CanvasRenderingContext2D): void {
+    const p = this.world.particles;
+    g.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < p.count; i++) {
+      const life = p.life[i] / p.maxLife[i];
+      g.globalAlpha = clamp01(life);
+      if (p.shape[i] === ParticleShape.Ring) {
+        g.globalAlpha = clamp01(life) * 0.7;
+        g.strokeStyle = `hsl(${p.hue[i]}, 100%, 70%)`;
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(p.x[i], p.y[i], p.size[i] * (1.4 - life), 0, TAU);
+        g.stroke();
+      } else {
+        const d = this.dot(p.hue[i]);
+        const s = p.size[i] * (0.6 + life);
+        g.drawImage(d, p.x[i] - s, p.y[i] - s, s * 2, s * 2);
+      }
+    }
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  private drawDrops(g: CanvasRenderingContext2D): void {
+    for (const d of this.world.drops) {
+      const def = powerupDef(d.kind);
+      const bob = Math.sin(d.age * 6) * 2;
+      g.save();
+      g.translate(d.x, d.y + bob);
+      g.globalCompositeOperation = 'lighter';
+      const dot = this.dot(def.hue);
+      g.globalAlpha = 0.75;
+      g.drawImage(dot, -18, -18, 36, 36);
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = 1;
+      g.strokeStyle = `hsl(${def.hue}, 100%, 70%)`;
+      g.lineWidth = 2;
+      g.strokeRect(-9, -9, 18, 18);
+      g.fillStyle = `hsl(${def.hue}, 100%, 85%)`;
+      g.font = 'bold 9px ui-monospace, monospace';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(def.label.slice(0, 2), 0, 0.5);
+      g.restore();
+    }
+  }
+
+  /**
+   * Centre-screen announcement.
+   *
+   * A boss phase used to change with no words at all: the pattern simply became
+   * different. Naming the moment — and captioning it with the key and groove it
+   * just switched into — turns an escalation into an event, and quietly teaches
+   * the player that the music and the fight are the same thing.
+   */
+  private drawBanner(g: CanvasRenderingContext2D): void {
+    const w = this.world;
+    const age = w.bannerAge;
+    if (!w.banner || age > 2.4) return;
+
+    // Slide in fast, hold, fade out.
+    const alpha = age < 0.18 ? age / 0.18 : age > 1.7 ? Math.max(0, 1 - (age - 1.7) / 0.7) : 1;
+    const slide = age < 0.18 ? (1 - age / 0.18) * 26 : 0;
+    const y = w.height * 0.34 + slide;
+
+    g.save();
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+
+    g.globalAlpha = alpha * 0.5;
+    g.fillStyle = '#05060c';
+    g.fillRect(0, y - 30, w.width, 60);
+    /*
+     * Colour by kind, so the type of moment reads before the words do.
+     * A boss and a compliment should not look the same.
+     */
+    /*
+     * `fusion` is listed explicitly and takes gold.
+     *
+     * `docs/progression.md` has the world announce a fusion through this same
+     * banner, and an unlisted kind falls through to 210 — the blue of "WAVE 3".
+     * The largest payoff in the game would have been drawn exactly like its
+     * most routine event. Gold is the colour the offer screen reserves for a
+     * fusion, so the two agree.
+     */
+    const hue =
+      w.bannerKind === 'boss' || w.bannerKind === 'phase'
+        ? 350
+        : w.bannerKind === 'grade'
+          ? 45
+          : (w.bannerKind as string) === 'fusion'
+            ? 45
+            : w.bannerKind === 'archetype'
+              ? 195
+              : w.bannerKind === 'item'
+                ? 280
+                : 210;
+    g.globalAlpha = alpha;
+    g.strokeStyle = `hsla(${hue}, 90%, 60%, 0.5)`;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(w.width * 0.18, y - 30);
+    g.lineTo(w.width * 0.82, y - 30);
+    g.moveTo(w.width * 0.18, y + 30);
+    g.lineTo(w.width * 0.82, y + 30);
+    g.stroke();
+
+    g.font = '800 30px ui-monospace, monospace';
+    g.fillStyle = w.bannerKind === 'grade' ? `hsl(${hue}, 100%, 72%)` : '#ffffff';
+    g.fillText(w.banner, w.width / 2, y - 6);
+
+    const sub = w.bannerSub || this.bannerDetail;
+    if (sub) {
+      g.font = '600 12px ui-monospace, monospace';
+      g.fillStyle = `hsla(${hue}, 95%, 72%, 0.9)`;
+      g.fillText(sub, w.width / 2, y + 16);
+    }
+    g.restore();
+  }
+
+  /** Boss bar, XP, damage flash, the vignette, and the level-up screen. */
+  private drawOverlay(tension: number, dt: number, beat: number): void {
+    const w = this.world;
+    const g = this.og;
+    g.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    g.clearRect(0, 0, w.width, w.height);
+
+    const boss = w.enemies.find((e) => e.archetype === 'conductor');
+    if (boss) {
+      const frac = clamp01(boss.hp / boss.maxHp);
+      g.fillStyle = 'rgba(10,12,22,0.75)';
+      g.fillRect(40, 22, w.width - 80, 12);
+      g.fillStyle = `hsl(${lerp(350, 20, 1 - frac)}, 95%, 58%)`;
+      g.fillRect(42, 24, (w.width - 84) * frac, 8);
+      g.strokeStyle = 'rgba(255,255,255,0.25)';
+      g.lineWidth = 1;
+      g.strokeRect(40.5, 22.5, w.width - 81, 11);
+      // Phase ticks, so the player can see the drops coming.
+      g.fillStyle = 'rgba(255,255,255,0.6)';
+      for (const t of boss.phaseThresholds) g.fillRect(42 + (w.width - 84) * t, 20, 1, 16);
+    }
+
+    this.drawBanner(g);
+
+    if (w.camera.flash > 0.01) {
+      g.fillStyle = `hsla(${w.camera.flashHue}, 100%, 70%, ${w.camera.flash * 0.5})`;
+      g.fillRect(0, 0, w.width, w.height);
+    }
+
+    // Vignette tightens as tension rises — tunnel vision, essentially.
+    const step = Math.round(clamp01(tension) * 20);
+    let v = this.vignettes.get(step);
+    if (!v) {
+      const q = step / 20;
+      v = g.createRadialGradient(
+        w.width / 2,
+        w.height / 2,
+        w.height * (0.34 - q * 0.12),
+        w.width / 2,
+        w.height / 2,
+        w.height * 0.75,
+      );
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, `rgba(${Math.round(q * 40)},0,${Math.round(q * 20)},${0.45 + q * 0.3})`);
+      this.vignettes.set(step, v);
+    }
+    g.fillStyle = v;
+    g.fillRect(0, 0, w.width, w.height);
+
+    // After the vignette, not before. The vignette is a world effect and the XP
+    // bar is a readout; drawn underneath it, a full-width bar has both its ends
+    // dimmed by the corners of the gradient, which is precisely where the bar
+    // is when it is nearly empty or nearly full.
+    this.drawXp(g);
+
+    this.attachHook();
+    // Last, so the level-up screen sits over the vignette, the boss bar and the
+    // banner rather than under them.
+    this.levelUp.draw(g, w.snapshot, dt, w.width, w.height, beat, this.pulse);
+  }
+
+  /**
+   * XP, along the very top edge of the field.
+   *
+   * `docs/progression.md` asks for this specifically: "It is the most
+   * frequently-changing number in the game and it has to be readable without
+   * looking away from the bullets — thin, along an edge, not a widget." So it
+   * is four pixels of the top edge and nothing else. The level number sits at
+   * the left end, where it changes once every thirty seconds or so and can
+   * therefore afford to be text.
+   *
+   * It is deliberately NOT beat-reactive. This is the one readout a player
+   * glances at mid-fight, and a bar that pulses is a bar whose length is harder
+   * to judge — the whole complaint this pass exists to answer.
+   */
+  private drawXp(g: CanvasRenderingContext2D): void {
+    const s = this.world.snapshot;
+    if (!s.running && s.level <= 1 && s.xp <= 0) return;
+    const w = this.world;
+    const frac = s.xpToNext > 0 ? clamp01(s.xp / s.xpToNext) : 0;
+
+    g.fillStyle = 'rgba(8,10,20,0.72)';
+    g.fillRect(0, 0, w.width, 5);
+    g.fillStyle = 'hsl(168, 92%, 56%)';
+    g.fillRect(0, 0, w.width * frac, 4);
+    // A brighter cap on the leading edge, so a small gain is still visible.
+    if (frac > 0.004) {
+      g.fillStyle = 'rgba(220,255,248,0.85)';
+      g.fillRect(Math.max(0, w.width * frac - 2), 0, 2, 4);
+    }
+
+    g.save();
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.font = '800 11px ui-monospace, monospace';
+    g.fillStyle = 'hsla(168, 80%, 72%, 0.85)';
+    g.fillText(`LV ${s.level}`, 8, 14);
+    g.restore();
+  }
+}

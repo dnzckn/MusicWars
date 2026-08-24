@@ -1,0 +1,1664 @@
+/*
+ * A single, deliberate visual world: a cyan/magenta arcade screen sitting next
+ * to a mixing desk. No light theme — the page paints its own ground explicitly
+ * so it holds whatever the host is doing behind it.
+ *
+ * The neutrals are biased blue toward the cyan accent rather than being a
+ * default grey, and everything is set in monospace on purpose: this is a
+ * channel strip, and monospace is the vernacular of trackers and DAWs.
+ *
+ * Hierarchy is carried by size, weight and colour rather than by chrome. Every
+ * block used to be the same 1px box in the same 12px dim type, which made the
+ * MIX — the thing this game is about — look exactly like the frame counter.
+ */
+:root {
+  --bg: #05060c;
+  --panel: #0b0e18;
+  /* One step above --panel, for the insets that sit inside a block. Without it
+     every nested surface had to be a border, and borders stack into noise. */
+  --sunk: #070911;
+  --line: #1b2136;
+  --line-soft: #141a2b;
+  --ink: #c8d2f0;
+  /* Between --ink and --dim. The generated source used --dim and was the least
+     readable text on screen while being the proof of the entire premise. */
+  --ink-2: #8e9bc2;
+  /*
+   * Lightened from #5c6688, which failed WCAG AA against every surface in the
+   * palette — 3.40:1 on --panel where 4.5:1 is the bar. That mattered more
+   * than it sounds: --dim is the most-used text colour in this file, 23 rules,
+   * more than --ink and --ink-2 combined, so the most common text in the HUD
+   * was the least readable thing in it. A label you have to squint at is part
+   * of the "visual clutter is high" complaint even when nothing is moving.
+   *
+   * Scaled proportionally so the hue is unchanged, to x1.25: 4.95 on --panel,
+   * 5.20 on --bg, 5.11 on --sunk. Still well under --ink-2 at 6.99, so it
+   * remains visibly subordinate — the point is a readable quiet, not a
+   * promotion. Checked by `npm run legibility`.
+   */
+  --dim: #7380aa;
+  --hot: #ff2e6e;
+  --cool: #35e6ff;
+  /*
+   * #ffd73c, not #ffd166. Under protanopia the softer gold sat dE 16.4 from
+   * --green with only 10.3 of lightness between them, and green/gold is
+   * collect-versus-reward — two things the HUD says with colour alone. The
+   * replacement was chosen by searching the yellow-orange family for the value
+   * that maximises its WORST separation against every other semantic colour
+   * across all three dichromacies: 16.4 -> 28.0, while contrast on --panel
+   * stays 13.79:1. Checked by `npm run colourblind`.
+   */
+  --gold: #ffd73c;
+  --green: #5cff9d;
+  --violet: #b06bff;
+  /* The current groove's hue, written once per groove change by the HUD. The
+     room around the cabinet is lit by whatever the band is playing. */
+  --hue: 190;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /*
+   * 9px IS THE FLOOR. Nothing in this file may go below it — `npm run
+   * typescale` fails the build if it does.
+   *
+   * Twelve declarations were under it (one at 7px, five at 8px, six at 8.5px),
+   * and eight of those were inside the small-screen block, so the HUD was
+   * SHRINKING its text on phones. That is backwards: a phone has less physical
+   * area at a similar viewing distance, and the usual reason a rule gets a
+   * smaller font in a narrow breakpoint is that something did not fit — which
+   * solves a layout problem by making the content harder to read, on the
+   * device where reading is already hardest.
+   *
+   * Large display text scaling down for narrow screens is a different thing
+   * and is fine (.stat 52->38, .big 34->24); `typescale` lists those shrinks
+   * without failing them. The floor is only about text that is already small.
+   */
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  color: var(--ink);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Ambient light, not a live effect.
+ *
+ * Two static radial gradients tinted by the current groove. They repaint only
+ * when --hue changes (a few times a run), so unlike a backdrop-filter they cost
+ * nothing per frame — and they stop the 280px of letterboxing beside a fixed
+ * 3:4 playfield from reading as an unfinished page.
+ */
+body {
+  background:
+    radial-gradient(115% 70% at 50% -10%, hsla(var(--hue), 72%, 32%, .10), transparent 62%),
+    radial-gradient(90% 55% at 50% 108%, hsla(var(--hue), 78%, 28%, .07), transparent 60%),
+    var(--bg);
+}
+
+body::before {
+  /* Faint scanlines. Cheap, static, never repainted. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: repeating-linear-gradient(to bottom, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+
+#app {
+  display: flex;
+  gap: 16px;
+  height: 100%;
+  padding: 14px;
+  justify-content: center;
+  align-items: center;
+}
+
+#stage {
+  position: relative;
+  aspect-ratio: 900 / 1120;
+  height: min(100%, calc(100vw - 300px) * 960 / 720);
+  max-height: 100%;
+  flex: 0 0 auto;
+}
+
+#stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  image-rendering: auto;
+}
+
+/* The cabinet edge. A hairline, a hue-tinted bloom and a wide dark spread, so
+   the playfield sits *in* the room rather than being pasted onto it. All
+   static: box-shadow on the element, not a filter over the animating canvas. */
+#playfield {
+  background: #04050a;
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 0 0 6px rgba(5, 6, 12, .85),
+    0 0 90px hsla(var(--hue), 80%, 55%, .10),
+    0 24px 70px rgba(0, 0, 0, .55);
+}
+
+#overlay { pointer-events: none; }
+
+/*
+ * The wave's rule, on the cabinet itself.
+ *
+ * From wave 9 a third of the non-boss waves run under FLANKED, SOLOIST or
+ * HUSHED, and they are announced with the same centre-screen banner treatment
+ * as the wave counter — `world.announce(label, sub, 'wave')`, drawn by
+ * `renderer.drawBanner`, both outside this workstream's reach. What is in reach
+ * is the light in the room, and it says the same thing for the whole wave
+ * rather than for 2.4 seconds:
+ *
+ *   FLANKED — the glow leaves the frame sideways, from the wings they arrive on.
+ *   SOLOIST — one hot rim, for the one enemy that is the whole section.
+ *   HUSHED  — the room goes dark and quiet; nothing is firing.
+ *
+ * Painted entirely outside the canvas, as box-shadow spread on the playfield's
+ * frame, so not one playfield pixel is covered and `contrast` is untouched. No
+ * transition: animating a 90px blur radius across an element this large is
+ * exactly the class of effect that halved the frame rate last time, and the
+ * switch lands on a banner flash anyway.
+ */
+#stage[data-movement="flank"] #playfield {
+  box-shadow:
+    0 0 0 1px rgba(255, 46, 110, .35),
+    0 0 0 6px rgba(5, 6, 12, .85),
+    -22px 0 60px -8px rgba(255, 46, 110, .5),
+    22px 0 60px -8px rgba(255, 46, 110, .5),
+    0 24px 70px rgba(0, 0, 0, .55);
+}
+#stage[data-movement="elite"] #playfield {
+  box-shadow:
+    0 0 0 1px rgba(255, 209, 102, .55),
+    0 0 0 6px rgba(5, 6, 12, .85),
+    0 0 90px rgba(255, 209, 102, .22),
+    0 24px 70px rgba(0, 0, 0, .55);
+}
+#stage[data-movement="hush"] #playfield {
+  box-shadow:
+    0 0 0 1px #141a2b,
+    0 0 0 6px rgba(5, 6, 12, .92),
+    0 0 50px rgba(5, 6, 12, .9),
+    0 24px 70px rgba(0, 0, 0, .7);
+}
+
+/*
+ * Touch controls. Hidden until a touch is seen, so desktop is untouched.
+ *
+ * These sit beside the playfield, never over it. They used to be absolutely
+ * positioned inside the stage at its bottom-right corner, which put three 72%
+ * opaque blocks across the lower-right of the play area — the region a right
+ * thumb already covers, and one bullets still fly through. A bullet behind a
+ * button is a hit the player never had a chance to read.
+ */
+.touch {
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 8px;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.touch.hidden { display: none; }
+.touch button {
+  pointer-events: auto;
+  width: 62px;
+  height: 44px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: var(--cool);
+  background: linear-gradient(180deg, rgba(53,230,255,.10), rgba(11,14,24,.82));
+  border: 1px solid rgba(53, 230, 255, .4);
+  border-radius: 10px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.touch button:active { background: rgba(53, 230, 255, .28); color: #fff; }
+#touch-bomb { color: var(--gold); border-color: rgba(255, 209, 102, .45); background: linear-gradient(180deg, rgba(255,209,102,.10), rgba(11,14,24,.82)); }
+#touch-well { color: var(--violet); border-color: rgba(176, 107, 255, .45); background: linear-gradient(180deg, rgba(176,107,255,.10), rgba(11,14,24,.82)); }
+
+.touch-hint { margin: 0; font-size: 11px; color: var(--cool); letter-spacing: .04em; }
+
+/* Nothing should scroll or long-press-select while playing on a phone. */
+#stage { touch-action: none; }
+
+/* ---------- the opening ---------- */
+
+/*
+ * Shown for the four bars between START and the first enemy.
+ *
+ * `firstminute` measures that runway at 7.7 seconds and says nothing about what
+ * is on screen during it, which was: a grid, a ship, and nothing else. The wait
+ * is the arrangement assembling — the single best thing this game does — and it
+ * was completely invisible. Each lane lights as its stem actually enters, read
+ * from the director's levels rather than from a timer, so what the player
+ * watches fill in is the thing they are hearing.
+ *
+ * Under the .screen overlays, never over a live field: the HUD only unhides it
+ * while the enemy and bullet counts are both zero, and latches it off for the
+ * rest of the run the moment either is not.
+ */
+.opener {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /*
+   * Safe centring, but no scrollbar: this overlay is `pointer-events: none`,
+   * so nobody could use one. What matters is that a tall ensemble list pushes
+   * the surplus off the BOTTOM rather than clipping TUNING UP off the top.
+   */
+  justify-content: center;
+  justify-content: safe center;
+  gap: 14px;
+  pointer-events: none;
+  text-align: center;
+  padding: 24px;
+}
+.opener.hidden { display: none; }
+
+.opener-title {
+  margin: 0;
+  font-size: clamp(18px, 3.2vh, 26px);
+  font-weight: 800;
+  letter-spacing: .52em;
+  text-indent: .52em;
+  color: #fff;
+  text-shadow: 0 0 26px rgba(53,230,255,.55);
+}
+.opener-sub {
+  margin: -6px 0 0;
+  font-size: 11.5px;
+  letter-spacing: .16em;
+  color: var(--ink-2);
+}
+.opener-foot {
+  margin: 0;
+  font-size: 9.5px;
+  letter-spacing: .22em;
+  color: var(--dim);
+}
+
+/*
+ * A cue sheet, not a caption.
+ *
+ * The first version floated four rows of dim text straight on the grid and read
+ * as debug output someone had left on. It is competing with a lit playfield and
+ * a starfield, so it needs its own ground: an opaque card with a shadow under
+ * it, and every row visible from the first frame — the empty tracks are what
+ * say "more is coming", which is the entire message.
+ */
+.opener-list {
+  list-style: none;
+  margin: 0;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: min(400px, 88%);
+  border: 1px solid #232c47;
+  border-radius: 8px;
+  background: rgba(6, 8, 15, .93);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+.opener-list li {
+  display: grid;
+  grid-template-columns: 54px 84px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-align: left;
+  color: var(--dim);
+  /* One-shot, on four rows that exist for eight seconds over an empty field. */
+  transition: color .45s ease;
+}
+.opener-list li b { font-weight: 700; color: #46506f; transition: color .45s ease; }
+.opener-list li em {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  color: #39405c;
+  transition: color .5s ease;
+}
+/* The level the stem is actually at, so the row is a fader and not a tick. */
+.opener-list li i {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: #10141f;
+  border: 1px solid #1b2136;
+  overflow: hidden;
+}
+.opener-list li i s {
+  display: block;
+  height: 100%;
+  width: 0%;
+  text-decoration: none;
+  background: linear-gradient(90deg, var(--cool), #8f7bff);
+  box-shadow: 0 0 8px rgba(53,230,255,.5);
+  transition: width .25s linear;
+}
+.opener-list li.lit b { color: var(--cool); }
+.opener-list li.lit em { color: var(--ink-2); }
+.opener-list li.lit i { border-color: rgba(53,230,255,.3); }
+
+/* ---------- screens ---------- */
+
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /*
+   * SAFE centring, and a scrollbar, because these screens grew.
+   *
+   * A centred column that outgrows its container overflows BOTH edges, and the
+   * half that goes off the top cannot be reached — `overflow: visible` gives
+   * you nothing to scroll and plain `center` will not release the top edge
+   * even when you add one. The pause screen now carries a heading, four run
+   * stats, the now-playing line, a workbench of up to eight rows and a
+   * seven-row control list; on a short window that is taller than the viewport,
+   * and the part that disappears is the top — the heading and the score.
+   *
+   * `safe center` degrades to flex-start exactly when it would otherwise clip,
+   * so nothing is ever unreachable, and `overflow-y: auto` gives the overflow
+   * somewhere to go. The plain `center` above it is the fallback for engines
+   * that do not know the `safe` keyword: without it they would drop the whole
+   * declaration and land on flex-start for every screen, short or not.
+   */
+  justify-content: center;
+  justify-content: safe center;
+  overflow-y: auto;
+  gap: 12px;
+  text-align: center;
+  padding: 24px;
+  /*
+   * No backdrop-filter here.
+   *
+   * `backdrop-filter: blur(2px)` on a full-screen overlay forces the compositor
+   * to re-blur the entire animating canvas behind it every single frame. It
+   * measured 27.3fps with the blur and 58.7fps without — the title screen, the
+   * pause screen and the game-over screen were all running at less than half
+   * frame rate, which is to say every screen where the player stops to read.
+   * At 2px over a gradient this dark, nobody could see the blur anyway.
+   */
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 42%, rgba(5,6,12,.72), rgba(5,6,12,.95) 70%, rgba(3,4,9,.985));
+}
+
+.screen.hidden { display: none; }
+
+.hero { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+/* The claim, stated before the name. It is the only thing about this game that
+   is hard to believe, so it goes first and it gets a live lamp. */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .3em;
+  color: var(--cool);
+  padding: 5px 12px 5px 10px;
+  border: 1px solid rgba(53,230,255,.22);
+  border-radius: 999px;
+  background: rgba(53,230,255,.05);
+}
+.eyebrow i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cool);
+  box-shadow: 0 0 8px var(--cool);
+}
+
+.screen h1 {
+  margin: 0;
+  font-size: clamp(32px, 7vh, 64px);
+  letter-spacing: .18em;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 0 24px rgba(255,46,110,.55);
+}
+.screen h1 span { color: var(--cool); text-shadow: 0 0 24px rgba(53,230,255,.55); }
+
+.screen h2 {
+  margin: 0;
+  font-size: clamp(24px, 5vh, 40px);
+  letter-spacing: .2em;
+  color: var(--hot);
+  text-shadow: 0 0 26px rgba(255,46,110,.45);
+}
+
+/* 34ch broke the tagline into four ragged lines under the title; 52ch gives it
+   two clean ones without running wider than the wordmark. */
+.tagline { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.7; letter-spacing: .05em; max-width: 52ch; }
+.tagline em { color: var(--cool); font-style: normal; }
+.warning { color: var(--dim); font-size: 11px; margin: 0; max-width: 56ch; line-height: 1.6; }
+.best-line {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .18em;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  min-height: 1em;
+}
+.sub { color: var(--dim); font-size: 12px; margin: 0; letter-spacing: .1em; }
+/* Beating your own best is the only thing this screen has to celebrate, and it
+   was set in the same grey as "press P to resume". */
+#final-best { color: var(--gold); font-weight: 700; letter-spacing: .2em; }
+.stat { margin: 0; font-size: 52px; font-weight: 700; color: var(--gold); letter-spacing: .02em; font-variant-numeric: tabular-nums; text-shadow: 0 0 30px rgba(255,209,102,.28); }
+
+.screen button {
+  margin-top: 8px;
+  padding: 14px 30px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  color: #04050a;
+  background: linear-gradient(180deg, #7ff2ff, var(--cool) 55%, #12c8e6);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+  box-shadow: 0 0 26px rgba(53,230,255,.35), 0 6px 20px rgba(0,0,0,.5);
+}
+.screen button:hover { transform: translateY(-1px); box-shadow: 0 0 38px rgba(53,230,255,.6), 0 8px 24px rgba(0,0,0,.55); filter: brightness(1.06); }
+.screen button:active { transform: translateY(1px); }
+.screen button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.runstats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin: 8px 0 2px;
+  padding: 12px 18px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(11,14,24,.55);
+}
+.runstats div { display: contents; }
+.runstats dt {
+  grid-row: 2;
+  font-size: 9px;
+  letter-spacing: .2em;
+  color: var(--dim);
+  text-align: center;
+}
+.runstats dd {
+  grid-row: 1;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--gold);
+  text-align: center;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.heard {
+  margin: 2px 0 0;
+  max-width: 46ch;
+  font-size: 11px;
+  line-height: 1.8;
+  letter-spacing: .06em;
+  color: var(--dim);
+}
+.heard b { color: var(--cool); font-weight: 600; }
+
+.nowplaying {
+  margin: 2px 0 0;
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--cool);
+}
+
+/*
+ * Controls as keycaps.
+ *
+ * They were two columns of dim 11px text — a legend, not an instruction. The
+ * keys are the one thing on the title screen a new player has to act on, so
+ * they are given the shape of the thing they refer to.
+ */
+.controls {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 7px 16px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--dim);
+  align-items: center;
+}
+.controls div { display: contents; }
+.controls dt { text-align: right; color: var(--ink-2); letter-spacing: .06em; }
+.controls dd { margin: 0; text-align: left; display: flex; align-items: center; gap: 4px; }
+.controls dd em { font-style: normal; color: var(--dim); font-size: 10px; letter-spacing: .04em; margin-left: 2px; }
+
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  color: var(--ink);
+  background: linear-gradient(180deg, #171d2e, #0d1120);
+  border: 1px solid #262e48;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- side panel ---------- */
+
+#panel {
+  /*
+   * The panel takes the width the playfield cannot use.
+   *
+   * The stage is a fixed 3:4 portrait — conventional for the genre, and the
+   * simulation is 720x960, so stretching it would distort the game. That makes
+   * the leftover space on a wide screen horizontal and, at 268px fixed, it was
+   * simply wasted: on a 1440px window roughly 490px sat empty while the piano
+   * roll and the generated code — the thing this project is actually about —
+   * were rendered into a strip narrower than a phone.
+   *
+   * Grows to 460px when there is room, floors at the original 268px when there
+   * is not, so narrow windows are unchanged. The 420px cap was set while the
+   * roll was a fixed-aspect bitmap, where every extra pixel of width bought
+   * proportional height and pushed the code out of the block; the roll is now
+   * sized by CSS in both axes, so width and height are independent and the cap
+   * can go where the layout wants it.
+   */
+  width: min(460px, max(268px, calc(100vw - 760px)));
+  flex: 0 0 auto;
+  height: min(100%, 960px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+/* The masthead. Wordmark on the left, live transport on the right. */
+#panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 3px 2px;
+  flex: 0 0 auto;
+}
+.mark {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .26em;
+  color: var(--ink);
+}
+.mark b { color: var(--cool); font-weight: 800; }
+.transport { display: flex; align-items: center; gap: 7px; }
+.transport b { font-size: 12px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.transport em { font-style: normal; font-size: 9px; letter-spacing: .18em; color: var(--dim); }
+
+/* Four beat lamps, driven by the transport the music is actually on. The
+   downbeat is gold so the bar line is findable without counting. */
+.beats { display: flex; gap: 3px; align-items: center; }
+.beats i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: #171d2e;
+  transition: background .06s linear, box-shadow .06s linear;
+}
+.beats i.on { background: var(--cool); box-shadow: 0 0 7px rgba(53,230,255,.8); }
+.beats i:first-child.on { background: var(--gold); box-shadow: 0 0 8px rgba(255,209,102,.85); }
+
+.block {
+  position: relative;
+  background: linear-gradient(180deg, #0d1120, var(--panel) 60%);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 12px 10px;
+  flex: 0 0 auto;
+}
+.block.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+/*
+ * The roll yields; the code does not.
+ *
+ * `flex: 0 0 auto` made the score canvas incompressible, so anything that
+ * pushed the panel's content down clipped the generated code off the bottom
+ * instead — the `scale` line disappeared whenever ON STAGE listed two archetypes
+ * rather than one. That is a content-dependent failure, which is why the panel
+ * check kept passing: it only ever looked at a moment with one row.
+ *
+ * The roll is the thing that can afford to lose a few pixels; the code lines
+ * are five lines of text that are either all there or wrong.
+ *
+ * It grows as well as shrinks. With `flex: 0 1 auto` the roll sat at its
+ * declared height and the block's leftover space pooled as ~65px of nothing
+ * under the code — the signature panel had a hole in it. Growing is safe in a
+ * way that not shrinking is not: flex-grow only ever distributes space that is
+ * already free, so it cannot push the code out the way `flex: 0 0 auto` did.
+ */
+.block.grow .score { flex: 1 1 auto; min-height: 90px; }
+
+.block h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 9.5px;
+  letter-spacing: .26em;
+  color: var(--dim);
+  font-weight: 600;
+}
+.block h3 > b { margin-left: auto; font-weight: 600; }
+
+/* WAVE, in the block header rather than as a third data row: it changes once a
+   minute and was taking a full row next to numbers that change every frame. */
+.wave-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: .2em;
+  color: var(--dim);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--sunk);
+}
+.wave-chip i { font-style: normal; font-size: 11px; font-weight: 700; color: var(--ink); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* The MIX block is the product. It gets the accent rail. */
+.b-mix { border-color: #23304f; }
+.b-mix::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--cool), var(--violet) 55%, var(--hot));
+  opacity: .75;
+}
+.b-mix h3 { color: var(--cool); }
+
+/* LIVE + the section the arranger is in, together: both answer "what is the
+   music doing right now", and the section moved here out of a label/value row. */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--cool);
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(53,230,255,.25);
+  background: rgba(53,230,255,.07);
+}
+.live i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cool);
+  box-shadow: 0 0 7px var(--cool);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+/* One animation on the page, on a 5px dot, opacity only — a compositor-only
+   property on a tiny layer. Anything larger than this over the playfield has
+   historically cost half the frame rate. */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .28; } }
+
+/*
+ * Score and multiplier on one line — until they do not fit.
+ *
+ * The multiplier used to peak around x7 and now regularly passes x50, and the
+ * descant tag rides beside it; against a seven-figure score at the panel's
+ * 268px floor that is wider than the panel. Wrapping keeps both whole and only
+ * costs a line in the case that would otherwise have overflowed, and the auto
+ * margin keeps the multiplier right-aligned on whichever line it lands on.
+ */
+.scoreline { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+.scoreline .mult { margin-left: auto; }
+
+.big {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1;
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 24px rgba(255,209,102,.20);
+}
+
+/*
+ * The multiplier is a headline, not a table row.
+ *
+ * It is the number the player is actually working, and above eight it buys the
+ * lead a descant — the one reward in this game that makes the music better
+ * rather than merely louder. It sat right-aligned in 12px type next to BEST.
+ */
+.mult {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cool);
+  font-variant-numeric: tabular-nums;
+  transition: color .2s ease;
+}
+#ui-combo.earned { color: var(--gold); }
+.mult em {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  color: var(--gold);
+  padding: 3px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,209,102,.45);
+  background: rgba(255,209,102,.12);
+  text-shadow: none;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 3px 0;
+  color: var(--dim);
+  letter-spacing: .08em;
+}
+.row b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.row.tiny { font-size: 10px; }
+.row.best { margin: 7px 0 0; }
+.row.best b { color: var(--ink-2); }
+
+/*
+ * The wave's standing rule.
+ *
+ * The centre-screen banner that announces one is gone in 2.4 seconds and is
+ * drawn in the same blue as the wave counter; the rule itself lasts the whole
+ * wave. This is the readout that keeps it, coloured per rule so that FLANKED
+ * and HUSHED are not the same event in a different word.
+ */
+.movement {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 5px 9px 5px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--rule-line, rgba(255,46,110,.3));
+  border-left: 3px solid var(--rule, var(--hot));
+  background: var(--rule-fill, rgba(255,46,110,.09));
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  /* One-shot on arrival. The element is rebuilt only when the rule changes,
+     which is once a wave at most, so this runs then and never again. */
+  animation: ruleIn .45s ease both;
+}
+@keyframes ruleIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.movement.hidden { display: none; }
+.movement b { color: var(--rule, var(--hot)); font-weight: 700; }
+.movement span { color: var(--dim); letter-spacing: .04em; font-size: 9px; }
+.movement[data-rule="flank"] { --rule: var(--hot); --rule-line: rgba(255,46,110,.3); --rule-fill: rgba(255,46,110,.09); }
+.movement[data-rule="elite"] { --rule: var(--gold); --rule-line: rgba(255,209,102,.32); --rule-fill: rgba(255,209,102,.09); }
+.movement[data-rule="hush"] { --rule: var(--violet); --rule-line: rgba(176,107,255,.32); --rule-fill: rgba(176,107,255,.09); }
+
+.ensemble { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.ensemble li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: .1em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  border-left: 2px solid var(--line);
+  background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.012));
+}
+.ensemble li.empty { color: var(--dim); border-left-color: transparent; background: none; padding-left: 0; }
+.ensemble li i {
+  font-style: normal;
+  color: var(--ink-2);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.06);
+}
+
+/* Health has to be readable at a glance mid-dodge, so it is pips rather than a
+   number: quantity is faster to read than digits when you are busy. */
+.health { margin-top: 9px; display: flex; flex-direction: column; gap: 5px; }
+.health-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  letter-spacing: .16em;
+  color: var(--dim);
+}
+.pips { display: flex; gap: 4px; align-items: center; }
+.pips i {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: #131829;
+  border: 1px solid #232a44;
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.pips i.on { background: var(--green); border-color: var(--green); box-shadow: 0 0 8px rgba(92,255,157,.55); }
+.pips i.on.warn { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 8px rgba(255,209,102,.55); }
+.pips i.on.crit { background: var(--hot); border-color: var(--hot); box-shadow: 0 0 10px rgba(255,46,110,.7); }
+.pips i.life { border-radius: 50%; width: 10px; height: 10px; }
+.pips i.bomb.on { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 8px rgba(255,209,102,.5); }
+.pips i.well { border-radius: 50%; }
+/* Two stocks share one row; the gap is what says where bombs end and black
+   holes begin, since both are "the button you press when boxed in". */
+.pips i.well:first-of-type { margin-left: 8px; }
+.pips i.well.on { background: var(--violet); border-color: var(--violet); box-shadow: 0 0 8px rgba(176,107,255,.6); }
+.pips i.life.on { background: var(--cool); border-color: var(--cool); box-shadow: 0 0 8px rgba(53,230,255,.55); }
+
+/* ---------- mix ---------- */
+
+/* Key and groove read as one line, the way a now-playing display does, instead
+   of as two label/value rows. Saves a row and says more. */
+.nowline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--cool);
+}
+.nowline em { color: var(--dim); font-style: normal; }
+.nowline b:last-of-type { color: var(--ink); }
+
+/* The reason the music is doing what it is doing, in words. */
+.reason {
+  margin: 4px 0 0;
+  min-height: 1em;
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--gold);
+  opacity: .85;
+}
+.reason:empty { display: none; }
+
+.meter { margin: 9px 0 6px; }
+.meter label {
+  font-size: 9px;
+  letter-spacing: .24em;
+  color: var(--dim);
+  display: flex;
+  justify-content: space-between;
+}
+.meter label em { font-style: normal; color: var(--cool); letter-spacing: .12em; }
+.meter .bar {
+  height: 8px;
+  margin-top: 5px;
+  background: var(--sunk);
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.5);
+}
+.meter .bar i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--green), var(--gold) 55%, var(--hot));
+  box-shadow: 0 0 10px rgba(255,209,102,.35);
+  transition: width .1s linear;
+}
+
+/*
+ * A score, not a set of meters. Level bars say how loud a layer is, which is
+ * not what music is; this shows the notes actually being played this bar.
+ *
+ * The element is sized in CSS and the HUD matches the backing store to the
+ * rendered box at device pixel ratio. It used to be a 520x300 bitmap squeezed
+ * into a 347x200 box: every lane label was resampled down to about eight
+ * pixels tall, which is why the most distinctive thing on the page also looked
+ * like the blurriest.
+ */
+.score {
+  width: 100%;
+  height: 190px;
+  margin: 4px 0 8px;
+  display: block;
+  border-radius: 4px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.45);
+}
+
+/*
+ * The generated source, at readable weight.
+ *
+ * This is the evidence for the entire premise — that nothing is pre-recorded —
+ * and it was 9.5px in the same grey as the disabled text. Now it is tokenised
+ * and coloured like source, on its own sunk surface.
+ */
+.code {
+  position: relative;
+  margin: 0;
+  font: inherit;
+  font-size: 9.5px;
+  line-height: 1.75;
+  color: var(--ink-2);
+  white-space: pre;
+  overflow: hidden;
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border-radius: 4px;
+  background: var(--sunk);
+  border: 1px solid var(--line-soft);
+}
+/*
+ * A long line fades out; it does not get guillotined.
+ *
+ * The hats line runs to about 49 characters, which is wider than the panel at
+ * its 268px floor, and `overflow: hidden` cut it mid-token against the border —
+ * which reads as a rendering bug rather than as a line that continues. Wrapping
+ * is not available here: the five lines are a fixed height budget and the block
+ * below them is not allowed to move. The gradient is painted, not a mask, and
+ * matches the block's own background, so it costs a fill of 26 CSS pixels.
+ */
+.code::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 26px;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(7, 9, 17, 0), var(--sunk) 78%);
+}
+.code b { color: var(--cool); font-weight: 700; }
+.code i { color: var(--ink-2); font-style: normal; }
+.code .s { color: var(--gold); }
+.code .n { color: #8fb7ff; }
+.code .f { color: var(--ink); }
+.code .p { color: #4d587a; }
+
+/* Only widen the source where the panel is actually wide. Below ~1180px the
+   panel is at its 268px floor and 10.5px lines run past the right edge — and
+   the block is overflow:hidden, so that reads as a truncated line rather than
+   as bigger type. */
+@media (min-width: 1180px) {
+  .code { font-size: 10.5px; }
+}
+
+/*
+ * The cramped desktop: a narrow window, a short one, or both.
+ *
+ * At 1000x800 the panel is pinned at its 268px floor and the roll is pinned at
+ * its 90px minimum — eleven lanes at eight pixels each — because every block
+ * above it is spending the same vertical budget on padding. Buying ~25px back
+ * from chrome buys it for the one thing on the page worth looking at. Height is
+ * in the query as well as width: a 1200x800 window is wide and just as short,
+ * and the roll is squeezed by the height, not by the width.
+ */
+@media (min-width: 901px) and (max-width: 1179px),
+       (min-width: 901px) and (max-height: 850px) {
+  .block { padding: 7px 10px 8px; }
+  .block h3 { margin-bottom: 6px; padding-bottom: 5px; }
+  .big { font-size: 28px; }
+  .mult { font-size: 18px; }
+  .health { margin-top: 7px; gap: 4px; }
+  .meter { margin: 7px 0 5px; }
+  .score { margin: 3px 0 6px; }
+}
+
+/* ---------- the band ----------
+ *
+ * The permanent loadout: level, XP, and the two slot rows. The chips take the
+ * ability's own character hue, computed in `render/levelup.ts` and shared with
+ * the offer screen's cards so one instrument is one colour everywhere.
+ */
+
+.lv-chip {
+  font-size: 9px;
+  letter-spacing: .18em;
+  color: var(--dim);
+  font-weight: 700;
+}
+.lv-chip i { font-style: normal; color: var(--green); font-size: 11px; }
+
+/* Thin, and no transition on the fill.
+ *
+ * The energy meter above eases its width because it is a mood; this is a
+ * quantity the player is counting toward a level, and easing it makes the bar
+ * disagree with the number beside it for a tenth of a second every time a shard
+ * lands. It also has to stay legible in peripheral vision, which is why the
+ * green is the flat one rather than the gradient. */
+.xp {
+  height: 5px;
+  margin-top: 7px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.5);
+}
+.xp i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #1fd8b0, var(--green));
+  box-shadow: 0 0 8px rgba(92,255,157,.4);
+}
+.xpline { margin-top: 5px; color: var(--dim); }
+.xpline b { color: var(--ink-2); font-weight: 600; }
+
+.chips { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.chips li {
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+/* Same fix as `.powerups li.slot` below, and the same reason: the glyph is
+   what tells you how many slots are still open, and at .55 alpha it composited
+   to 2.48:1. Two rules had drifted onto a private colour that neither the
+   palette nor any contrast check knew about. */
+.chips li.slot {
+  border-style: dashed;
+  border-color: rgba(120, 140, 170, .3);
+  color: var(--dim);
+  background: rgba(255,255,255,.014);
+  min-width: 26px;
+  text-align: center;
+}
+
+/* A fusion already assembled and waiting on a boss. Gold, because gold means
+   "payoff" everywhere in this game and nowhere else. */
+.fusion-ready {
+  margin: 8px 0 0;
+  font-size: 9px;
+  letter-spacing: .14em;
+  font-weight: 700;
+  color: var(--gold);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.fusion-ready b { color: #fff0c2; }
+/*
+ * The top of the tree, hotter than the rest of the family.
+ *
+ * A union is two evolved instruments combined and a committed run sees one in
+ * roughly half its attempts, so it should not look like the duet that is
+ * available most of the time. Same gold family rather than a new hue — gold
+ * already means "payoff" everywhere in this game and a union is the largest
+ * one — lifted in luminance and given a glow. The tier is carried by the glyph
+ * as well (a filled diamond against an open one), so the distinction survives
+ * for a player who cannot separate the two by colour.
+ */
+.fusion-ready.union { color: #ffeeb0; text-shadow: 0 0 10px rgba(255, 215, 60, .5); }
+.fusion-ready.union b { color: #ffffff; }
+.fusion-ready em {
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: .04em;
+  opacity: .62;
+  text-transform: none;
+}
+
+/* ---------- discovery + codex (persists across runs) ----------
+ *
+ * Class names checked against the whole stylesheet before use. `.opener` was
+ * invented for the starting-choice buttons while an identical name already
+ * existed for a full-bleed overlay, which made the feature invisible and
+ * unclickable; `domwiring` now fails on a duplicate, and the habit is to grep
+ * first anyway.
+ */
+
+.codex { text-align: center; }
+.codex summary {
+  cursor: pointer;
+  /* The marker is the only affordance saying this opens, so it stays. */
+  list-style: revert;
+}
+.codex-grid {
+  list-style: none;
+  margin: 8px auto 0;
+  padding: 0;
+  max-width: 26rem;
+  display: grid;
+  /* Two columns where there is room, one on a phone. */
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 2px 14px;
+  text-align: left;
+}
+.codex-grid li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  letter-spacing: .05em;
+  /*
+   * .55, not the .38 this wanted to be.
+   *
+   * Undiscovered rows should read as dimmer than found ones, and the instinct
+   * is to drop the alpha until they recede. At .38 it composites to 3.07:1 and
+   * `npm run legibility` fails it — AA wants 4.5 for body text, and an
+   * unreadable row is worse than one that is insufficiently recessive. The
+   * distinction is carried by the gold on `.found` and by the glyph (◈ against
+   * ·), both of which survive at any contrast; the alpha only has to be quiet,
+   * not invisible.
+   */
+  color: rgba(226, 234, 250, .55);
+}
+.codex-grid li b { font-weight: 700; }
+.codex-grid li em { font-style: normal; opacity: .7; text-transform: none; }
+/* Found rows in the run's gold, the same one the fusion banner and the
+   workbench use, so "this is a combination" reads identically everywhere. */
+.codex-grid li.found { color: #fff0c2; }
+
+/* ---------- discovery (persists across runs) ---------- */
+
+.discovered {
+  margin: 4px 0 0;
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: rgba(226, 234, 250, .55);
+}
+/* Gold only once the set is complete. Everywhere else in this game gold means
+   "a fusion is here"; finishing the collection is the largest version of that,
+   and it is the one moment this line has earned it. */
+.discovered.complete { color: var(--gold); }
+
+/* ---------- starters (title-screen starting choice) ----------
+ *
+ * NOT `.opener`. That class already exists, 150 lines up, for the TUNING UP
+ * intro overlay: `position: absolute; inset: 0; z-index: 5; pointer-events:
+ * none`. Naming these buttons `.opener` made each one a full-screen,
+ * click-through, absolutely-positioned box stacked on the others — the choice
+ * was unusable and invisible, and nothing in the suite could see it because
+ * the page never loaded here. Caught by `domwiring`'s layout check, which
+ * flagged "`.opener` centres a full-height column" and turned out to be
+ * reporting a name collision rather than the hazard it was written for.
+ */
+
+.starters { border: 0; margin: 14px 0 10px; padding: 0; }
+.starters legend {
+  padding: 0;
+  font-size: 9px;
+  letter-spacing: .18em;
+  font-weight: 700;
+  color: rgba(226, 234, 250, .5);
+}
+.starter-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.starter {
+  /* Sized so three sit on one row on a narrow phone rather than stacking into
+     a list, which would read as a menu instead of a choice between peers. */
+  flex: 1 1 8rem;
+  max-width: 12rem;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 234, 250, .18);
+  border-radius: 4px;
+  background: rgba(11, 14, 24, .55);
+  color: rgba(226, 234, 250, .78);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.starter b { display: block; font-size: 11px; letter-spacing: .12em; color: #dbe4f7; margin-bottom: 2px; }
+.starter em { font-style: normal; opacity: .62; }
+.starter:hover { border-color: rgba(226, 234, 250, .36); }
+/* The chosen one is stated in the border and the label weight as well as the
+   colour, so the selection survives for a player who cannot separate the two
+   by hue. `:focus-visible` keeps keyboard selection visible. */
+.starter[aria-checked="true"] {
+  border-color: var(--gold);
+  background: rgba(255, 215, 60, .08);
+  color: #fff0c2;
+}
+.starter[aria-checked="true"] b { color: #fff0c2; }
+.starter:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ---------- band (game-over build summary) ---------- */
+
+.band {
+  margin: 6px 0 0;
+  font-size: 10px;
+  letter-spacing: .06em;
+  line-height: 1.7;
+  color: rgba(226, 234, 250, .72);
+}
+/* Fused instruments in the run's gold, the same one the level-up card, the HUD
+   banner and the workbench use, so "this is a thing you combined" reads the
+   same everywhere it appears. */
+.band b { color: #fff0c2; font-weight: 700; }
+.band .near { display: block; margin-top: 4px; color: rgba(226, 234, 250, .5); }
+.band .near b { color: rgba(226, 234, 250, .78); }
+
+/* ---------- workbench (pause-screen build plan) ---------- */
+
+.workbench { margin: 14px 0 0; }
+.workbench h3 {
+  margin: 0 0 6px;
+  font-size: 9px;
+  letter-spacing: .16em;
+  font-weight: 700;
+  color: rgba(226, 234, 250, .55);
+}
+.combos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.combos li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: .06em;
+  /* Digits line up so the "+2 · +3" column can be scanned rather than read. */
+  font-variant-numeric: tabular-nums;
+  color: rgba(226, 234, 250, .78);
+}
+.combos b { color: #dbe4f7; font-weight: 700; }
+.combos em {
+  font-style: normal;
+  font-weight: 400;
+  opacity: .62;
+  letter-spacing: .03em;
+  text-transform: none;
+}
+/*
+ * Ready rows use the same gold the HUD banner and the level-up card use, so
+ * "you can take this now" means one thing everywhere in the game. A union is
+ * lifted again, matching `.fusion-ready.union` — the tier reads the same on
+ * both screens, and both carry it in the glyph as well as the colour.
+ */
+.combos li.ready { color: var(--gold); }
+.combos li.ready b { color: #fff0c2; }
+.combos li.union { color: #ffeeb0; }
+.combos li.union b { color: #fff; }
+
+/* ---------- loadout ---------- */
+
+.powerups { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.powerups li {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  background: rgba(53,230,255,.12);
+  border: 1px solid rgba(53,230,255,.35);
+  color: var(--cool);
+}
+.powerups li.empty { background: none; border-color: var(--line); color: var(--dim); }
+
+/* The empty slots. Beating a boss widens the loadout permanently, so the shape
+   of what you could be holding is part of the reward.
+
+   The dot was `rgba(120, 140, 170, .55)`, which composites to 2.48:1 — below
+   even the 3:1 that WCAG asks of a graphical indicator, let alone the 4.5:1
+   for text, and it IS text: the glyph is what tells you how many more things
+   you can hold. Its sibling `.empty` one rule up already used `--dim`, so the
+   bespoke translucent grey bought nothing except a colour that could not be
+   read. The dashed border stays translucent on purpose — a border is not text
+   and this one is decoration around the glyph that carries the meaning. */
+.powerups li.slot {
+  border-style: dashed;
+  border-color: rgba(120, 140, 170, .3);
+  color: var(--dim);
+  background: rgba(255,255,255,.014);
+  min-width: 30px;
+  text-align: center;
+}
+
+/* ---------- footer ---------- */
+
+.b-foot { padding: 8px 12px; }
+
+/* Volume lives in the panel rather than a settings menu: the player was told
+   it was too loud once, and the fix should be one click away, always. */
+.vol { display: flex; align-items: center; gap: 8px; }
+.vol button {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--cool);
+  background: rgba(53,230,255,.1);
+  border: 1px solid rgba(53,230,255,.35);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.vol button.muted { color: var(--hot); background: rgba(255,46,110,.12); border-color: rgba(255,46,110,.4); }
+.vol button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.vol b { font-size: 10px; color: var(--dim); min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.vol input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  appearance: none;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--cool) var(--fill, 75%), #10141f var(--fill, 75%));
+  cursor: pointer;
+}
+.vol input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--cool);
+  border: 0;
+  box-shadow: 0 0 6px rgba(53,230,255,.6);
+}
+.vol input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%; background: var(--cool); border: 0;
+}
+.vol input[type="range"]:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+/* Diagnostics on one line. Three label/value rows gave the frame counter the
+   same footprint as the health readout. */
+.diag {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: var(--dim);
+}
+.diag b { color: var(--ink-2); font-weight: 600; margin-right: 3px; font-variant-numeric: tabular-nums; }
+.diag .audio b { color: var(--dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  .screen button { transition: none; }
+  .meter .bar i, .mult, .beats i { transition: none; }
+  .live i { animation: none; }
+}
+
+/*
+ * Small screens and touch devices.
+ *
+ * The desktop layout puts a 268px panel beside a portrait playfield; on a phone
+ * that left the title screen's own button rendered outside the viewport, so the
+ * game could not even be started. Here the playfield takes the height it can
+ * get, the panel collapses to a strip of the numbers that still read at that
+ * size, and the overlay screens scroll rather than overflow.
+ */
+@media (max-width: 900px), (pointer: coarse) and (max-height: 900px) {
+  #app {
+    flex-direction: column;
+    padding: 6px;
+    gap: 4px;
+    justify-content: flex-start;
+  }
+
+  #stage {
+    flex: 1 1 auto;
+    height: auto;
+    width: auto;
+    max-width: 100%;
+    min-height: 0;
+  }
+  #playfield { box-shadow: 0 0 0 1px var(--line), 0 0 60px hsla(var(--hue), 80%, 55%, .10); }
+
+  /*
+   * A strip, not a shrunken desktop panel.
+   *
+   * The phone layout was the desktop stack of blocks under `max-height: 32vh;
+   * overflow: hidden`, so the MIX block was sliced through the middle of a row
+   * — the last thing on screen was a half-height "KEY", which reads as a broken
+   * page rather than as a hidden one. Here the blocks that cannot be useful at
+   * this size are removed outright and what is left is sized to fit whole.
+   */
+  #panel {
+    width: 100%;
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 4px;
+  }
+  #panel-head { display: none; }
+  /*
+   * Three tiers in about half the height the desktop stack wanted.
+   *
+   * Every pixel this readout takes is a pixel of playfield, and on a phone the
+   * playfield is the product. So: the run on one line, what it sounds like on
+   * the next, the loadout beside the volume. Block chrome pays for none of that
+   * — five headers with rules and five borders cost roughly 70px between them,
+   * which is a quarter of the strip spent on boxes.
+   */
+  .block {
+    flex: 1 1 100%;
+    /*
+     * `min-width: 0`, or the last row will not pair.
+     *
+     * A flex item's hypothetical main size is its basis clamped by its min
+     * size, and `min-width: auto` resolves to min-content — MIX's readouts are
+     * wider than the 60% it asks for, so the browser was breaking the line and
+     * putting the volume on a row of its own. Two rows became three, which is
+     * fifteen pixels of playfield spent on a slider.
+     */
+    min-width: 0;
+    padding: 5px 9px 6px;
+    border-radius: 5px;
+    background: rgba(11, 14, 24, .72);
+  }
+  .block h3 {
+    margin: 0 0 4px;
+    padding: 0;
+    border-bottom: 0;
+    font-size: 9px;
+    letter-spacing: .2em;
+  }
+  /*
+   * Three rows: the run, what you are holding, what it sounds like.
+   *
+   * MIX and the volume pair on the last one. LOADOUT is full width and one line
+   * high with its header inline — powerup uptime is ~95% now, so the chips are
+   * the usual case rather than the empty case, and five of them wrapped to
+   * three lines in any column narrow enough to share a row.
+   */
+  .b-loadout {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 9px;
+  }
+  .b-loadout h3 { margin: 0; flex: 0 0 auto; }
+  /*
+   * THE BAND, at phone scale: full width, header inline, both slot rows on one
+   * line. The permanent loadout is the thing a run is about, so unlike BEST it
+   * does not get hidden here — but two stacked rows and a labelled XP readout
+   * is most of a phone strip, so the label line goes and the rows share.
+   */
+  .b-band {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 9px;
+    padding: 5px 9px;
+  }
+  .b-band h3 { margin: 0; flex: 0 0 auto; }
+  .b-band .xp { flex: 1 1 60px; margin-top: 0; }
+  .b-band .xpline { display: none; }
+  .chips { margin-top: 0; }
+  .chips li { padding: 2px 5px; font-size: 9px; }
+  .fusion-ready { margin-top: 0; flex: 1 1 100%; font-size: 9px; }
+  .block.grow { flex: 1 1 60%; }
+  .b-foot { flex: 1 1 36%; display: flex; align-items: center; padding: 5px 9px; }
+  .b-foot .vol { width: 100%; }
+  .b-mix::before { top: 6px; bottom: 6px; }
+
+  .big { font-size: 24px; }
+  .mult { font-size: 17px; }
+  .mult em { font-size: 9px; padding: 2px 4px; }
+  .row { margin: 1px 0; font-size: 10px; }
+  /* BEST is a between-runs number; mid-dodge on a phone it is a row of nothing. */
+  .row.best { display: none; }
+
+  /*
+   * Health on one line, without its labels.
+   *
+   * Three labelled rows is 48px of a strip that has about 150. Shape and colour
+   * already carry it — green squares are shield, cyan circles are lives, gold
+   * squares and violet circles are the two panic buttons — and that encoding is
+   * what the pips were designed around in the first place.
+   */
+  .health { margin-top: 6px; flex-direction: row; align-items: center; gap: 13px; }
+  .health-row > span { display: none; }
+  .pips { gap: 3px; }
+  .pips i { width: 10px; height: 10px; }
+  .pips i.life { width: 9px; height: 9px; }
+  .pips i.well:first-of-type { margin-left: 6px; }
+
+  .nowline { font-size: 11px; gap: 5px; }
+  .meter { margin: 5px 0 0; }
+  .meter label { font-size: 9px; }
+  .movement { margin-top: 5px; }
+  .powerups li { padding: 3px 6px; }
+
+  /* The opening card, at phone scale. */
+  .opener { gap: 10px; padding: 14px; }
+  .opener-title { letter-spacing: .38em; text-indent: .38em; }
+  .opener-sub { font-size: 10px; }
+  .opener-list { width: 94%; padding: 10px 12px; gap: 7px; }
+  .opener-list li { grid-template-columns: 46px 60px 1fr; gap: 8px; font-size: 10px; }
+  .opener-list li em { font-size: 9px; }
+  .opener-foot { font-size: 9px; letter-spacing: .14em; }
+
+  /*
+   * On a phone the action buttons go *under* the playfield, not on top of it.
+   *
+   * They were absolutely positioned at the stage's bottom-right corner at 72%
+   * opacity, which put three opaque 62x44 blocks over the lower-right of the
+   * play area — the part of the screen a right thumb is already covering and
+   * bullets still travel through. A bullet behind a button is a hit the player
+   * never had a chance to read.
+   *
+   * As a row below the stage they occlude nothing, and the reach is better:
+   * one thumb drags on the playfield to fly, the other taps the row.
+   */
+  .touch {
+    position: static;
+    flex-direction: row;
+    justify-content: center;
+    gap: 10px;
+    padding: 2px 0;
+    flex: 0 0 auto;
+    /* No `order`: the DOM is already stage -> touch -> panel, and setting
+       order:1 here put the buttons below the MIX panel and off the bottom of
+       the screen, which is the longest reach on the page. */
+  }
+  .touch button {
+    width: auto;
+    flex: 1 1 0;
+    max-width: 140px;
+    height: 40px;
+  }
+
+  /* Too small to read a live score, generated code, a roster or a frame
+     counter. What is left is the run and one line of what it sounds like. */
+  .score,
+  .code,
+  .reason,
+  .diag,
+  .b-stage { display: none; }
+
+  .screen {
+    overflow-y: auto;
+    padding: 16px 12px;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  .screen h1 { font-size: clamp(26px, 8vw, 40px); margin-top: 4px; }
+  .screen { padding: 14px 12px 20px; }
+  .hero { gap: 7px; }
+  .eyebrow { font-size: 9px; letter-spacing: .2em; padding: 4px 9px; }
+  .tagline, .warning, .touch-hint { font-size: 10px; }
+  .controls { font-size: 10px; gap: 4px 12px; }
+  .runstats { padding: 8px 10px; gap: 3px 6px; }
+  .runstats dd { font-size: 17px; }
+  .stat { font-size: 38px; }
+  .screen button { padding: 14px 22px; }
+}
+
+/*
+ * A phone player will never press W.
+ *
+ * The title screen led with seven rows of keycaps and put the only instruction
+ * that applies to a touchscreen — drag anywhere to fly and fire — underneath
+ * them, below the fold of a scrolling overlay. Someone opening this on a phone
+ * had to scroll past controls they do not have to find the one they do.
+ *
+ * Gated on a coarse *primary* pointer, so a laptop with a touchscreen still
+ * reports fine and still gets the full key list. The pause screen keeps its
+ * legend either way: reaching it requires a keyboard in the first place.
+ */
+@media (pointer: coarse) and (max-width: 900px) {
+  #title-screen .controls { display: none; }
+  #title-screen .touch-hint {
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 10px 16px;
+    border: 1px solid rgba(53, 230, 255, .28);
+    border-radius: 8px;
+    background: rgba(53, 230, 255, .06);
+  }
+}

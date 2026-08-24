@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MusicWars</title>
+    <meta name="description" content="A bullet hell whose soundtrack is generated live from the fight." />
+    <meta name="theme-color" content="#05060c" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305060c'/%3E%3Cpath d='M16 4 L26 26 L16 21 L6 26 Z' fill='%2335e6ff'/%3E%3Ccircle cx='16' cy='18' r='3' fill='%23ff2e6e'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <main id="stage">
+        <canvas id="playfield" width="900" height="1120"></canvas>
+        <canvas id="overlay" width="900" height="1120"></canvas>
+
+        <!--
+          The opening.
+
+          There are about four bars between START and the first enemy while the
+          arrangement assembles itself — deliberate, and the reason the game
+          exists — but the playfield was empty for all of it and an empty
+          playfield reads as a broken game to anyone who does not already know
+          the premise. This says what the wait is: the band is arriving, and you
+          can watch each player take the stage.
+
+          It lives under the .screen overlays (z-index 5 against their 10) and is
+          only ever shown while the field is provably empty, so it can never
+          cover a bullet. The HUD fills the list.
+        -->
+        <div id="opening" class="opener hidden" aria-hidden="true">
+          <p class="opener-title">TUNING UP</p>
+          <p class="opener-sub">the band takes the stage before the fight does</p>
+          <ul id="opening-list" class="opener-list"></ul>
+          <p class="opener-foot">nothing you are about to hear was recorded in advance</p>
+        </div>
+
+        <div id="title-screen" class="screen">
+          <div class="hero">
+            <p class="eyebrow"><i></i>GENERATED LIVE &middot; NOTHING PRE-RECORDED</p>
+            <h1>MUSIC<span>WARS</span></h1>
+            <p class="tagline">A bullet hell scored in real time. Every musician on stage plays their part &mdash; the mix <em>is</em> the battlefield.</p>
+          </div>
+          <!-- The opening choice. Every run used to start with the same gun, so
+               the first real decision arrived minutes in. Three openers that
+               measured as viable AND play least alike; see `prog.STARTERS`. -->
+          <fieldset class="starters" id="starters">
+            <legend>OPEN WITH</legend>
+            <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
+          </fieldset>
+          <button id="start-button" type="button">PRESS TO BEGIN</button>
+          <p class="best-line" id="title-best"></p>
+          <!-- What has ever been made, across runs. The fusion tree used to
+               vanish with the run; this is the only thing in the game that
+               persists past one.
+
+               A native <details> so the grid is one line until asked for: the
+               title screen already carries a hero, a tagline, three openers, a
+               start button and a control list, and a fourteen-row table
+               unfurled by default would bury all of it. Collapsed also means
+               no JS toggle to get wrong. See `game/discovery.ts`. -->
+          <details class="codex">
+            <summary class="discovered" id="title-discovered"></summary>
+            <ul class="codex-grid" id="codex-grid"></ul>
+          </details>
+          <dl class="controls">
+            <div><dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
+            <div><dt>Focus</dt><dd><kbd>Shift</kbd></dd></div>
+            <div><dt>Bomb</dt><dd><kbd>X</kbd></dd></div>
+            <div><dt>Black hole</dt><dd><kbd>C</kbd></dd></div>
+            <div><dt>Pause</dt><dd><kbd>P</kbd><kbd>Esc</kbd></dd></div>
+            <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
+            <div><dt>Level up</dt><dd><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><em>recruit a musician</em></dd></div>
+          </dl>
+          <p class="touch-hint">On a touchscreen: drag anywhere to fly and fire.</p>
+          <p class="warning">Headphones recommended. Nothing is pre-recorded &mdash; the track is generated live from the fight.</p>
+        </div>
+
+        <div id="pause-screen" class="screen hidden">
+          <h2>PAUSED</h2>
+          <dl class="runstats">
+            <div><dt>SCORE</dt><dd id="pause-score">0</dd></div>
+            <div><dt>WAVE</dt><dd id="pause-wave">1</dd></div>
+            <div><dt>MULTIPLIER</dt><dd id="pause-mult">x1</dd></div>
+            <div><dt>NOTES</dt><dd id="pause-notes">0</dd></div>
+          </dl>
+          <p class="nowplaying" id="pause-music"></p>
+
+          <!-- The build plan. The HUD's one-line banner shows only the most
+               urgent combination, which is right mid-fight and useless for
+               planning; this is the same data in full, and a pause is the one
+               moment it can be read. Populated from `combinationPlan`. -->
+          <section class="workbench">
+            <h3>WORKBENCH</h3>
+            <ul class="combos" id="pause-combos"></ul>
+            <p class="sub" id="pause-combos-none">nothing in reach yet — take an instrument to its ceiling</p>
+          </section>
+
+          <dl class="controls">
+            <div><dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
+            <div><dt>Focus</dt><dd><kbd>Shift</kbd><em>tighter, harder</em></dd></div>
+            <div><dt>Bomb</dt><dd><kbd>X</kbd><em>clears the screen</em></dd></div>
+            <div><dt>Black hole</dt><dd><kbd>C</kbd><em>turns bullets into notes</em></dd></div>
+            <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
+            <div><dt>Level up</dt><dd><kbd>1</kbd>&ndash;<kbd>4</kbd><em>pick</em> <kbd>R</kbd><em>reroll</em> <kbd>Shift</kbd>+<kbd>1</kbd>&ndash;<kbd>4</kbd><em>banish</em> <kbd>Q</kbd><em>skip</em></dd></div>
+          </dl>
+          <p class="sub">press <kbd>P</kbd> to resume</p>
+        </div>
+
+        <div id="gameover-screen" class="screen hidden">
+          <h2>RUN OVER</h2>
+          <p class="stat"><span id="final-score">0</span></p>
+          <p class="sub">reached wave <span id="final-wave">1</span></p>
+          <p class="sub" id="final-best">best 0</p>
+          <dl class="runstats">
+            <div><dt>NOTES</dt><dd id="final-notes">0</dd></div>
+            <div><dt>BEST MULT</dt><dd id="final-mult">x1</dd></div>
+            <div><dt>FLAWLESS</dt><dd id="final-flawless">0</dd></div>
+            <div><dt>GRAZES</dt><dd id="final-grazes">0</dd></div>
+          </dl>
+          <p class="heard" id="final-heard"></p>
+          <!-- What you BUILT, and what you nearly built. The end screen is
+               where a run's build story lands and where the next run is
+               decided; it showed the music you heard and nothing about the
+               band you assembled. Populated from `combinationPlan`. -->
+          <p class="band" id="final-band"></p>
+          <button id="retry-button" type="button">AGAIN</button>
+        </div>
+      </main>
+
+      <!-- No aria-hidden: `.touch.hidden { display: none }` already keeps this out
+     of the accessibility tree while it is hidden, and the attribute made three
+     LIVE buttons unreachable to a screen reader on the phones that show them. -->
+        <div id="touch-controls" class="touch hidden">
+        <button id="touch-focus" type="button">FOCUS</button>
+        <button id="touch-bomb" type="button">BOMB</button>
+        <button id="touch-well" type="button">WELL</button>
+      </div>
+
+
+      <aside id="panel">
+        <!--
+          The panel identifies itself before it reports anything.
+
+          Every block used to be the same bordered box in the same weight, so a
+          screenshot of this product looked like a debug overlay rather than the
+          instrument it is. The masthead carries the wordmark and a transport —
+          four beat lamps and the tempo, driven by the real clock — so the first
+          thing the eye lands on says "live music", which is the whole pitch.
+        -->
+        <header id="panel-head">
+          <span class="mark">MUSIC<b>WARS</b></span>
+          <span class="transport">
+            <span id="ui-beats" class="beats" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <b id="ui-bpm">128</b><em>BPM</em>
+          </span>
+        </header>
+
+        <section class="block b-score">
+          <h3>SCORE<b class="wave-chip">WAVE <i id="ui-wave">1</i></b></h3>
+          <div class="scoreline">
+            <p class="big" id="ui-score">0</p>
+            <p class="mult" id="ui-combo">x1</p>
+          </div>
+          <p class="row tiny best"><span>BEST</span><b id="ui-best">0</b></p>
+          <!-- Set by the HUD only on waves that run under a named rule; the
+               banner announcing it is gone in two seconds, the rule is not. -->
+          <p class="movement hidden" id="ui-movement"></p>
+          <div class="health">
+            <div class="health-row">
+              <span>SHIELD</span>
+              <b id="ui-hp" class="pips"></b>
+            </div>
+            <div class="health-row">
+              <span>LIVES</span>
+              <b id="ui-lives" class="pips"></b>
+            </div>
+            <div class="health-row">
+              <span>BOMB / WELL</span>
+              <b id="ui-stock" class="pips"></b>
+            </div>
+          </div>
+        </section>
+
+        <section class="block b-stage">
+          <h3>ON STAGE</h3>
+          <ul id="ui-ensemble" class="ensemble"><li class="empty">empty stage</li></ul>
+        </section>
+
+        <!--
+          The band.
+
+          The loadout below is the *temporary* half — field-dropped surges that
+          expire. This is the permanent half, and after the arena conversion it
+          is the more important of the two by a wide margin: every id in here is
+          read by `audio/layers.ts`, so these two rows literally are the mix. A
+          player who cannot see their ensemble cannot tell that a level-up did
+          anything, and "the loadout is the mix" is the whole premise.
+
+          PLAYERS and RIG are separate rows because they occupy separate slot
+          pools. Confusing them is the one way to waste a level-up.
+        -->
+        <section class="block b-band">
+          <h3>THE BAND<b class="lv-chip">LV&nbsp;<i id="ui-level">1</i></b></h3>
+          <div class="xp" title="experience toward the next musician"><i id="ui-xp"></i></div>
+          <p class="row tiny xpline"><span id="ui-slots">4 players &middot; 3 rig</span><b id="ui-xpnum">0 / 6</b></p>
+          <ul id="ui-players" class="chips"></ul>
+          <ul id="ui-rig" class="chips"></ul>
+          <!-- A fusion the player has already assembled, waiting on the next
+               boss. A reward nobody can see coming cannot be played toward. -->
+          <p class="fusion-ready hidden" id="ui-fusion"></p>
+        </section>
+
+        <section class="block b-loadout">
+          <h3>LOADOUT</h3>
+          <ul id="ui-powerups" class="powerups"></ul>
+        </section>
+
+        <!--
+          The signature block. It is the reason this project exists, so it is
+          the one thing on the page allowed to look expensive: an accent rail,
+          the section badge in the header, and the roll and the generated source
+          given the room the readouts were wasting.
+        -->
+        <section class="block grow b-mix">
+          <h3>MIX<b class="live"><i></i><span id="ui-section">intro</span></b></h3>
+          <p class="nowline"><b id="ui-key">A aeolian</b><em>&middot;</em><b id="ui-feel">four-to-the-floor</b></p>
+          <p class="reason" id="ui-reason"></p>
+          <div class="meter" title="what the arrangement is running on: danger or progress, whichever is higher">
+            <label>ENERGY <em id="ui-driver"></em></label>
+            <div class="bar"><i id="ui-tension"></i></div>
+          </div>
+          <canvas id="ui-notation" class="score" width="520" height="300" aria-label="the bar currently being played, one lane per instrument"></canvas>
+          <pre id="ui-code" class="code" aria-label="the Strudel source generated for this bar"></pre>
+        </section>
+
+        <section class="block b-foot">
+          <div class="vol">
+            <button id="ui-mute" type="button" title="Mute (M)" aria-label="Mute">&#9835;</button>
+            <input id="ui-volume" type="range" min="0" max="100" value="75" aria-label="Master volume" />
+            <b id="ui-volnum">75</b>
+          </div>
+          <p class="diag">
+            <span><b id="ui-fps">--</b>fps</span>
+            <span><b id="ui-bullets">0</b>bullets</span>
+            <span class="audio"><b id="ui-audio">idle</b></span>
+          </p>
+        </section>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
