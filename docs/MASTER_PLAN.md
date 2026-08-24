@@ -377,13 +377,13 @@ charter is browserless):
 
 | Gate | Property | Design notes (post-review) |
 |---|---|---|
-| `onsetflux` | audible onset rate | **Two-sided**: scheduler-side audible-onset count (the diagnosis unit, past AUDIBLE_FLOOR) *and* rendered-master flux from the browser recorder, cross-calibrated on the current build. Music-only arms at S1; +SFX at S6. Target set by calibration; the *reduction* is owned by S5's onset-diet table |
+| `onsetflux` | audible onset rate | **Two-sided**: scheduler-side audible-onset count (the diagnosis unit, past AUDIBLE_FLOOR) *and* rendered-master flux from the browser recorder, cross-calibrated on the current build. Music-only arms at S1; +SFX at S6. Target from calibration; the *reduction* is owned by S5's onset-diet table. **The rendered side MUST divide by capture coverage or refuse the file.** The audio thread does not always run in real time here — measured coverage 100.1 / 100.0 / 92.1 / **66.4**% across four runs, with delivery 100% and zero ring overruns every time, i.e. the graph itself rendered 41.4s of audio in 45.0s of wall clock. A rate taken from such a file is biased high by exactly 1/coverage, and cross-calibration would then blame the score for the harness stalling |
 | `sustainshare` | sustained-vs-transient energy | **Banded 55–75%**, K-weighted, with a cap on any single stem's share of sustained loudness — an unbounded loud drone must not be able to satisfy it (drop-economy shape) |
 | `attackfloor` | envelope params on scheduled haps (never source text) | **BUILT + MEASURED.** Gates attack ≥20ms and **TAIL** ≥250ms, where tail = attack+decay on a `sustain(0)` lane and release on a sustaining one. Gating `release` literally — as this row said in v2 — is **pre-gamed**: superdough only runs the release ramp *from* sustain, so on the 100%-sustain-0 motor `.release(0.3)` turns the row green with zero audible change. Allowlist is `clap`/`fx` only — `kick` (263ms) and `power` (400/500ms) already pass |
 | `wetfloor` | dry/wet inversion guard | motor/bass room ≥.1 (queried) + harmony-orbit tail ≥ −20dB vs onsets (rendered) |
 | `roughness-exposure` | roughness integrated over 3 simulated minutes | **Absolute** roughness-seconds/min ceiling (not only the zero-sum chords+lead share); gain-weighted; **ERB-width bands below MIDI ~48** so drone-vs-bass beating is visible to it |
 | `envcurve` | intensity→envelope continuity | Envelope lengths are per-hap **rendering from the raw signal** (never in the rebuild key — stated in S5); the gate pins the intensity bucket, sweeps the raw signal both directions (hysteresis-aware) |
-| `crest` + listening artefact | full-mix WAVs, human-judged | Rendered by the **browser-capture recorder** (S0) — `render.mjs` stays writing-only, per its own header |
+| `crest` + listening artefact | full-mix WAVs, human-judged | **BUILT.** `tools/capture.mjs` produces real 44.1kHz stereo WAVs off the live master, verified by re-reading from disk, with a control that forces failure. **The ≤14dB crest threshold in v2 was invented and is already wrong:** today's unmodified build measures 13.2 / 14.0 / **19.9** dB at waves 4 / 6 / 12, so the gate would fail for reasons unrelated to choppiness. Calibrate it. Also do **not** compare these levels to `render.mjs`, which normalises every file to 0.89 peak and so runs ~20dB hotter for the same music |
 | `budget` | quantisation + pile-up | off-grid share ≤10% **excluding the allowlisted immediate class**; zero instants > **6** simultaneous onsets (one number, everywhere) |
 | `sfxlatency` | combat feedback immediacy | event→audible ≤50ms for player-hit/graze — the property S6's quantisation would otherwise silently trade away |
 | `threatdensity` | bullets-per-second near the player, per wave | Built to the rewritten-`curve` design: whole-wave integration from one continuous run, boss waves compared to boss waves, **bot-independent probe** (parked-ship/fixed-ring), ≥4 reps; reads the declared population-budget constant |
@@ -572,3 +572,52 @@ integration, boss-vs-boss). **G2's central premise was half wrong:**
 surfaces — **and that file does not exist**. A comment naming a gate nobody wrote
 is the same drift defect this codebase keeps getting bitten by, freshly minted.
 Blocking the arena change until it is written or the claims are removed.
+
+### 2026-08-24 — the browser half of the harness was never running
+
+**The verification harness was half-dark and nobody knew.** 109 of the 171 tools
+drive a real Chromium. On this box they did not fail — they **hung**, because
+the machine's disk is failing and the corruption landed inside the Playwright
+cache. Three of the four installed Chromium builds have unreadable files
+(different files each), and a bad-block read never returns: Chrome blocks
+forever in `folio_wait_bit_common` mmapping the snapshot, Playwright reports
+only "Timeout exceeded", and the zygote is left unkillable in D state (twelve
+had accumulated, up to an hour old, and they are what inflated this box's load
+average to 20). `chromedeps.mjs` could not see it — it picks the highest build
+number, which is one of the broken ones, and validates with `ldd`, which reads
+ELF headers out of the good part of the file and answers yes.
+
+`tools/lib/chromepath.mjs` health-probes each build plus the two data files
+Chrome mmaps at startup, keeps only fully readable ones, prefers a tmpfs copy,
+and publishes `CHROME_PATH` — which all 109 tools already pass to
+`chromium.launch`. It also sets `LD_LIBRARY_PATH` for the no-root native libs,
+which only 4 of the 109 were doing. Hooked via `lib/frozen.mjs` (107 of 109
+import it, and ES imports evaluate before the importing module's body). Inert on
+a healthy machine; its header says to delete it once the disk is replaced.
+
+**Consequence, immediately:** with the browser finally starting, `npm run smoke`
+— which is inside `npm run verify` — turned out to have been **broken since the
+hats→MOTOR rename**. It read `sourceLines().find(l => l.label === 'hats').code`
+and threw on `undefined`. A dead gate in the primary suite. Fixed, and it now
+throws a legible error listing the real labels if the name moves again. Assume
+other browser gates have rotted the same way and re-run the board before
+trusting any of them.
+
+**The capture recorder is built and verified.** Real 44.1kHz stereo WAVs off the
+live master, re-read from disk to confirm, with a positive control that forces a
+failure the tool correctly refuses to pass. Three corrections it forced:
+1. **`onsetflux`'s rendered side must divide by coverage or refuse the file.**
+   The audio thread does not always run in real time (coverage 100.1 / 100.0 /
+   92.1 / 66.4% with delivery at 100% and no ring overruns). §4 updated.
+2. **The `crest ≤14dB` threshold was invented and is already wrong** — the
+   unmodified build measures 13.2 / 14.0 / 19.9 dB. §4 updated to demand
+   calibration. This is the third invented threshold this phase has caught.
+3. `render.mjs` normalises to 0.89 peak, so it runs ~20dB hotter than the real
+   master. Never compare the two.
+
+**A real seed contract now exists.** `World` always accepted
+`constructor(seed = Date.now() & 0xffffffff)`, but `main.ts` never passed one, so
+the capture tool had to overwrite `world.rng`'s internals — a trick that depends
+on a field name. `?seed=0x51ed` now works, and `__musicwars.seed()` reads back
+what it resolved to. The S1/S2/S5 listening passes need fixed seeds to mean
+anything, so this was load-bearing.

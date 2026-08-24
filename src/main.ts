@@ -95,7 +95,26 @@ function paintBest(): void {
 }
 paintBest();
 
-const world = new World();
+/**
+ * The run's seed, and why it is reachable from outside.
+ *
+ * `World` has always accepted one — `constructor(seed = Date.now() & 0xffffffff)`
+ * — but this call site never passed anything, so every run was unrepeatable and
+ * the only way a tool could pin one was to reach in and overwrite `world.rng`'s
+ * internal state before `startRun()`. That works, and the capture tool did
+ * exactly that, but it is a trick that depends on a field name rather than a
+ * contract, and it silently stops working the day the generator is swapped.
+ *
+ * The master plan's S1/S2/S5 listening passes are before/after WAV pairs at a
+ * FIXED seed. Comparing two mixes recorded from two different runs is not a
+ * comparison at all, so this needs to be real. `?seed=0x51ed` — the seed the
+ * rest of the harness already uses — is now all it takes.
+ *
+ * Absent or unparseable, the behaviour is exactly what it was: clock-seeded.
+ */
+const seedParam = new URLSearchParams(location.search).get('seed');
+const parsedSeed = seedParam === null ? NaN : Number(seedParam);
+const world = new World(Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : undefined);
 const director = new MusicDirector();
 const renderer = new Renderer(playfield, overlay, world);
 const hud = new Hud();
@@ -827,6 +846,9 @@ if (import.meta.env.DEV) {
     loop,
     startRun,
     readout: () => director.readout(world.transport),
+    // What ?seed= actually resolved to, so a capture can record the seed that
+    // produced the file rather than the one it hoped for.
+    seed: () => (Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : null),
     probe: () => {
       // Lazily imported so the validator never reaches a production bundle.
       return import('./audio/probe').then((m) => m.findNonFinite(director.masterPattern(), 8));
