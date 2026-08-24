@@ -22,7 +22,6 @@
     "motif": "node tools/motif.mjs",
     "render": "node --experimental-transform-types tools/render.mjs",
     "spectrum": "node tools/spectrum.mjs",
-    "themesearch": "node tools/themesearch.mjs",
     "motorcheck": "node --experimental-transform-types tools/motorcheck.mjs",
     "leadcheck": "node --experimental-transform-types tools/leadcheck.mjs",
     "interlock": "node --experimental-transform-types tools/interlock.mjs",

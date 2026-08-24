@@ -1,5 +1,15 @@
 # MusicWars — implementation plan, two tracks
 
+> **SUPERSEDED — historical record only.** The governing plan is
+> [`MASTER_PLAN.md`](MASTER_PLAN.md). Track A's measurements below are still the
+> best record of *why* the melody engine was rebuilt, and its unimplemented items
+> live on as MASTER_PLAN S7. Track B's structural half shipped (fixed 4+3 slots,
+> catalyst-spending fusions, fusion-as-offer-card, duets and unions); the rest is
+> dispositioned in MASTER_PLAN G0. Do not action this file directly — its slot
+> numbers, its trigger design and its `tools/themesearch.mjs` instruction have all
+> been overtaken. (themesearch.mjs is now deleted, as this plan asked.)
+
+
 I measured before planning. Three new numbers drive everything below; all are reproducible from this repo with no browser.
 
 **Measurement 1 — the themes fail exactly the properties nobody built a tool for.** Script run against `THEMES` and `BOSS_THEME` in `src/audio/layers.ts` (8-bar undeveloped period, identity development):

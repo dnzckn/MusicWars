@@ -42,12 +42,14 @@
  *     pushed forward by the held beats so the grid never breaks. The world
  *     itself did dilate to 12% for a long time rather than stopping; see the
  *     offer block in `world.ts` for why that was right and why it changed.
- *   - **Six starting slots.** Slots start at three of each and grow by one per
- *     boss, which reuses the "ENSEMBLE GROWS" reward the game already has. This
- *     is not a cosmetic difference: with six slots open from the start, thirty
- *     level-ups spread across twelve tracks and *nothing ever reaches max*, so
- *     no evolution is reachable in a run of realistic length. Starting narrow
- *     forces the early specialisation that makes the payoff possible.
+ *   - **Slots are narrow and FIXED.** Four instrument slots and three rig
+ *     slots, for the whole run — see `STAND_SLOTS`/`RIG_SLOTS` below. This is
+ *     not cosmetic: with six of each open, thirty level-ups spread across
+ *     twelve tracks and *nothing ever reaches max*, so no evolution is
+ *     reachable in a run of realistic length. A cap only creates decisions
+ *     while it binds, so these ones never stop binding. Slots used to start at
+ *     three and grow by one per boss; that growth was removed, and bosses now
+ *     pay rerolls, banishes and fusion resolution instead.
  *
  * ## The one number that must be re-measured
  *
@@ -171,8 +173,8 @@ export const BANISHES_START = 1;
  * Vampire Survivors gets concentration for free from its inventory: six slots
  * fill early in a thirty-minute run, so almost every later offer is necessarily
  * a level-up of something already owned. A MusicWars run is a fraction of that
- * length, which is why slots start at three here — narrow slots do most of that
- * work, and these two numbers are what is left over.
+ * length, which is why the slots here are narrow and fixed — they do most of
+ * that work, and these two numbers are what is left over.
  *
  * **Mutable on purpose.** `tools/levelup.mjs` ablates each term against the same
  * seeds, because a bias whose effect has not been measured against its own

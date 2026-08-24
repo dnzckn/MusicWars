@@ -24,12 +24,16 @@ with no browser, no dev server and no AudioContext.
    Survivors' blue / green / red.
 2. Enough XP is a **level**. A level opens a **choice of four**.
 3. Choices go into two small inventories: **instruments** (they attack) and
-   **rig** (global multipliers). Both start at **3 slots** and grow by one per
-   boss, to 6.
+   **rig** (global multipliers). **Four instrument slots and three rig slots,
+   fixed for the whole run** — see `STAND_SLOTS`/`RIG_SLOTS`. A cap only
+   creates decisions while it binds, so these never stop binding.
 4. An instrument maxed at **8**, plus its one catalyst rig item maxed at **5**,
-   **fuses** on the next boss defeat into a new instrument with a different verb
-   and a different timbre.
-5. Two fused instruments can **union**, freeing a slot. That is the ceiling.
+   makes a **fusion card**, which arrives in a normal offer at a heavy weight.
+   Taking it costs the pick, spends the catalyst, frees that rig slot, and
+   seats a new instrument with a different verb and a different timbre.
+5. Any two instruments held at level **6** can **duet**; two evolved instruments
+   can **union**. Both consume their inputs and free a chair. That is the
+   ceiling.
 
 The one sentence that matters: **a level-up is recruiting a musician, and an
 evolution is two instruments becoming a new timbre.** Every ability id below is
@@ -49,10 +53,12 @@ Taken, because it is what makes the genre work:
   already hold*. That is the entire mechanism that turns a run into a build.
 - **Reroll, skip and banish**, the levers that let a player aim at an evolution
   rather than hope for one.
-- **Evolution at max level, gated behind a boss.** In VS the gate is a treasure
-  chest dropped by a boss after ten minutes. Here it is the boss itself, because
-  a boss defeat is already the biggest musical event the game has and the payoff
-  should attach to the moment you earned, not to a separate errand.
+- **Evolution at max level.** In VS the gate is a treasure chest dropped by a
+  boss after ten minutes. Here the gate is the level-up itself: a ready fusion
+  becomes a card you can see and must *choose*, at a weight that makes it hard
+  to miss. It was once resolved silently on boss defeat, which delivered the
+  most interesting event in the system as a notification; making it a pick
+  costs the player something and so means something.
 
 Deliberately *not* taken:
 
@@ -221,12 +227,9 @@ Also available: `prog.skipOffer(state)`, `prog.rerollOffer(state)`,
 
 ```ts
 const reward = prog.onBossDefeated(this.progression);
-// No slot growth: slots are fixed, and a boss's reward is a reroll, a banish,
-// and the fusion resolution below.
-for (const f of reward.fusions) {
-  this.bus.emit(f.kind === 'union' ? 'ability:union' : 'ability:evolve', /* … */);
-  this.announce(labelOf(f.result), f.line, 'fusion');
-}
+// No slot growth, and no fusing FOR you: `reward.fusions` is always empty.
+// A boss pays one reroll and one banish. The fusion is a card, resolved on the
+// pick — see the `ability:evolve`/`union`/`duet` emits on the offer path.
 ```
 
 **Firing** — `Player.weapon()` is replaced by iterating the ensemble:
