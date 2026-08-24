@@ -2805,6 +2805,28 @@ export class World {
     if (this.time - this.lastOfferClosed < OFFER_MIN_GAP) return;
     const offer = prog.openOffer(this.progression);
     if (!offer) return;
+    this.emitOffer(offer);
+    this.announce(`LEVEL ${offer.level}`, 'CHOOSE A MUSICIAN', 'item');
+  }
+
+  /**
+   * Push an offer's contents to the overlay.
+   *
+   * Every path that CHANGES the cards has to come through here. `LevelUpOverlay`
+   * only rebuilds its cards inside `open()`, and `open()` is reached from the
+   * `level:offer` handler alone (`renderer.ts`) — so a reroll or a banish that
+   * mutated the offer and emitted nothing left the player looking at the cards
+   * they had just spent a charge to replace. Two of the three printed controls
+   * did nothing visible, which is a complete explanation for why nobody used
+   * them.
+   *
+   * Re-emitting also replays the card entry animation and re-plays the offer
+   * cue. Both are wanted: a reroll should look and sound like new cards landed.
+   * `sawChoosing` resetting to false is harmless — `snap.choosing` is still
+   * true, so the next frame sets it straight back, and the falling-edge close
+   * still fires exactly once.
+   */
+  private emitOffer(offer: prog.Offer): void {
     this.bus.emit('level:offer', {
       level: offer.level,
       // Unfiltered and index-aligned with `chooseOption`. Dropping the grace
@@ -2820,7 +2842,6 @@ export class World {
       rerolls: offer.rerollsLeft,
       banishes: offer.banishesLeft,
     });
-    this.announce(`LEVEL ${offer.level}`, 'CHOOSE A MUSICIAN', 'item');
   }
 
   private applyOfferInput(input: {
@@ -2831,11 +2852,13 @@ export class World {
   }): void {
     if (!prog.isChoosing(this.progression)) return;
     if (input.reroll) {
-      prog.rerollOffer(this.progression);
+      const next = prog.rerollOffer(this.progression);
+      if (next) this.emitOffer(next);
       return;
     }
     if (input.banish !== undefined && input.banish >= 0) {
-      prog.banishOption(this.progression, input.banish);
+      const next = prog.banishOption(this.progression, input.banish);
+      if (next) this.emitOffer(next);
       return;
     }
     if (input.skip) {
@@ -2968,11 +2991,13 @@ export class World {
   }
 
   rerollOffer(): void {
-    prog.rerollOffer(this.progression);
+    const next = prog.rerollOffer(this.progression);
+    if (next) this.emitOffer(next);
   }
 
   banishOffer(index: number): void {
-    prog.banishOption(this.progression, index);
+    const next = prog.banishOption(this.progression, index);
+    if (next) this.emitOffer(next);
   }
 
   /**
