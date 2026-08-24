@@ -447,3 +447,51 @@ is `&&`-chained, use `suite` for a full board; interleave any A/B smaller than i
 6. **The Finale-killer's identity** — which authored union carries the meta-chase.
 7. **G9 performer count and the 3/4-time performer's scope** — flagship of Phase 5 or a
    post-1.0 content update.
+
+---
+
+## 7. Changelog — what has actually landed
+
+Append-only. Each entry names the commit, what was verified, and anything found
+that changes the plan above.
+
+### 2026-08-24 — Phase 0 opened
+
+**Baseline commit.** The repo had *zero commits*; the entire tree was untracked.
+Committed as-is first so every step below has a rollback point. Typecheck clean
+at baseline.
+
+**G0 — reroll/banish stale cards: FIXED.** Confirmed live exactly as the review
+predicted: `applyOfferInput`'s reroll and banish paths, and the public
+`rerollOffer`/`banishOffer`, all mutated the offer and emitted nothing, while
+`LevelUpOverlay` rebuilds its cards only inside `open()`, reached only from the
+`level:offer` handler. All offer-changing paths now route through one
+`World.emitOffer`. Verified: typecheck clean, `npm run wiring` holds.
+*Plan correction:* the old plan also blamed three wrong key hints. **They are
+already correct** — `levelup.ts` prints `R` / `⇧1-4` / `Q` and `input.ts` binds
+`KeyR` / `Shift`+digit / `KeyQ`. That fix landed at some point and the plan
+inherited a stale claim. G0's scope shrinks accordingly.
+
+**Housekeeping done.** `tools/themesearch.mjs` deleted (nothing but prose
+referenced it); `docs/redesign-plan.md` marked superseded;
+`docs/progression.md` corrected.
+
+**New finding — the prose has drifted further than the review caught.**
+`src/game/progression.ts` *contradicted itself*: its header paragraph said
+"slots start at three of each and grow by one per boss" while `STAND_SLOTS = 4`
+/ `RIG_SLOTS = 3` sat forty lines below, and a third paragraph said bosses no
+longer grant slots at all. Corrected. This is the "mirrors drift" lesson
+applying to source comments, not just docs.
+
+**New finding — dead code describing a removed mechanic (not yet fixed).**
+`prog.onBossDefeated` now returns `fusions: []` by design ("a boss no longer
+fuses FOR you"), but `World.rewardBoss` still loops over `reward.fusions` and
+emits `ability:union`/`ability:evolve` from inside that loop — unreachable — and
+that branch has no `ability:duet` case at all. The live emits are on the offer
+path (`world.ts:2906-2908`), which does cover all three. Deferred only because
+`world.ts` was being edited by the G6-Stage-0 workstream at the time.
+*Add to G0's scope.*
+
+**Open at end of entry:** the four parallel Phase 0 workstreams (`attackfloor`,
+`threatdensity`, the browser capture recorder, and the arena-constant
+unification), each with an independent adversarial verifier.
