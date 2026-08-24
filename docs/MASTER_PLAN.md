@@ -31,7 +31,7 @@ Missing, in one line each:
 | "Music is choppy, clavichord, abrasive" | Not gaps (five discontinuity causes already fixed and instrumented). It is **~28 musical onsets/s plus an unquantised SFX stream (~30 triggers/s at busy waves, throttled to ~15–25 sounding), nearly all on 1–10ms attacks**, an always-on sustain-0 pulse clock, five pitched lanes crammed into three octaves, no sustained bed, and a dry loud foreground over a wet quiet background. superdough's *default* envelope (1ms attack / 10ms release) is literally a clavichord; three of the four most-heard pitched voices use it or worse **by design**. |
 | "Very limited weapon and passive types, no mixing concept" | Count is not the problem — 12 instruments, 12 rigs, 14 authored fusions, generic pairwise duets and unions all ship. The problem is **7 behaviour shapes serving 26 ids** (VS has ~20 distinct spatial verbs), **duets that are stat-merges** (parent A's shape with bigger numbers — never "bolts that sweep"), **1:1 hint-fed recipes** that leave nothing to deduce, and **no rig-side mixing at all**. The mixing *system* exists; the mixing *moment* is hollow. |
 | "Map is static and too small" | Correct, and it's an assumption, not a line of code: arena == viewport, `camera.ts` is screenshake only, and the field constant lives in three copies plus a runtime reader (world.ts, index.html, style.css — electron regex-reads world.ts at launch, with a stale fallback). The answer is **bounded: yes; generated: also yes** — a world ≥2× the viewport per axis under a follow camera, with per-run *generated* layouts inside the walls. What's rejected is only the *infinite* scroll (walls are load-bearing: ECHO/CANON bounces, encirclement/escape-corridor, readable bullet patterns). |
-| (unstated but structural) | **No ending, no persistence, no composition escalation.** Runs dissipate instead of climaxing (VS's Reaper is one enemy definition); nothing carries between runs (VS: "no run earns nothing"); waves 9+ only add bodies — the recorded clutter-and-easiness defect. |
+| (unstated but structural) | **No ending, no persistence, no composition escalation.** Runs dissipate instead of climaxing (VS's Reaper is one enemy definition); nothing carries between runs (VS: "no run earns nothing"); and **boss escalation is flat** — measured, see §7: ladder threat actually rises 3.66× past wave 9, but the six bosses from wave 4 to 24 alternate two patterns at a dead-flat 1.05× threat. The clutter-and-easiness defect is real and it lives in the bosses, not the ladder. |
 
 The standing lesson that shapes everything below: **every prior disaster here was an unmeasured
 property** (themes optimised against existing gates; the 8Hz strobe; the drop economy feeding its
@@ -100,7 +100,7 @@ size budget. **Staging decision: pure synthesis first.**
 | ID | Work | Size | Notes |
 |---|---|---|---|
 | **S0** | **Instruments first**: the §4 gate set *plus* the **browser-capture recorder** (AudioWorklet ring buffer → WAV, per the `chop` pattern, with a silence/glitch control) — `tools/render.mjs`'s own header forbids judging sound on it ("no reverb, no delay… judge the WRITING"), so the listening artefact needs a real capture path. Plus the **calibration protocol** (§4) | M–L | The plan's insurance policy |
-| **S1** | Envelope floors everywhere + motor re-skin (S-a amp half + S-b) | M | Music-only `onsetflux` arms here |
+| **S1** | Envelope floors everywhere + motor re-skin + **bass** + **the chord stab** (S-a amp half + S-b) | M | Music-only `onsetflux` arms here. `attackfloor` is built and exits 1 on today's build — the S1 baseline is recorded in §7 |
 | **S6** | SFX classes + grid quantisation + simultaneity cap (moved up — no dependency on S2–S5): survival-critical feedback (player-hit, graze) stays **immediate** and is allowlisted; reward/ambient SFX snap to the next 16th; combined `onsetflux`/`budget` arm here; a **latency assertion** (event→audible ≤50ms for the immediate class) lands in `sfxcheck` in the same commit | M | Quantising *damage feedback* in a dodging game is the one thing the case studies (Rez, Peggle) never did — hence the class split |
 | **S2** | The two beds + pad thinning → gain curve (S-d, with both named reversals and the collapse/HUSHED behaviour) | M | `spectrum`/`mixaudit`/`polyphony` baselines re-established |
 | **S3** | Register boundary attenuation + upward displacement (S-c) | S | `masking` chords+lead share target from calibration |
@@ -155,17 +155,26 @@ ending.
 
 ### G2. Escalate composition, not bodies *(M, zero dependencies)*
 
-The full archetype roster is in play by wave 9; past that only count, HP scale and two urgency
-gears change — the recorded clutter-and-easiness defect. Fix:
+The full archetype roster is in play by wave 9. **`threatdensity` has now measured what happens after that, and it is not what this plan assumed.** Ladder waves *do* escalate: threat 1.65/s at wave 5 → 14.74/s at wave 23, a 3.66× rise against a 2.34× population rise, so threat outpaces bodies (ratio 1.56) and threat-per-body roughly doubles. **The flat part is the bosses**: six bosses across waves 4–24 alternate exactly two patterns at 6.9 · 4.8 · 7.5 · 4.8 · 7.5 · 4.9 — 1.05× escalation over twenty waves, with boss population slightly *falling*. Re-ordered accordingly:
 - **Gate first:** `threatdensity`, built to the rewritten-`curve` design (§4) — whole-wave
   integration, boss-vs-boss comparison, bot-independent probe.
 - Elite emitter-variants of existing archetypes (same silhouette + tier marker, new declarative
   `EmitterSpec`) every 3–4 waves past 9; more urgency gears; second emitters.
-- **Population budget becomes a declared constant** (flat past wave 13) that the gate reads —
-  G10 later re-baselines that constant explicitly, so the gate can't be quietly rewritten.
-- Boss variants: the conductor's two pattern alternates grow to four+; every 8th wave gets a
-  distinct boss spec whose mechanic teaches dodging grammar (e.g. a boss whose safe spot is the
-  off-beat).
+- **Population budget — do NOT naively declare a flat constant.** v2 said to. The measurement
+  says today's budget is `World.targetOnScreen()` = `round(4 + difficulty*5 + min(10,
+  escalation)*1.5)`, it is a *floor* that group spawns overshoot by ~2×, and it is **not** flat
+  past 13 (9 at wave 13 → 11 at wave 25). Capping it flat would roughly halve late-wave
+  population — a balance change wearing bookkeeping's clothes. Make it an explicit named
+  constant read by the gate, keep its current shape, and change the shape only as a deliberate,
+  separately-measured decision.
+- **FIRST PRIORITY — boss patterns.** This was one bullet among several when the plan was
+  written blind; the measurement says the two-pattern alternation *is* the whole boss escalation
+  story. The conductor's two alternates grow to four+, each boss cycle escalates rather than
+  repeats, and every 8th wave gets a distinct spec whose mechanic teaches dodging grammar (e.g.
+  a boss whose safe spot is the off-beat).
+- **SOLOIST/ELITE waves are unintended threat sinks** — waves 6 and 18 read 0.26 and 3.56
+  arrivals/s against neighbours at 3–10, because the movement collapses the group to one enemy.
+  Nothing says SOLOIST is meant to be a lull; wave 18 is a hole in the escalation band.
 - **Shard overflow banks into a jackpot** (VS's 400-gem law, currently: cap 320, overflow
   silently dropped): past the cap, value accrues into one growing rare shard — bounded entities,
   visible jackpot, three lines of code.
@@ -370,7 +379,7 @@ charter is browserless):
 |---|---|---|
 | `onsetflux` | audible onset rate | **Two-sided**: scheduler-side audible-onset count (the diagnosis unit, past AUDIBLE_FLOOR) *and* rendered-master flux from the browser recorder, cross-calibrated on the current build. Music-only arms at S1; +SFX at S6. Target set by calibration; the *reduction* is owned by S5's onset-diet table |
 | `sustainshare` | sustained-vs-transient energy | **Banded 55–75%**, K-weighted, with a cap on any single stem's share of sustained loudness — an unbounded loud drone must not be able to satisfy it (drop-economy shape) |
-| `attackfloor` | envelope params on scheduled haps (never source text) | pitched attack ≥20ms, release ≥250ms; drums/furniture allowlisted |
+| `attackfloor` | envelope params on scheduled haps (never source text) | **BUILT + MEASURED.** Gates attack ≥20ms and **TAIL** ≥250ms, where tail = attack+decay on a `sustain(0)` lane and release on a sustaining one. Gating `release` literally — as this row said in v2 — is **pre-gamed**: superdough only runs the release ramp *from* sustain, so on the 100%-sustain-0 motor `.release(0.3)` turns the row green with zero audible change. Allowlist is `clap`/`fx` only — `kick` (263ms) and `power` (400/500ms) already pass |
 | `wetfloor` | dry/wet inversion guard | motor/bass room ≥.1 (queried) + harmony-orbit tail ≥ −20dB vs onsets (rendered) |
 | `roughness-exposure` | roughness integrated over 3 simulated minutes | **Absolute** roughness-seconds/min ceiling (not only the zero-sum chords+lead share); gain-weighted; **ERB-width bands below MIDI ~48** so drone-vs-bass beating is visible to it |
 | `envcurve` | intensity→envelope continuity | Envelope lengths are per-hap **rendering from the raw signal** (never in the rebuild key — stated in S5); the gate pins the intensity bucket, sweeps the raw signal both directions (hysteresis-aware) |
@@ -495,3 +504,71 @@ path (`world.ts:2906-2908`), which does cover all three. Deferred only because
 **Open at end of entry:** the four parallel Phase 0 workstreams (`attackfloor`,
 `threatdensity`, the browser capture recorder, and the arena-constant
 unification), each with an independent adversarial verifier.
+
+### 2026-08-24 — Phase 0: the first two instruments exist, and they corrected the plan
+
+`tools/attackfloor.mjs` and `tools/threatdensity.mjs` are built, run, and **fail
+loudly on today's build** — which is what a gate on an unfixed build should do.
+Both carry working positive controls (attackfloor's runs game-free; threatdensity
+has `starve`/`boost`/`half`, and `boost` flips it green, proving it is not stuck
+at FAIL). Neither reads source text. Numbers below are the recorded baselines
+Track S and G2 will be judged against. *Pending the adversarial verifiers.*
+
+**attackfloor baseline** (seed 0x51ed, 720s, 385 bars, waves 0–21). Scheduled-hap
+rate **49.7/bar ≈ 26.1/s early, 64.1/bar ≈ 36.0/s late** — brackets the plan's
+quoted ~28/s, so the unit check passes, *and* the 29% early→late rise is
+"intensity = more onsets" measured in a single number.
+
+| stem | attack (ms) | sustain | tail lo/med/hi (ms) | no-attack | room | dBFS |
+|---|---|---|---|---|---|---|
+| hats (MOTOR) | 4.0 flat | **0** | **74 flat** | 0% | **0.00** | −27 |
+| bass | 1.0–12 | 0.42 | **10**/10/400 | **72%** | **0.00** | **−11** |
+| motifs | 1.0–60 | 0 (84%) | 10/71/221 | 92% | — | — |
+| lead | 6.0 flat | 0.55 | 340/720/910 | 0% | yes | — |
+| sub | 6.0 flat | 0.80 | 80 flat | 0% | 0.00 | −24 |
+| chords | 3–600 | 0.30 | 83/200/2225 | — | yes | — |
+| arp | 4.0 flat | 0.40 | 180 flat | 0% | delay | — |
+
+**Four corrections to Track S, all folded in above:**
+1. **§4's gate row was pre-gamed as written.** It said "release ≥250ms". superdough
+   only runs the release ramp *from* sustain, so on the 100%-sustain-0 motor,
+   appending `.release(0.3)` would have turned the gate green with **zero audible
+   change** — the "gates optimised against" failure, caught before it happened.
+   The gate measures **tail** (attack+decay when sustain is 0). Row rewritten.
+2. **BASS is the second offender and no S-step named it.** 72% of its haps set no
+   attack at all (inheriting superdough's 1ms), median tail **10ms**, and at
+   **−11 dBFS it is the loudest pitched lane in the mix — 16dB above the motor.**
+   Added to S1.
+3. **The pad is already fine; the square STAB is not** (3ms, sustain 0, 83ms tail,
+   26% of the chords lane). S-d's gain-curve remedy does not reach it. Added to S1.
+4. The plan's "three of four voices use the default envelope by design" conflates
+   two populations: `bass`/`motifs` genuinely *inherit* the default (omission);
+   `hats`/`arp`/`lead`/`sub` set explicit but tiny 4–6ms attacks (decision). The
+   remedies differ. Also: `power` and `kick` already pass, so the furniture
+   exemption the plan grants is only load-bearing for `clap` and `fx`.
+
+**threatdensity baseline** (6 seeds × 22 min, bot-independent probe, whole-wave
+integration, boss-vs-boss). **G2's central premise was half wrong:**
+- **Ladder waves escalate fine** — 1.65/s at wave 5 → 14.74/s at wave 23, a
+  **3.66× threat rise against a 2.34× population rise** (ratio 1.56, 6/6 seeds).
+  Threat-per-body roughly doubles. "Waves 9+ only add bodies" is not true of the
+  ladder.
+- **The bosses are the defect.** Six bosses, waves 4→24: `6.9 · 4.8 · 7.5 · 4.8 ·
+  7.5 · 4.9` — two alternating patterns, **1.05× escalation over twenty waves**,
+  repeating to within ~1%, with boss population slightly falling. G2 re-ordered:
+  boss patterns are now first priority, not one bullet among several.
+- **The "declared population constant" instruction was wrong.** Today's budget is
+  a *floor* (`targetOnScreen`), overshot ~2× by group spawns, and still climbing
+  at wave 25. Declaring it flat would halve late-wave population — a balance
+  change disguised as bookkeeping. Instruction rewritten.
+- **SOLOIST/ELITE waves are unintended lulls** (0.26 and 3.56 arrivals/s at waves
+  6 and 18 against neighbours at 3–10).
+- **`curve` structurally cannot see any of this**: its headline is
+  `pressure = bullets + enemies * 3`, which folds bodies into the number. The two
+  tools are not redundant.
+
+**Also found:** `src/game/arena.ts` and `src/style.css` both cite
+`tools/fieldsize.mjs` as the check that proves the world size agrees across
+surfaces — **and that file does not exist**. A comment naming a gate nobody wrote
+is the same drift defect this codebase keeps getting bitten by, freshly minted.
+Blocking the arena change until it is written or the claims are removed.
