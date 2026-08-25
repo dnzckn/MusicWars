@@ -3340,7 +3340,59 @@ export class World {
     return h % 360;
   }
 
-  /** Bolts along the aim, fanned slightly when there are several. */
+  /**
+   * Bolts that CONVERGE on the nearest targets, one each, rather than fanning
+   * around the aim.
+   *
+   * THE BUG THIS REPLACES, because it is worth recording exactly.
+   *
+   * `computeAim` resolves `seekAim` to the bearing of a specific chosen enemy —
+   * that is the whole point of the `seek` shape, whose definition in
+   * `weapons.ts` is literally "bolts toward the nearest target inside range".
+   * The old body then fanned every bolt AROUND that bearing:
+   *
+   *     const t = n === 1 ? 0 : i / (n - 1) - 0.5;
+   *     const angle = p.seekAim + t * spreadTotal;
+   *
+   * For any EVEN `n`, `t` never takes the value 0. At n = 2 it is exactly -0.5
+   * and +0.5, so both bolts left at `seekAim ± spreadTotal/2` and **nothing was
+   * ever fired along the aim at all** — the aim was the gap between the two
+   * bolts. PIZZICATO, the instrument every run starts with, is `count: 2`
+   * (`weapons.ts:254`). So from the first second of the game the starting
+   * weapon computed precisely where a target was and then shot either side of
+   * it, and it got worse on the even rungs of its own upgrade ladder.
+   *
+   * The miss is `distance * tan(spreadTotal / 2)`. At the old 0.32 rad total
+   * that is 19px at 120, 27px at the measured 170px median engagement range and
+   * 48px at 300, against a typical enemy radius of 15 and a bolt radius of 4.5.
+   * Measured live hit rate before this change: 17%, and zero hits at any range
+   * at or beyond 120px against a stationary target. "The gameplay doesn't feel
+   * snappy" was, in large part, "the gun misses".
+   *
+   * WHY CONVERGENCE RATHER THAN A NARROWER FAN. Narrowing the spread was the
+   * cheaper fix and it is the wrong one twice over. It only moves the range at
+   * which the straddle starts costing hits — at 0.12 rad total the bolts still
+   * bracket the target from about 325px, which is inside PIZZICATO's 620 range
+   * — and it leaves `count` as a stat that makes the weapon LESS accurate. A
+   * fan is a spray weapon's idiom; `seek` is the auto-targeting shape, and the
+   * two were fighting.
+   *
+   * Converging turns `count` into what a survivor player expects it to be: more
+   * bolts means more things dying at once, because each additional bolt takes
+   * the next nearest target. That is the same reading Vampire Survivors gives
+   * projectile-count upgrades, and it makes the number legible on screen
+   * instead of only in the stat block.
+   *
+   * The angle is computed from each bolt's own MUZZLE, not from the ship
+   * centre, so the lateral offset that separates them visually does not
+   * reintroduce a miss at close range — at 40px a 7px offset is 10 degrees.
+   *
+   * WHAT KEEPS ITS OLD BEHAVIOUR. With no target in range there is nothing to
+   * converge on, so the fan survives as the spray it always was, along the
+   * facing. That is the case the old code was actually tuned for and it is
+   * still the right answer: firing n parallel bolts into empty space would be
+   * strictly worse than covering an arc of it.
+   */
   private fireSeek(s: InstrumentStats): void {
     const p = this.player;
     const n = Math.max(1, Math.round(s.count));
@@ -3351,16 +3403,79 @@ export class World {
      * defensive crouch, and in an arena where the facing is retained it is how
      * you hold a firing line. Slow movement plus a steady heading plus a
      * tighter, harder shot is a coherent thing to want to do.
+     *
+     * With convergence it keeps a job: the damage bonus is unchanged, and the
+     * spread it tightens is now only the no-target spray.
      */
     const spreadTotal = p.focused ? 0.1 : 0.26 + n * 0.03;
     const damage = s.damage * (p.focused ? 1.45 : 1);
+
+    /*
+     * Pick up to `n` targets, nearest first, inside the weapon's own range.
+     *
+     * Partial selection rather than a sort: `n` is at most a handful and the
+     * enemy count is heading upward, so this is O(E*n) with no allocation per
+     * shot beyond the small index array. A full sort would be O(E log E) on
+     * every shot of every frame a weapon fires.
+     *
+     * `invuln` shapes are skipped for the same reason `computeAim` skips them —
+     * a bolt spent on something that cannot be hurt is a bolt wasted, and on an
+     * even count it used to be every bolt.
+     */
+    const reach = s.range > 0 ? s.range : Infinity;
+    const picked: number[] = [];
+    for (let k = 0; k < n; k++) {
+      let best = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < this.enemies.length; i++) {
+        if (picked.includes(i)) continue;
+        const e = this.enemies[i];
+        if (e.invuln > 0) continue;
+        const d = Math.hypot(e.x - p.x, e.y - p.y);
+        if (d > reach + e.radius) continue;
+        /*
+         * Bias toward what the player is pointing at, so facing still decides
+         * something. `computeAim` already prefers near over well-aligned and
+         * this keeps that ordering: the discount is small enough that a much
+         * closer shape still wins, and large enough that among comparable
+         * targets the aimed-at one is taken first.
+         */
+        const off = Math.abs(angleDelta(p.seekAim, Math.atan2(e.y - p.y, e.x - p.x)));
+        const score = d * (1 + off * 0.35);
+        if (score < bestD) {
+          bestD = score;
+          best = i;
+        }
+      }
+      if (best < 0) break;
+      picked.push(best);
+    }
+
     for (let i = 0; i < n; i++) {
-      const t = n === 1 ? 0 : i / (n - 1) - 0.5;
-      const angle = p.seekAim + t * spreadTotal;
       const side = (i % 2 === 0 ? -1 : 1) * (p.focused ? 2.5 : 7);
+      // Every bolt beyond the target count doubles up on a target that exists,
+      // so a high `count` against one enemy is still all damage on that enemy
+      // rather than bolts thrown into the dark.
+      const target = picked.length > 0 ? this.enemies[picked[i % picked.length]] : null;
+      let angle: number;
+      let mx: number;
+      let my: number;
+      if (target) {
+        // Offset the muzzle first, then aim FROM it, so the bolts actually meet
+        // at the target instead of running parallel past either side of it.
+        const nose = Math.atan2(target.y - p.y, target.x - p.x);
+        mx = p.x + Math.cos(nose + Math.PI / 2) * side;
+        my = p.y + Math.sin(nose + Math.PI / 2) * side;
+        angle = Math.atan2(target.y - my, target.x - mx);
+      } else {
+        const t = n === 1 ? 0 : i / (n - 1) - 0.5;
+        angle = p.seekAim + t * spreadTotal;
+        mx = p.x + Math.cos(angle + Math.PI / 2) * side;
+        my = p.y + Math.sin(angle + Math.PI / 2) * side;
+      }
       this.playerBullets.spawn({
-        x: p.x + Math.cos(angle + Math.PI / 2) * side,
-        y: p.y + Math.sin(angle + Math.PI / 2) * side,
+        x: mx,
+        y: my,
         angle,
         speed: Math.max(120, s.speed),
         radius: s.pierce > 1 ? 7 : 4.5,

@@ -34,7 +34,12 @@ const TYPES = (process.env.TYPES ?? 'stutter,pluck,echo,glissando,arpeggiator').
 const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required','--mute-audio'] });
 const p = await b.newPage();
 const reloads = await freezePage(p);
-await p.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
+// The port is overridable so the same tool can measure two trees. Comparing a
+// change against a remembered number is what AGENTS.md 6 forbids; comparing it
+// against a HEAD worktree served on another port is the same tool, same run,
+// same machine, and the only difference is the code under test.
+const PORT = process.env.MW_PORT ?? '5173';
+await p.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
 await p.click('#start-button');
 await p.waitForTimeout(3000);
 
