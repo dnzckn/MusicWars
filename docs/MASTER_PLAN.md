@@ -899,3 +899,59 @@ instrument available for the question that actually matters.
 **Do not tune further envelope numbers until that comes back.** Continuing to
 optimise a quantity with no demonstrated link to the complaint is precisely the
 "gates optimised against" failure, and it would be self-inflicted this time.
+
+## Track G — the combination inventory, counted
+
+"the concept of mixing weapons together or passives together isn't really
+there" is measurable, so it has been measured. Counted off `weapons.ts` by
+walking the tables rather than eyeballing them:
+
+| | count |
+|---|---|
+| base instruments | 12 |
+| passives (RIG) | 12 |
+| instruments total | 26 (12 base + 14 fusion results) |
+| fusion recipes | 14 (12 `evolution`, 2 `union`) |
+| instrument × passive recipes | 12 |
+| instrument × instrument recipes | 2 |
+| **passive × passive recipes** | **0** |
+| generic duet pairs reachable | C(12,2) = 66 |
+
+**Three findings, in descending order of how directly they answer the
+complaint.**
+
+1. **Mixing passives together does not exist.** Zero recipes combine two RIG
+   items. Half of the user's sentence describes a mechanic that was never
+   built, so this is not a discoverability problem and no amount of surfacing
+   fixes it.
+
+2. **Every instrument has exactly one evolution, and it takes one specific
+   passive.** Twelve evolutions for twelve instruments, 1:1, each keyed to a
+   named catalyst. There is therefore no *choice* of evolution path — given
+   your instrument, the evolution is determined, and the only question is
+   whether you happen to draw its catalyst. Ball x Pit's entire appeal is the
+   opposite: one ball branches many ways, so committing to it is a decision
+   that stays interesting. Here committing is a lookup.
+
+3. **The generic duet is the one broad system and it almost never fires.** 66
+   pairs are reachable in principle, but both inputs must reach
+   `DUET_INPUT_LEVEL = 6`, and the source's own comment beside that constant
+   records the measurement: **13-16% of 900-second runs contained a fusion
+   card, and a 480s run essentially never did.** Its own note draws the right
+   conclusion — "a core verb that does not exist for the first half of the game
+   is not a core verb" — and then sets the constant to 6 rather than solving it.
+
+**What this implies for G-work, stated as a hypothesis and not yet a plan.** The
+shortfall is structural, not volumetric: adding a thirteenth instrument would
+not change any of the three findings. Branching evolutions (one instrument, more
+than one destination, chosen by which catalyst you take) attacks 2 directly and
+reuses the existing recipe machinery. Passive×passive is a genuinely new system
+and needs its own design pass. Neither should start before the offer-pool
+constraint is re-read: **the 4-card offer is zero-sum**, so anything that adds
+card types dilutes everything already competing for those four slots — the
+recorded rule is to change what a card is WORTH, never to add cards.
+
+Counted with a table-walking parse rather than by reading, because `RIG` and
+`INSTRUMENTS` both contain `id:` fields and a naive grep returns 38 for RIG by
+running off the end of one table into the next. That wrong number is what a
+casual look gives you.
