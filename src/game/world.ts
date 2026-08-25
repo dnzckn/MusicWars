@@ -720,7 +720,44 @@ export class World {
      * to try. Four still gives the arrangement half a phrase to assemble in,
      * and the last four bars of the intro now have a fight over them.
      */
-    this.phaseTimer = 4 * BEATS_PER_BAR * (60 / 128);
+    /*
+     * Two bars, not four, and the argument for four is preserved rather than
+     * discarded.
+     *
+     * This has come down twice. Eight bars was 11.5 seconds of empty screen
+     * between pressing START and the first enemy; four was the fix, on the
+     * grounds that the arrangement needs half a phrase to assemble in. Both
+     * true. But `tools/firstminute.mjs` measures the result at 7.3s to the
+     * first enemy and 8.1s to the first kill, and a survivors-like is judged
+     * inside its first ninety seconds — spending a twelfth of that window
+     * looking at an empty arena is the most expensive real estate in the game.
+     *
+     * The musical objection is answered by what the intro actually does rather
+     * than by shortening it further and hoping. The comment this replaces
+     * already noted that "the last four bars of the intro now have a fight over
+     * them" — the arrangement is NOT gated on the field being empty, it is
+     * gated on the transport, which starts at the same moment either way. Two
+     * bars still gives the intro section its own uncontested opening, and the
+     * remainder of the phrase assembles over a fight, which is what it was
+     * already doing for the back half.
+     *
+     * MEASURED, and it does cost something. `firstminute` reports the first
+     * enemy at 7.3s -> 3.5s and the first kill at 8.1s -> 4.7s, with the layer
+     * count unchanged at 10-11. But the section list in the opening minute goes
+     * from six to five: `breakdown` is no longer reached, consistently, across
+     * repeated runs. That is not noise and it is not free — the player fights
+     * sooner, so the director is driven harder and the run does not pass
+     * through its quietest section inside the first minute.
+     *
+     * Taken anyway, and the trade is worth stating rather than burying. Five
+     * distinct sections inside sixty seconds is still a great deal of musical
+     * movement, and the four seconds bought back are the four the player spends
+     * deciding whether the game is worth continuing. If `breakdown` in the
+     * opening turns out to matter, the fix is in the director's section
+     * scheduling and not here: putting the empty screen back would be paying
+     * for it in the wrong currency.
+     */
+    this.phaseTimer = 2 * BEATS_PER_BAR * (60 / 128);
     this.bus.emit('run:start', { seed: 0 });
   }
 
