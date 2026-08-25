@@ -2220,3 +2220,152 @@ run three to six times higher, because player output compounds and the short
 window only saw the start of it. The *shape* changed, not just the scale, so
 copying the new numbers into the old two-parameter model would fit the wrong
 thing. Refitting belongs to whoever owns the XP curve.
+
+## `capture` — the game's real audio, offline through superdough (`tools/capture.mjs`)
+
+`AGENTS.md` says "the listening artefact is the browser capture recorder", and
+until now there was no such tool. `render.mjs` and `hum.mjs` both open by
+saying they are not the game's sound — naive oscillators, one-pole filters, no
+reverb, no delay — and `render.mjs` goes further than its header admits: it
+applies `cutoff` and **ignores `hcutoff` and `ftype` entirely**. The one class
+of defect the whole `superdough and Strudel traps` section of `AGENTS.md` is
+about is the class the only audible tool could not represent.
+
+`capture` renders the real thing. The score comes from the real `MusicDirector`
+driving a real seeded `World` with the same ten bus subscriptions `main.ts`
+makes; the haps then go to real superdough 1.3.0 in a real headless Chromium,
+pointed at an `OfflineAudioContext` via its own `setAudioContext()`. Real
+worklets, real ladder filter, real convolution reverb, real delay, real
+`setGainCurve(x => x*x)`. Nothing is re-implemented, and nothing is realtime:
+`initAudio()` loads the AudioWorklet modules into the offline context and the
+whole thing renders faster than it plays.
+
+```
+node --experimental-transform-types tools/capture.mjs --bars=16
+node --experimental-transform-types tools/capture.mjs --bars=16 --stem=bass
+node --experimental-transform-types tools/capture.mjs --verify-determinism
+node --experimental-transform-types tools/capture.mjs --selftest
+```
+
+It writes a 44.1k stereo WAV to `renders/` and prints RMS per octave band
+(31.5 … 16k), peak, crest and gated BS.1770-4 loudness. `--stem=<id>` solos one
+lane through the director's own `solo` field, which pins the lane to unity —
+so a soloed capture is louder than that lane is in the mix, deliberately, for
+the reason recorded on `MusicDirector.solo`.
+
+**The render is not deterministic, and the size of it is the number that
+matters.** Five complete runs of the tool over one identical hap stream
+produced five distinct WAVs, and the octave-band table varied by at most
+**1.329 dB, in the 500 Hz band**, every other band tighter. So a band
+difference under ~1.4 dB is not a result. The filter test below moves bands by
+3-10 dB.
+
+`--verify-determinism[=N]` measures that spread by **re-running the whole tool
+in clean child processes**, N times (default 3). Three cheaper versions were
+tried first and each made the tool look better than it is:
+
+```
+render twice in one browser              0.000 dB   (shared process)
+second render in a fresh browser         1.329 dB   (looked like a finding)
+re-run the whole tool once               0.000 dB   (luck; two samples cannot
+                                                     tell reproducible from
+                                                     landed-twice-in-one-place)
+five complete runs                       1.329 dB   (the real spread)
+```
+
+Ruled out as the cause, each by an experiment worth recording:
+
+- **The seeded PRNG.** The page replaces `Math.random` with mulberry32 before
+  superdough loads, covering the reverb impulse (`reverbGen.mjs:131`) and every
+  noise buffer (`noise.mjs:21`). Runs producing *different audio* drew exactly
+  38,455,685 randoms each. Same stream, different output.
+- **GC of superdough's `WeakRef`s.** The polyphony reaper spares a voice whose
+  handle the collector already took; `WeakRef` was replaced with a strong shim.
+  No change.
+- **Node release timing.** `onceEnded` installs `node.onended` callbacks that
+  disconnect nodes and zero worklet `end` params on the main thread's clock,
+  which offline bears no relation to the render position. Blocked by default as
+  insurance; `--keep-releases` measures the same ten bands, peak, RMS and LUFS.
+- **Concurrency.** Closing the first browser before the second changed nothing.
+
+**Real, fixed, but not the cause.** `reverbGen.applyGradualLowpass` renders the
+impulse response in its *own* `OfflineAudioContext` and assigns
+`convolver.buffer` from that context's `oncomplete` — nothing joins on it.
+Sixteen bars of this score start **49** such side renders across **4** reverb
+buses, so a main render that wins the race is quietly drier than the game, with
+nothing in the output to say so. `capture` counts every `OfflineAudioContext`
+but its own, tracks every `ConvolverNode`, and refuses to start until nothing
+is in flight, no convolver lacks a buffer, and that has held across a quiet
+window; both counts are printed every run. It did not move the measured spread,
+so it is a precaution and is described as one.
+
+One further known hole: `AudioWorkletGlobalScope` is a separate realm the
+seeding cannot reach, so `supersaw` and wavetable voices take a random initial
+phase. `buildBass` emits `supersaw` today; bass soloed, it costs 0.019 dB on
+the worst band — real, and not the 1.3 dB.
+
+**The score half is deterministic** and is checked separately: identical
+hap-stream SHA-1 across twelve processes, printed on every run and re-derived
+by `--verify-determinism`. It earned that check — two captures during
+development disagreed, and the cause was another session editing
+`src/audio/layers.ts` underneath the run.
+
+### Seen red: the bass filter, deliberately closed
+
+A gate that has never failed is not evidence, so the tool was pointed at a
+defect built on purpose. `buildBass`'s active branch is the `wub` sub-builder,
+whose cutoff is `m.sig.openness.range(300, 1050)`; it was temporarily changed
+to `range(90, 180)` and the file restored byte-for-byte afterwards (verified by
+hash, not by `git checkout` — there were other people's uncommitted changes in
+`src/`). Bass soloed, 16 bars, same seed:
+
+```
+   Hz    300-1050   90-180      delta
+ 31.5      -67.4     -60.7      +6.7
+   63      -55.5     -54.8      +0.7
+  125      -18.2     -18.3      -0.1
+  250      -29.6     -30.1      -0.5
+  500      -41.7     -44.9      -3.2
+ 1000      -49.6     -56.4      -6.8
+ 2000      -63.0     -72.6      -9.6
+ 4000      -79.5     -85.1      -5.6
+ 8000      -91.3     -93.0      -1.7
+```
+
+The fundamental sits in 125 and does not move; everything above the new cutoff
+falls away with the slope of a 24 dB/oct ladder. Against the 0.019 dB
+run-to-run spread measured on this stem (the bass solo has no reverb bus and
+none of the full mix's 1.3 dB), a 9.6 dB move is not ambiguous.
+
+**A note found while aiming that test — and the correction it needed.** The
+first version of this paragraph claimed `buildBass`'s
+`.lpf(m.sig.openness.range(500, 2300)).ftype('ladder')` chain "never runs,
+because the `wub` branch returns first" and that "changing it moved nothing".
+**Both halves were wrong, and the second is the instructive one.**
+
+`basscheck` prints the rota: halftime 38%, boomchick 25%, chase 13%, gallop 13%,
+shuffle 13%. Only halftime takes the early `return stack(` at `layers.ts:1447`,
+so the chain runs on **62%** of waves, not none. Measured on the haps rather
+than read off the branch: 12 of 44 bass haps carry `cutoff` 1156.0-1674.5 Hz,
+which is exactly `range(500, 2300)` evaluated at openness 0.364-0.652. Patching
+the floor to `range(50, 60)` moves the 125 Hz band 12.4 dB and shifts integrated
+loudness by 13.4 LU.
+
+"Changing it moved nothing" was therefore not a measurement — it was an edit
+that was made and never measured, reported in the grammar of a result. That is
+this directory's own recurring failure mode in a new costume, and it is exactly
+what `AGENTS.md` §3 means by printing every denominator: a capture that examined
+the halftime state alone and concluded about all five is a check with a
+denominator of one reporting on five.
+
+The `hcutoff`/`ftype` collision the paragraph went on to describe was real and
+**is now fixed** — see §4 of `AGENTS.md` and the commit that removed all three
+highpasses.
+
+### What it still cannot tell you
+
+A band share is not an instrument's share — the same caveat `spectrum.mjs`
+spends a paragraph on. And the analyser is checked against a known answer
+rather than trusted: `--selftest` pushes a 1 kHz -20 dBFS stereo sine through
+it and should read -23.0 dBFS in the 1000 Hz band (a sine's mean square is 3 dB
+below its peak), 100.0% share, peak -20.0 dBFS, and -20.25 LUFS.
