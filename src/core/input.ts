@@ -28,6 +28,10 @@ export interface InputState {
    * own input path and its own way of not desynchronising the transport, and
    * the transport is the one clock that never stops here. See the offer block
    * in `world.ts`: the world holds, the music does not.
+   *
+   * "Edge-triggered" here means: exactly ONE call to `sample()` will ever see
+   * a given press. See the long note on the edge set below for why that
+   * sentence has to be about `sample()` calls rather than about frames.
    */
   /** 0-3, or -1 for no card chosen this frame. */
   choice: number;
@@ -97,9 +101,70 @@ export class Input {
   touchFocus = false;
 
   private down = new Set<string>();
-  /** Keys pressed since the last `endFrame()`, for edge-triggered actions. */
+  /**
+   * Key-down edges that no simulation step has been told about yet.
+   *
+   * ONE PRESS, ONE ACTION — and getting that right is entirely about who
+   * empties this set. It used to be emptied by `endFrame()`, which `main.ts`
+   * called from the loop's `render` hook, i.e. exactly once per DISPLAYED
+   * frame. `sample()` is called from the `update` hook, and `core/loop.ts` is
+   * a fixed-timestep loop: it runs `update` however many `FIXED_DT` slices fit
+   * in the frame delta and then `render` once. The number of `sample()` calls
+   * per clear is therefore whatever the player's monitor happens to be, and
+   * that broke the edge in both directions at once.
+   *
+   * Measured on this class, before the change, 3000 presses per rate, one tap
+   * of the black-hole key per displayed frame:
+   *
+   *   30 Hz  4.000 steps/frame   4.000 wells thrown per press
+   *   60 Hz  2.000 steps/frame   2.000 wells thrown per press
+   *  120 Hz  1.000 steps/frame   1.000 — correct only by coincidence
+   *  144 Hz  0.833 steps/frame   0.833 (16.7% of presses never seen at all)
+   *  240 Hz  0.500 steps/frame   0.500 (50.0% never seen)
+   *
+   * Below 120 Hz every step in the frame re-read the same edge, so one tap of
+   * C spent two black holes at 60 Hz and four at 30 Hz. Above 120 Hz a frame
+   * can run ZERO steps — the accumulator has not reached `FIXED_DT` yet — and
+   * `render` still ran, so the clear happened before any `sample()` had looked
+   * and the press was dropped with no trace. Even at a nominally matched
+   * 120 Hz, float drift in the accumulator produced 6 zero-step frames in
+   * 3000 and lost those presses too.
+   *
+   * The fix is that the CONSUMER clears it: `sample()` drains this set at the
+   * point it reads it, so the first simulation step to see an edge is the only
+   * one that ever will, and a press made during a zero-step frame simply waits
+   * for the next step instead of being thrown away. Nothing in the loop, and
+   * nothing about the refresh rate, enters into it.
+   *
+   * Rejected alternatives, recorded so they are not re-tried:
+   *
+   * - Move `endFrame()` from `render` to the top of `update`. Fixes the
+   *   double-fire and makes the loss WORSE: a zero-step frame still never
+   *   clears, but the first step of the next frame now clears before sampling.
+   * - Timestamp each press and expire it after ~50 ms. Turns a correctness
+   *   property into a tuning constant, and still fires twice inside 50 ms.
+   * - Have `main.ts` call `sample()` once per frame and hand the same state
+   *   object to every step. That is a bigger change than it looks: `sample()`
+   *   also folds in pointer steering, which reads `shipX`/`shipY` and must be
+   *   re-evaluated per step or touch steering stutters at low frame rates.
+   *
+   * Two presses of the SAME key with no `sample()` between them still collapse
+   * into one action — this is a Set of key codes, not a queue. That is left
+   * alone deliberately: the window is one frame, a second press inside 8 ms is
+   * not a human, and a queue would let a stuck key bank actions.
+   */
   private pressed = new Set<string>();
   private gamepadIndex: number | null = null;
+  /**
+   * Gamepad buttons that were already down at the previous `sample()`.
+   *
+   * The pad is POLLED inside `sample()` and never touches the `pressed` set
+   * above, so it reached the same actions by a completely different route and
+   * the drain fixes nothing for it. Holding B therefore threw a black hole on
+   * every simulation step for as long as it was held — 200 wells in 200
+   * samples, measured. The pad needs its own edge memory, and this is it.
+   */
+  private padDown = new Set<number>();
 
   readonly state: InputState = {
     x: 0,
@@ -150,15 +215,26 @@ export class Input {
     return this.down.has(code);
   }
 
-  /** True only on the frame the key went down. */
-  wasPressed(code: string): boolean {
-    return this.pressed.has(code);
-  }
+  /*
+   * `wasPressed(code)` and `anyPressed()` used to live here and are gone.
+   *
+   * They read the edge set from outside `sample()`, which is the exact shape
+   * of the bug documented on `pressed` — under the drain-on-read rule their
+   * answer depends on whether a simulation step has happened yet this frame,
+   * so "was this pressed" has no stable meaning to ask from anywhere else.
+   * Nothing in `src/`, `tools/` or `electron/` called either of them; they had
+   * been dead for the whole life of the file. If something needs a key that is
+   * not an action, add it to `sample()` and put it on `InputState`.
+   */
 
-  anyPressed(): boolean {
-    return this.pressed.size > 0;
-  }
-
+  /**
+   * Read the current input, CONSUMING any edge-triggered presses.
+   *
+   * Called once per simulation step, so it must be idempotent for held keys
+   * and one-shot for edges — see the note on `pressed`. The returned object is
+   * the same `state` instance every time; callers that need to keep a value
+   * past the next step must copy it.
+   */
   sample(): InputState {
     let x = 0;
     let y = 0;
@@ -195,13 +271,12 @@ export class Input {
       if (BOMB_KEYS.has(code)) bomb = true;
       if (FOCUS_KEYS.has(code)) focus = true;
     }
-    // Edge-triggered: a well is a decision, not something you hold down.
-    for (const code of this.pressed) if (WELL_KEYS.has(code)) well = true;
-
-    // Offer controls, likewise edge-triggered. Shift is the focus key, which is
-    // free while an offer is open — the ship is barely moving and there is
-    // nothing to focus on — so it doubles as the banish modifier rather than
-    // spending four more keys on a screen that appears for two seconds.
+    // Offer controls, edge-triggered like the well. Shift is the focus key,
+    // which is free while an offer is open — the ship is barely moving and
+    // there is nothing to focus on — so it doubles as the banish modifier
+    // rather than spending four more keys on a screen that appears for two
+    // seconds. Read from `down`, not from the edge set: the modifier is a state
+    // the digit is pressed *in*, and it went down before the digit did.
     let choice = this.pointerChoice;
     let banish = this.pointerBanish;
     let reroll = this.pointerReroll;
@@ -211,7 +286,23 @@ export class Input {
     this.pointerReroll = false;
     this.pointerSkip = false;
     const shifted = this.down.has('ShiftLeft') || this.down.has('ShiftRight');
+
+    /*
+     * THE ONE PLACE THE EDGE SET IS READ, AND THE ONE PLACE IT IS EMPTIED.
+     *
+     * Every edge-triggered action is decoded in this single loop and the set
+     * is drained immediately after it, so a press cannot be seen by a second
+     * simulation step and cannot be discarded before the first one. It was two
+     * loops with the clear living in another file; keeping the read and the
+     * drain adjacent is the thing that makes the invariant checkable by eye.
+     * Do not add a read of `this.pressed` below this block.
+     *
+     * A well is a decision, not something you hold down — see the black-hole
+     * comment in `world.ts` — which is why it is here rather than in the
+     * `down` scan above with shoot, focus and bomb.
+     */
     for (const code of this.pressed) {
+      if (WELL_KEYS.has(code)) well = true;
       const card = CHOICE_KEYS[code];
       if (card !== undefined) {
         if (shifted) banish = card;
@@ -220,9 +311,18 @@ export class Input {
       if (REROLL_KEYS.has(code)) reroll = true;
       if (SKIP_KEYS.has(code)) skip = true;
     }
+    this.pressed.clear();
 
     const pad = this.gamepadIndex !== null ? navigator.getGamepads?.()[this.gamepadIndex] : null;
     if (pad) {
+      /** True on the sample a pad button goes down, and only that one. */
+      const padEdge = (i: number): boolean => {
+        const now = !!pad.buttons[i]?.pressed;
+        const was = this.padDown.has(i);
+        if (now) this.padDown.add(i);
+        else this.padDown.delete(i);
+        return now && !was;
+      };
       const dead = 0.22;
       const ax = pad.axes[0] ?? 0;
       const ay = pad.axes[1] ?? 0;
@@ -234,8 +334,24 @@ export class Input {
       if (pad.buttons[15]?.pressed) x += 1;
       shoot ||= !!pad.buttons[0]?.pressed;
       bomb ||= !!pad.buttons[2]?.pressed;
-      well ||= !!pad.buttons[1]?.pressed;
       focus ||= !!(pad.buttons[6]?.pressed || pad.buttons[7]?.pressed);
+      /*
+       * B is edge-triggered, because a black hole is. Everything above is
+       * level-triggered on purpose: shoot and focus are held, and bomb is
+       * self-gated by the 1.6 s invulnerability `detonateBomb` grants
+       * (`world.ts`), so re-reading it costs nothing. Wells have no such gate
+       * and were being emptied at 120 spends a second by a held button.
+       *
+       * Written as a statement rather than `well ||= padEdge(1)` on purpose:
+       * `||=` short-circuits when `well` is already true, which would skip the
+       * call and leave `padDown` never updated for that button — the edge
+       * would then fire again the moment the keyboard let go.
+       */
+      if (padEdge(1)) well = true;
+    } else {
+      // Unplugged mid-press: forget the buttons, or reconnecting with the
+      // stick still held would swallow the first real press.
+      this.padDown.clear();
     }
 
     // Normalise so diagonals are not faster than cardinals.
@@ -258,7 +374,38 @@ export class Input {
     return this.state;
   }
 
-  endFrame(): void {
+  /**
+   * Throw away pending edges because nothing is going to simulate this step.
+   *
+   * `endFrame()`, which `main.ts` called from the loop's `render` hook, used
+   * to do this every frame unconditionally. That was the bug — see `pressed`.
+   * But deleting it outright had a second-order cost that only shows up in the
+   * real app: `main.ts`'s `update` hook returns early when the game is paused,
+   * on the title screen, or when the AudioContext is suspended, so `sample()`
+   * stops being called while the pause screen and the title screen keep their
+   * OWN `window` keydown listener running. With nothing draining the set, a C
+   * pressed while paused, or on the title screen before the run starts, sat
+   * there and threw a black hole on the first simulated step after unpausing.
+   * `endFrame()` had been hiding that by accident.
+   *
+   * So the discard moved from "every frame, always" to "every step that
+   * decides not to simulate", which is where it belongs and where it cannot
+   * race a `sample()`. It is idempotent, so the several steps a paused frame
+   * runs through the early return cost nothing.
+   *
+   * The held keys in `down` are deliberately untouched: holding right through
+   * a pause and expecting to still be moving on resume is correct, and `blur`
+   * already clears them when the window actually loses focus.
+   *
+   * `padDown` is untouched too, and that leaves one residual case: the pad is
+   * only polled inside `sample()`, so a button first pressed DURING a pause is
+   * unseen, and the first sample after resuming reads it as a fresh edge. The
+   * honest fix would be to poll the pad from here, which is a `getGamepads()`
+   * call on every step of every paused frame to cover a player who pressed and
+   * held B on the pause screen. Not worth it; written down so the next person
+   * to find it knows it was considered rather than missed.
+   */
+  discardEdges(): void {
     this.pressed.clear();
   }
 }

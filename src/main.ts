@@ -38,6 +38,7 @@ import {
   sfxPickup,
   sfxPlayerHit,
   sfxRunStart,
+  sfxShard,
   sfxShoot,
   sfxWaveClear,
 } from './audio/sfx';
@@ -307,6 +308,18 @@ world.bus.on('powerup:pickup', (e) => {
 world.bus.on('powerup:expire', (e) => director.onPickup(t, e.kind));
 
 /*
+ * The shard tick. See sfx.ts for why this is one short voice and not the
+ * four-note pickup arpeggio: it fires roughly fifty times a minute, and a
+ * melody nobody wrote would fight the eleven stems somebody did.
+ *
+ * The tier is mapped to an index here rather than in sfx.ts, because the
+ * audio layer must not import from game/ -- the same one-directional rule
+ * that makes events.ts restate the ability ids instead of re-exporting them.
+ */
+const SHARD_STEP: Record<string, number> = { minor: 0, major: 1, rare: 2 };
+world.bus.on('shard:collect', (e) => sfxShard(SHARD_STEP[e.tier] ?? 0, e.combo));
+
+/*
  * Progression, answered with sound.
  *
  * Deliberately only SFX here. The arrangement's response to a level-up — the
@@ -549,8 +562,32 @@ const loop = new Loop({
      * Strudel's clock is frozen, so on resume the two are seconds apart and the
      * correction snaps a whole screen of beat-scheduled enemy fire.
      */
-    if (audioSuspended()) return;
-    if (paused || !inRun) return;
+    /*
+     * Both early returns discard pending edge presses before they leave.
+     *
+     * `update` is the only hook that samples the input, so a branch that skips
+     * it is a branch where nothing will ever consume the key-down edges the
+     * `Input` listener is still collecting. The pause screen and the title
+     * screen have their own `window` keydown handler further down this file
+     * and keep running throughout, so without this a C pressed while paused —
+     * or on the title screen, before the run even starts — would still be
+     * sitting in the set and would throw a black hole on the first simulated
+     * step after resuming.
+     *
+     * The old code got this for free from `input.endFrame()` in `render`, and
+     * that free lunch was the 144 Hz bug: `render` runs on frames that
+     * simulate nothing, so it also cleared presses the simulation had not yet
+     * seen. See the long note on `pressed` in `core/input.ts`. The discard has
+     * to live here, next to the decision not to simulate, not in `render`.
+     */
+    if (audioSuspended()) {
+      input.discardEdges();
+      return;
+    }
+    if (paused || !inRun) {
+      input.discardEdges();
+      return;
+    }
     // A dev-only input override, so tooling can drive the ship directly rather
     // than through synthetic key events. Balance conclusions drawn from one
     // fixed strategy are conclusions about that strategy, not about the game.
@@ -593,7 +630,16 @@ const loop = new Loop({
       world.transport.barPhase,
       codeLines,
     );
-    input.endFrame();
+    /*
+     * Nothing touches the input here any more. `input.endFrame()` used to be
+     * this line, and it is the reason one tap of the black-hole key spent four
+     * wells at 30 Hz and none at all on ~17% of frames at 144 Hz: `render`
+     * runs exactly once per displayed frame while `update` runs zero to eight
+     * times, so a per-frame clear can never agree with a per-step read. The
+     * edge set is now drained by `sample()` itself. Do not put a per-frame
+     * input call back in this hook — `tools/inputcheck.mjs` check E will say
+     * so, but by then someone has already shipped it.
+     */
     needsSync = true;
   },
 });

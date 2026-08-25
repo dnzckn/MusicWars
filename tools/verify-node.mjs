@@ -26,12 +26,18 @@ const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
  * can outweigh the whole of the two groups above it.
  */
 const GROUPS = [
-  ['static', 120, ['syntax', 'domwiring', 'legibility', 'colourblind', 'typescale']],
+  /*
+   * `inputcheck` sits in the cheap group even though it drives the real `Loop`
+   * and the real `Input`: it runs a virtual clock, so ~10,000 simulated frames
+   * across ten refresh rates cost under a second. The groups are ordered by
+   * measured cost, not by how much machinery a tool touches.
+   */
+  ['static', 120, ['syntax', 'domwiring', 'inputcheck', 'legibility', 'colourblind', 'typescale']],
   ['score', 300, [
     'tune', 'clash', 'contour', 'motif', 'rhythm', 'basscheck', 'leadcheck',
     'motorcheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
   ]],
-  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery']],
+  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck']],
   ['slow', 600, [
     'brain', 'pause', 'drops', 'overdrive', 'session', 'realprobe',
     'builds', 'difficulty', 'combine', 'openers', 'churn', 'sections',

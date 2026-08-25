@@ -157,7 +157,9 @@
     "verify:node": "node --experimental-transform-types tools/verify-node.mjs",
     "discovery": "node --experimental-transform-types tools/discovery.mjs",
     "domwiring": "node tools/domwiring.mjs",
-    "sfxcheck": "node tools/sfxcheck.mjs"
+    "inputcheck": "node --experimental-transform-types tools/inputcheck.mjs",
+    "sfxcheck": "node tools/sfxcheck.mjs",
+    "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",
