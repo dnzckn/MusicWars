@@ -761,3 +761,52 @@ Treat every browser gate as unavailable until the disk is replaced. Node-only
 tools (`attackfloor`, `masking`) run fine and are the whole verification surface
 for now — which means S1's mix-balance and listening checks are deferred, not
 passed.
+
+### S1 — the whole score was a test tone, and nothing was measuring it
+
+`src/types/strudel.d.ts` already contains the diagnosis, written before any of
+this work: *"A pulse or triangle held at a fixed frequency is a test tone — the
+ear hears an oscillator. The same note with a few cents of periodic movement is
+heard as **sung**, because every physical instrument and voice does it. Its
+absence is a large part of what makes a chip melody read as synthetic."*
+
+That note sat in the type declarations while `.vib()` appeared in **exactly one
+place in the entire score** — `buildLead`, line 2388. Every other pitched lane
+was a mathematically perfect oscillator. Nothing measured it, so nothing
+noticed: the repo's own "unmeasured properties rot" law, caught in the act, and
+feeding the exact complaint S1 exists to answer.
+
+`tools/vibprobe.mjs` (new, node-only) measures it off haps, because this control
+fails silently in both directions — superdough puts the vibrato oscillator
+behind `if (vib > 0)` so `.vibmod()` alone is inert, and `.vib()` alone takes a
+default depth of 0.5, half a semitone, audibly out of tune on a sustained chord.
+Both look completely fine in the source.
+
+| chords | before | after |
+|---|---|---|
+| haps with `vib > 0` | 0% | 34% |
+| distinct rates | — | `4.6 5.03 5.46 5.9 6.4` |
+| depth range | — | `0.053..0.099` |
+
+The pad's three chord tones and the two colour tones each get their **own** rate.
+That is the whole mechanism: `.detune()` is unavailable (superdough reads it only
+in the `supersaw` branch, and this lane is a pulse on purpose), so the ensemble
+is built out of disagreement instead. No two voices return to centre together,
+so their sum is never the same twice — which is what a section of players is,
+and the nearest thing to a chorus available without a chorus node. **A chord
+showing one shared rate would be a phaser, not a section**, which is why
+`vibprobe`'s `distinct rates` column matters more than its percentage.
+
+This lane deserved it most: the bed, held under everything, 27,752 haps,
+second-loudest pitched lane at −15 dBFS, and the colour tones tail out to 2.6s —
+the longest and highest sustained tones in the mix.
+
+`vibprobe` deliberately has **no thresholds and no verdict**. There is no
+defensible a priori answer to "what fraction of haps should vibrate" — a sub
+should be 0% and a pad should not — and inventing one would be the third
+invented threshold this phase has had to retract.
+
+**Still fixed-frequency, and this is the standing list:** `sub kick clap hats
+bass arp fx motifs power`. Drums and the sub belong there. `arp` (1,340 haps,
+180ms tails) and the motor (now sustaining to 160ms) are the two open questions;
+`bass` should probably stay steady, since bass players do not vibrato much.

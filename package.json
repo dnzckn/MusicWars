@@ -24,6 +24,7 @@
     "spectrum": "node tools/spectrum.mjs",
     "motorcheck": "node --experimental-transform-types tools/motorcheck.mjs",
     "attackfloor": "node --experimental-transform-types tools/attackfloor.mjs",
+    "vibprobe": "node --experimental-transform-types tools/vibprobe.mjs",
     "leadcheck": "node --experimental-transform-types tools/leadcheck.mjs",
     "interlock": "node --experimental-transform-types tools/interlock.mjs",
     "motion": "node --experimental-transform-types tools/motion.mjs",

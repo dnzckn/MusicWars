@@ -1839,11 +1839,52 @@ export function buildChords(m: MusicalState): Pattern {
   // for why `.spread()` had to go: it is a supersaw-only control and has done
   // nothing on this lane since it became a pulse.
   const padPans = fanPans(voiced.length, 0.52 + spread * 0.16 + wide);
-  const padVoice = (n: number, pan: number): Pattern =>
+  /*
+   * EACH VOICE BREATHES AT ITS OWN RATE, and the beating between them is the
+   * point rather than the wobble on any one of them.
+   *
+   * `strudel.d.ts`'s own note on `vib` says it plainly: "A pulse or triangle
+   * held at a fixed frequency is a test tone — the ear hears an oscillator. The
+   * same note with a few cents of periodic movement is heard as *sung*, because
+   * every physical instrument and voice does it. Its absence is a large part of
+   * what makes a chip melody read as synthetic." That note has been sitting in
+   * the type declarations while `.vib()` appeared in exactly ONE place in the
+   * whole score — `buildLead` — so every other pitched lane, this bed included,
+   * has been a mathematically perfect oscillator.
+   *
+   * This lane is the worst place for that to be true. It is the bed: held under
+   * everything, 27,752 haps, second-loudest pitched lane at -15 dBFS, tails out
+   * to 2.2 seconds. A chord of three to five perfectly steady pulses is the
+   * single most fatiguing thing a mix can hold under a listener for twelve
+   * minutes, and "abrasive on the listener over time" is what that fatigue
+   * sounds like when someone describes it.
+   *
+   * `.detune()` is the obvious fix and is unavailable: superdough only reads it
+   * in the `supersaw` branch, and this lane is a pulse on purpose. So the
+   * ensemble is built the other way round — each chord tone gets its OWN
+   * vibrato rate, 4.6Hz upward in steps of 0.43, and because no two voices
+   * return to centre together their sum is never the same twice. That is what a
+   * section of players sounds like, and it is the nearest thing to a chorus
+   * available without a chorus node.
+   *
+   * Depth is deliberately far under the 0.1-0.2 the docs call ordinary: at 0.06
+   * a semitone is ~6 cents, well inside what a held note can carry without the
+   * harmony smearing. Per-voice depth is not what makes this work; the
+   * disagreement between the rates is.
+   *
+   * Both controls are set, always. The oscillator is behind `if (vib > 0)`, so
+   * `.vibmod()` alone is silent, and `.vib()` alone takes superdough's default
+   * depth of 0.5 — half a semitone, which on a sustained chord would be audibly
+   * out of tune. That trap is documented in `strudel.d.ts` and is easy to walk
+   * back into.
+   */
+  const padVoice = (n: number, pan: number, i: number): Pattern =>
     note(m.section === 'intro' ? chordStabs([n], 2) : `${n}`)
     .s('pulse')
     .pw(0)
     .pan(pan)
+    .vib(4.6 + i * 0.43)
+    .vibmod(m.sig.openness.range(0.045, 0.075))
     .attack(0.45)
     .decay(0.5)
     .sustain(0.75)
@@ -1875,7 +1916,7 @@ export function buildChords(m: MusicalState): Pattern {
    * per note at this gain, so stacking them costs nothing extra — the only
    * difference is that they are no longer all in the same speaker.
    */
-  const pad = stack(...voiced.map((n, i) => padVoice(n, padPans[i])));
+  const pad = stack(...voiced.map((n, i) => padVoice(n, padPans[i], i)));
 
   /*
    * The 7th and 9th, as a fade rather than a chord change.
@@ -1900,8 +1941,25 @@ export function buildChords(m: MusicalState): Pattern {
    * movement being *prettier*, which is the whole idea.
    */
   const floor = m.feel === 'shuffle' || nova > 0 || m.movement === 'hush' ? 1 : 0;
-  const colourVoice = (pitch: number, level: Patternable, pan: number): Pattern =>
+  const colourVoice = (pitch: number, level: Patternable, pan: number, i: number): Pattern =>
     note(String(pitch + 12))
+      /*
+       * These carry vibrato for the same reason the pad does, and they need it
+       * more than the pad does: `release(1.1..2.6)` makes them the LONGEST
+       * sustained tones anywhere in the mix, and they are the highest pitched
+       * ones as well. A perfectly steady tone held for two and a half seconds
+       * at the top of the arrangement is the definition of the test tone
+       * `strudel.d.ts` warns about.
+       *
+       * Rates sit deliberately outside the pad's 4.6-5.46 band so the bed never
+       * locks into one collective wobble — the whole value of per-voice rates
+       * is that nothing agrees. Depth is slightly wider than the pad's because
+       * there are only ever two of these, so there is less mutual beating to do
+       * the work, and because the ear forgives more movement in a high colour
+       * tone than in the chord's own body.
+       */
+      .vib(5.9 + i * 0.5)
+      .vibmod(m.sig.openness.range(0.06, 0.1))
       /*
        * Triangle, not supersaw.
        *
@@ -1970,7 +2028,7 @@ export function buildChords(m: MusicalState): Pattern {
    */
   const colourPad = stack(
     ...m.chord.colour.map((pitch, i) =>
-      colourVoice(pitch, (i === 0 ? m.sig.colour7 : m.sig.colour9).range(floor * colourGain, colourGain), i === 0 ? -1 : 1),
+      colourVoice(pitch, (i === 0 ? m.sig.colour7 : m.sig.colour9).range(floor * colourGain, colourGain), i === 0 ? -1 : 1, i),
     ),
   );
 
