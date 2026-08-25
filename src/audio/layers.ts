@@ -1484,7 +1484,30 @@ export function buildBass(m: MusicalState): Pattern {
       pattern = `${low} ${octave} ${fifthLow} ${lead}`;
       layered = true;
   }
-  // The 808: long tail with a pitch slide into each note.
+  /*
+   * The 808: a sine with a pitch slide into each note.
+   *
+   * APPLIED LAST, and that is the fix rather than a style choice. This used to
+   * be the INNERMOST call — `glide(shaped(note(line))).s('sawtooth').ds(...)` —
+   * so every control it set that the chain below also set was overwritten two
+   * lines later. `.s('sine')` lost to `.s('sawtooth')`; `.decay(0.7)` and
+   * `.sustain(0.35)` lost to `.ds('0.3:0.42')`. Only `attack`, `release` and
+   * the pitch envelope survived, because nothing downstream restated those.
+   *
+   * `tools/attackfloor.mjs` is what proves it, and this is exactly the kind of
+   * claim that has to be proven off haps rather than read off the source. Its
+   * BY VOICE table lists `bass·sawtooth` and `bass·supersaw` over a 720s sweep
+   * and there is NO `bass·sine` row — while that same sawtooth row carries an
+   * attack high of 6ms and a release high of 400ms, which are `glide`'s own
+   * numbers and appear nowhere else in this function. So the chase haps really
+   * do run through here, really do wear this envelope, and have never once been
+   * rendered on the oscillator the comment names. An 808 is a sine; this has
+   * been a sawtooth wearing an 808's envelope for as long as the line existed.
+   *
+   * Wrapping the finished chain instead of seeding it means every control here
+   * is the last writer, so the feel gets the timbre AND the long tail it says
+   * it does.
+   */
   const glide = (p: Pattern): Pattern =>
     m.feel === 'chase'
       ? p.s('sine').attack(0.006).decay(0.7).sustain(0.35).release(0.4).penv(-7).pattack(0.11).pcurve(1)
@@ -1495,11 +1518,50 @@ export function buildBass(m: MusicalState): Pattern {
         p.lpq(6 + mag * 1.5).lpattack(0.14).lpenv(3.2).lpdecay(0.3)
       : p.lpq(5).lpenv(2).lpdecay(0.09);
   const voice = (line: string): Pattern =>
-    glide(shaped(note(line)))
+    glide(
+      shaped(note(line))
       .s('sawtooth')
+    /*
+     * THE ENDS OF THE NOTE, which is where "choppy" and "abrasive" actually
+     * live in this lane.
+     *
+     * `.ds()` sets decay and sustain and says nothing about attack or release,
+     * so both used to fall through to superdough's defaults: a 1ms attack and a
+     * 10ms release. `attackfloor` measured the consequence — 72% of this lane's
+     * haps carrying no attack and no release, a median TAIL of 10ms, the
+     * shortest of any pitched lane in the game — on the lane it also measured
+     * at -11 dBFS, the LOUDEST pitched lane, 16dB above the motor.
+     *
+     * The note itself was never short. `sustain(0.42)` holds it for its full
+     * length. It was hard-edged at BOTH ends: a 1ms ramp on a sawtooth this
+     * loud is a broadband click on every onset, and a 10ms ramp off it is an
+     * audible chop before the next note. Loudest lane, sharpest edges, eight
+     * times a bar — that is the abrasion, and no amount of `gain` work reaches
+     * it because the level was never the problem.
+     *
+     * Curves, not constants, and that is the point rather than a flourish. Four
+     * of the seven pitched lanes measured an IDENTICAL envelope on every hap of
+     * a twelve-minute sweep (attack lo/med/hi of 4.0/4.0/4.0, 6.0/6.0/6.0),
+     * which is the real clavichord complaint: not that the attacks are fast —
+     * the chiptune canon this score is aimed at has instant attacks — but that
+     * no note is ever shaped differently from any other. A flat floor typed as
+     * `.attack(0.02)` on every lane would satisfy an attack gate while leaving
+     * that invariance exactly as it is, which is this project's own recorded
+     * "gates optimised against" failure in a new costume.
+     *
+     * So both ends ride `drive`. Calm: a rounder 14ms onset and a 260ms tail
+     * that lets each note bleed into the next, which is the legato a bass
+     * wants when there is space for it. Driving: a 6ms onset for definition and
+     * a 140ms tail, because `layered` has by then stacked on-beat fills and
+     * eighths underneath and a long release across all three smears them into
+     * mud. The quiet passages are also where a listener hears each note most
+     * clearly, so that is where the long tail is worth most.
+     */
+    .attack(m.sig.drive.range(0.014, 0.006))
     // 0.16 to silence left a hole under every beat. A bass that stops between
     // notes takes the floor out from under the whole mix eight times a bar.
     .ds('0.3:0.42')
+    .release(m.sig.drive.range(0.26, 0.14))
     // Out of the sub's way. Without this the two low sources sum into a boom
     // that swamps the kick and reads as distortion rather than weight.
     .hpf(95)
@@ -1530,7 +1592,8 @@ export function buildBass(m: MusicalState): Pattern {
       .drive(m.sig.drive.range(0.6, 1.35))
       .distort(m.sig.drive.range(1.05, 1.8))
       .gain(0.86)
-      .orbit(ORBIT_LOW);
+      .orbit(ORBIT_LOW),
+    );
 
   const core = voice(pattern);
   if (!layered) return core;

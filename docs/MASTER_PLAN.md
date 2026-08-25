@@ -621,3 +621,77 @@ the capture tool had to overwrite `world.rng`'s internals — a trick that depen
 on a field name. `?seed=0x51ed` now works, and `__musicwars.seed()` reads back
 what it resolved to. The S1/S2/S5 listening passes need fixed seeds to mean
 anything, so this was load-bearing.
+
+### S1 — first landing: the bass, and it was two defects, not one
+
+The lane the corrected S1 named as the unnamed second offender is now measured,
+fixed, and re-measured. `tools/attackfloor.mjs` over a 720s / 385-bar sweep,
+before → after:
+
+| bass | before | after |
+|---|---|---|
+| attack ms lo/med/hi | `1.0/1.0/12` | `5.0/11/13` |
+| TAIL ms lo/med/hi | `10/10/400` | `80/217/400` |
+| haps with no attack set | 72% | 0% |
+| haps with no release set | 72% | 0% |
+
+**Defect 1 — both ends of the note were superdough's defaults.** `.ds()` sets
+decay and sustain and says nothing about attack or release, so the loudest
+pitched lane in the game (−11 dBFS, 16dB above the motor) got a 1ms attack and a
+10ms release. The note was never *short* — `sustain(0.42)` holds it for its full
+length — it was hard-edged at both ends: a 1ms ramp on a sawtooth that loud is a
+broadband click on every onset, and a 10ms ramp off it is an audible chop before
+the next note. Loudest lane, sharpest edges, eight times a bar. No amount of
+`gain` work could ever have reached it, because the level was never the problem.
+
+Both ends now ride `drive` as curves, not constants — 14ms/260ms when calm,
+6ms/140ms when driving. **The curve is the point, not the floor.** Four of the
+seven pitched lanes measure an *identical* envelope on every hap of a
+twelve-minute sweep (`4.0/4.0/4.0`, `6.0/6.0/6.0`). That invariance is the real
+clavichord complaint — the chiptune canon this score aims at has instant
+attacks, so speed was never the defect; *no note ever being shaped differently
+from any other* is. A flat `.attack(0.02)` typed onto every lane would satisfy
+an attack gate and leave the invariance untouched: this project's own recorded
+"gates optimised against" failure in a fresh costume. **§4's provisional
+attack ≥20ms floor should be retired in calibration and replaced with a spread
+requirement.** An 11ms median on a bass is musically right; 20ms would cost it
+its definition.
+
+**Defect 2 — the 808 has never once been heard.** `glide()` was the *innermost*
+call, so every control it set that the chain below also set was overwritten two
+lines later: `.s('sine')` lost to `.s('sawtooth')`, `.decay(0.7).sustain(0.35)`
+lost to `.ds('0.3:0.42')`. Only `attack`, `release` and the pitch envelope
+survived, because nothing downstream restated those. Applying it to the finished
+chain instead of seeding it makes every control the last writer.
+
+This is a source-reading claim that had to be proven off haps, and was: the BY
+VOICE table listed `bass·sawtooth` and `bass·supersaw` and **no `bass·sine` row
+at all**, while that sawtooth row carried an attack high of 6ms and a release
+high of 400ms — `glide()`'s own numbers, which appear nowhere else in the
+function. After the fix a `bass·sine` row exists (624 haps, `decay 700,
+sustain 0.35, release 400` — exactly its intended values) and `bass·sawtooth`
+fell 12712 → 12088. 12712 − 624 = 12088, exactly.
+
+Verified: `tsc --noEmit` exit 0, `masking` exit 0, attackfloor before/after.
+NOT verified: nothing has been listened to, and every browser gate remains
+blocked (see below).
+
+### The disk, corrected twice
+
+A reboot did **not** fix it, and two things I reported earlier were wrong.
+Post-reboot every previously-unreadable file reads clean, but `storvsc` errors
+still accrue at ~1 per 6.4s — the same rate as before. What the reboot cleared
+was the *wedged* state, not the fault. Processes still enter unkillable D-state
+on a bad read: `npm exec tsc` sat in `D` with 0.0 CPU for 11 minutes and had to
+be abandoned.
+
+**Operational workaround that works:** invoke binaries directly
+(`node node_modules/typescript/bin/tsc`) instead of via `npx`/`npm run`. npm's
+file-walking maximises exposure to bad blocks; the same typecheck completed in
+under a minute run directly.
+
+**`chromepath.mjs`'s 64KB health probe is insufficient** and this is the second
+thing I got wrong. It passed all four builds, and the browser still hung 180s on
+launch — reading 64KB of a 389MB binary proves nothing about the rest of it. The
+probe should be treated as a necessary-not-sufficient screen. The tmpfs copy its
+own header recommends is the actual remedy, and it is not created automatically.
