@@ -1,5 +1,19 @@
 # Density: why the arena is not actually the problem
 
+> **CORRECTION, added after the claims below were tested. Read this first.**
+>
+> The headline of this document — that the field is empty and that the
+> 18-second `leaveAt` deadline is what keeps it empty — is **WRONG in its
+> mechanism and overstated in its conclusion**. Both halves were falsified by
+> the experiments §6 records. The analysis of `p50 = 6` is arithmetically
+> correct and materially misleading, which is worse than being wrong, and it is
+> left standing below so the error is legible rather than quietly deleted.
+>
+> What is actually true: the field ramps 2 → 39 enemies between waves 2 and 27,
+> it plateaus in the middle, the opening is very slow, and the frame rate is
+> **already dropping at 39**. The real ceiling is the renderer, not the
+> deadline. §6 has the numbers.
+
 Written during the turnaround pass. Companion to `research-camera.md`, which
 scoped the mechanics of growing the field. This one argues the field size is the
 *second* problem and that growing it first would make the game worse.
@@ -152,3 +166,93 @@ The honest counter-case, recorded so it is not skipped:
 - Nobody has watched this game run. Every number here is off a headless
   simulation. A browser is available now; `tools/levelshot.mjs` and the other
   browser gates should be used before any of section 4 is committed.
+
+---
+
+## 6. The experiments, and what they falsified
+
+Everything in §1–§5 was reasoning from a static read of the source plus one
+aggregate statistic. Both of its load-bearing claims were then tested directly
+and both failed. Recorded in full, because this repo's rule is that a plausible
+claim and a measured one are different things — and §1–§5 is a worked example of
+the first being mistaken for the second.
+
+### 6a. FALSIFIED: the 18-second deadline is not what limits density
+
+§2a argued that `enemies.ts:737`'s `leaveAt = 18` is the primary population
+control and that retiring it was step one of the whole plan. Tested by setting
+it to 90 — five times longer, effectively "enemies do not leave" for any wave
+that is not badly stalled — and re-running `arena`, 3 runs x 20 simulated
+minutes:
+
+| | leaveAt 18 | leaveAt 90 |
+|---|---|---|
+| enemies p50 | 6.0 | **6.7** |
+| enemies p90 | 31.0 | **27.7** |
+| kills/min (card-0) | 93.1 | 103.3 |
+| kills/min (builder) | 161.2 | 161.7 |
+
+The p90 went **down**. Density did not move. The deadline almost never fires,
+because enemies are killed long before eighteen seconds elapse — and that is
+even more true now the gun has been repaired. The comment on that line calls the
+number "a GUESS standing in for a measurement", which is honest and correct; it
+is simply a guess about a quantity that turns out not to matter.
+
+The reasoning error is worth naming: §2a inferred a CAUSE from a MECHANISM that
+exists. A deadline that could cap the population does not cap it if nothing ever
+reaches the deadline. Nothing in a static read of the file can tell you which,
+and the experiment costs four minutes.
+
+### 6b. OVERSTATED: `p50 = 6` is arithmetically right and materially misleading
+
+Time-resolved, via `tools/endgame.mjs`, which jumps to a wave and samples it:
+
+| wave | 2 | 5 | 9 | 13 | 17 | 21 | 27 |
+|---|---|---|---|---|---|---|---|
+| enemies | 2 | 9 | 23 | 23 | 31 | 32 | **39** |
+| difficulty | 0.04 | 0.23 | 0.55 | 0.90 | 1.00 | 1.00 | 1.00 |
+| fps | 60 | 60 | 60 | 60 | 60 | 60 | **56** |
+
+The field does fill up. The median of six is an average over a twenty-minute run
+that includes a very sparse opening, the trough between every wave, and boss
+waves — a boss wave's `planWave` emits **7** enemies total. Quoting a median
+against Vampire Survivors' late-game screen, as §1 did, compares a whole-run
+average to another game's peak. That is not a like-for-like comparison and the
+conclusion drawn from it — "a 3x arena would hold six enemies in nine times the
+floor space" — does not follow.
+
+### 6c. What the time-resolved data DOES show, and it is a different plan
+
+Three real problems, none of which is the deadline:
+
+**The opening is far too slow.** Wave 2 puts *two* enemies on the field.
+`docs/research-feel.md` separately measured 7.5 s of empty arena before anything
+arrives and a first kill at 10.34 s. Vampire Survivors is sparse at minute zero
+too, but it is not *two enemies* — and a survivors-like is judged in its first
+ninety seconds.
+
+**There is a plateau in the middle.** Waves 9 and 13 both sit at 23 enemies
+while difficulty climbs 0.55 → 0.90, so four waves of stated escalation put
+nothing extra on screen. Difficulty then saturates at 1.00 by wave 17 and the
+`escalation` term is the only thing still moving.
+
+**The renderer is the real ceiling.** 56 fps at 39 enemies, and that is before
+any arena growth. `docs/research-camera.md` §2a independently found `WarpGrid`
+materialising the whole field every frame with no culling — 285 points now,
+~2420 at 3x, about 88% of them off screen. Any plan that targets Vampire
+Survivors' on-screen counts is a RENDERER project before it is a spawner
+project, and the honest order is: profile and batch first, then raise the
+ceiling, then grow the field.
+
+### 6d. What survives from §1–§5
+
+The structural observations are still true and still worth acting on; only the
+causal claim and the priority ordering were wrong. Spawning really is a discrete
+wave script gated on `enemies.length === 0`, which really does guarantee the
+inter-wave trough. `WavePlan.spawnTimeout` really is written and never read. And
+the coupling argument in §4 — that item power, density and arena size have to
+move together — is unaffected by any of this.
+
+What changes is the order and the target. Not "retire the deadline, then add a
+spawn director, then grow the field", but: **fix the opening, fill the mid-game
+plateau, profile the renderer, and only then discuss the ceiling.**
