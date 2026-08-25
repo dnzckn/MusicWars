@@ -54,6 +54,35 @@
 import { writeFileSync } from 'node:fs';
 import { makeSignals } from './lib/headless-audio.mjs';
 
+/*
+ * The envelope arithmetic is superdough's own, imported rather than copied.
+ *
+ * This file used to guess it, and the guess was wrong in the one direction that
+ * mattered. It read each control with an independent fallback —
+ * `attack 0.005, decay 0.1, sustain 0, release 0.08` — but superdough does not
+ * work that way. `helpers.mjs:167` treats the four as a group: if NONE of them
+ * is set it uses the synth's default `[0.001, 0.05, 0.6, 0.01]`, and otherwise
+ * it floors the unset ones at `0.001` for attack and decay and `0.01` for
+ * release, deriving sustain from WHICH of attack and decay were given.
+ *
+ * The difference was not academic. A lane written as `.ds('0.3:0.42')` — the
+ * bass, the loudest pitched lane in the game — gets a 1ms attack and a 10ms
+ * release from superdough, and this file was rendering it at 5ms and 80ms. An
+ * EIGHT TIMES longer release, on exactly the defect the score was being
+ * criticised for. The one tool anybody could listen to was quietly smoothing
+ * off the chop that the complaint was about, which is the worst failure a
+ * listening tool can have: it did not merely miss the problem, it argued
+ * against its existence.
+ *
+ * So the fallbacks are gone and the real function is called. `attackfloor.mjs`
+ * made the same decision for the same reason and says so in its header: a tool
+ * that keeps its own copy of somebody else's arithmetic is a mirror that
+ * drifts, and this repo has the incident reports to prove it.
+ */
+const { getADSRValues } = await import('superdough/helpers.mjs');
+/** superdough/synth.mjs:47 — the default used when a hap sets no envelope. */
+const SYNTH_DEFAULT_ADSR = [0.001, 0.05, 0.6, 0.01];
+
 const { MusicDirector } = await import('../src/audio/director.ts');
 const { Transport } = await import('../src/core/transport.ts');
 const { emptySnapshot } = await import('../src/core/events.ts');
@@ -409,10 +438,23 @@ for (const ev of timed) {
     const n = typeof x === 'number' ? x : Number(x);
     return Number.isFinite(n) ? n : dflt;
   };
-  const a = num(v.attack, 0.005);
-  const d = num(v.decay, 0.1);
-  const s = num(v.sustain, 0);
-  const r = num(v.release, 0.08);
+  /*
+   * `null` for "not set" is load-bearing here, not tidiness. superdough decides
+   * the sustain level from WHICH controls were provided — a hap with an attack
+   * and no decay sustains at full, a hap with a decay and no sustain collapses
+   * to silence — so a missing control has to arrive as `null` and not as a
+   * substituted number, or the branch picks the wrong answer.
+   */
+  const set = (x) => {
+    if (x == null) return null;
+    const n = typeof x === 'number' ? x : Number(x);
+    return Number.isFinite(n) ? n : null;
+  };
+  const [a, d, s, r] = getADSRValues(
+    [set(v.attack), set(v.decay), set(v.sustain), set(v.release)],
+    'linear',
+    SYNTH_DEFAULT_ADSR,
+  );
 
   const t0 = ev.t0;
   const dur = ev.dur;

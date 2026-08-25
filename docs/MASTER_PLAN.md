@@ -810,3 +810,47 @@ invented threshold this phase has had to retract.
 bass arp fx motifs power`. Drums and the sub belong there. `arp` (1,340 haps,
 180ms tails) and the motor (now sustaining to 160ms) are the two open questions;
 `bass` should probably stay steady, since bass players do not vibrato much.
+
+### The listening tool was arguing against the defect
+
+`tools/render.mjs` is the only artefact anybody can actually hear on this box —
+Chromium is dead, so the S0 browser capture recorder is unavailable and this WAV
+is the whole listening surface. It was computing envelopes wrong, in the one
+direction that mattered.
+
+It read each ADSR control with an independent fallback (`attack 0.005,
+decay 0.1, sustain 0, release 0.08`). superdough does not work that way:
+`helpers.mjs:167` treats the four as a group — if none is set it uses the
+synth's default `[0.001, 0.05, 0.6, 0.01]` (`synth.mjs:47`), and otherwise it
+floors the unset ones at 0.001 for attack/decay and 0.01 for release, deriving
+sustain from *which* of attack and decay were supplied.
+
+Measured side by side:
+
+| hap | render OLD | superdough truth |
+|---|---|---|
+| bass pre-fix `.ds('0.3:0.42')` | a 5ms, r **80ms** | a 1ms, r **10ms** |
+| motor pre-fix `.ad('0.004:0.07').sustain(0)` | r 80ms | r 10ms |
+| **no envelope set at all** | 5 / 100 / **0** / 80 | 1 / 50 / **0.6** / 10 |
+| chord stab (all four set) | identical | identical |
+| pad (all four set) | identical | identical |
+
+**The pattern is the finding.** Lanes that set all four controls rendered
+correctly. Lanes that relied on defaults — which is exactly the set of lanes
+that were defective — rendered with an EIGHT TIMES longer release. The one tool
+available for listening was smoothing off the precise chop the score was being
+criticised for. It did not merely fail to show the problem; it rendered evidence
+against it. The "nothing set" row is worse in kind: render made such a hap a
+pluck where the game holds it at 0.6 sustain.
+
+Fixed by importing superdough's own `getADSRValues` and deleting the fallbacks,
+which is the decision `attackfloor.mjs` already made and states in its header: a
+tool holding its own copy of somebody else's arithmetic is a mirror that drifts.
+Passing `null` for unset controls is load-bearing, not tidiness — superdough
+picks the sustain branch from which controls are present, so a substituted
+number selects the wrong branch.
+
+**This is a caution about the last three commits, not a retraction of them.**
+Every claim in S1 so far came from `attackfloor`, which has always called
+`getADSRValues` and was never affected. But it does mean nothing rendered before
+today can be trusted as a "before" recording.
