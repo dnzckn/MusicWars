@@ -23,6 +23,7 @@
     "render": "node --experimental-transform-types tools/render.mjs",
     "spectrum": "node tools/spectrum.mjs",
     "motorcheck": "node --experimental-transform-types tools/motorcheck.mjs",
+    "attackfloor": "node --experimental-transform-types tools/attackfloor.mjs",
     "leadcheck": "node --experimental-transform-types tools/leadcheck.mjs",
     "interlock": "node --experimental-transform-types tools/interlock.mjs",
     "motion": "node --experimental-transform-types tools/motion.mjs",

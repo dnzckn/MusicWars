@@ -695,3 +695,69 @@ thing I got wrong. It passed all four builds, and the browser still hung 180s on
 launch — reading 64KB of a 389MB binary proves nothing about the rest of it. The
 probe should be treated as a necessary-not-sufficient screen. The tmpfs copy its
 own header recommends is the actual remedy, and it is not created automatically.
+
+### S1 — the MOTOR, and §4's tail floor is wrong for it
+
+`attackfloor`, before → after:
+
+| hats / MOTOR | before | after |
+|---|---|---|
+| sustain | 0.00 | 0.26 |
+| release ms lo/med/hi | `10/10/10` | `10/112/160` |
+| TAIL ms lo/med/hi | `74/74/74` | `74/112/160` |
+| haps with no release set | 100% | 0% |
+| sustain-0 | 100% | 48% |
+
+**The defect was articulation, not length.** `sustain(0)` puts the amplitude at
+zero by attack+decay and holds it there until the note ends, so a note's WRITTEN
+length changes nothing about how long it sounds. Every one of 25,340 haps was
+the same 74ms blip — the tool measured a tail of `74/74/74`, the same number on
+every hap of a twelve-minute sweep.
+
+Read that against what `motorVoicing` actually writes. `gallop` is
+`[root@3 third]` — a dotted eighth and a sixteenth, 667ms against 222ms, the
+William Tell figure its own comment is proud of. `shuffle` is triplets.
+Half-time is a dotted-eighth displacement. The fill bar ends in four sixteenths.
+**Five distinct articulations were written and all five came out as the same
+blip.** The gallop's long-short survived only in *when the next note started* —
+never in the notes themselves. That is the audible difference between a line
+that is played and one that is sequenced, and it is this lane's share of
+"clavichord": not that the attack is fast, but that nothing about a note varies.
+
+The beat layer now sustains, so written length is audible for the first time.
+The 70ms decay is untouched, so the percussive front that makes it a motor is
+unchanged. The offbeat layer deliberately keeps `sustain(0)` — it is garnish at
+a tenth of the level landing between the beat layer's notes, and giving it a
+body would fill the very gaps that make the two layers read as separate. That is
+the 48% sustain-0 in the table, and it is intended.
+
+**§4's `tail ≥ 250ms` floor must NOT be applied to this lane, and this is now
+the second §4 threshold measurement has contradicted.** The motor plays down to
+111ms sixteenths on the fill bar. A 250ms tail would put three notes on top of
+each other and turn the lane into a drone — which would undo the *pulse
+inversion* the entire arrangement rests on (percussion stopped keeping time so
+the pitched lanes could stop being texture). The floor encodes an assumption
+that every pitched lane wants to ring, and the lane whose job is the clock does
+not. Calibration should replace both §4 envelope floors with a **spread**
+requirement — no lane may measure the same tail on every hap — which is what
+actually distinguishes a played part from a sequenced one, and which cannot be
+satisfied by typing a constant.
+
+**Caveat, stated because the tool cannot see it:** `attackfloor`'s dBFS column
+is derived from `gain`, so it reads −27 both before and after and is blind to
+the sustained energy this change adds. The mix-balance consequence is unmeasured
+and needs `mixaudit`, which is browser-gated.
+
+### Browser tools: not viable on this box, and the reason is now pinned down
+
+`cp` of `chromium-1234/chrome-linux64` to tmpfs wedged in D-state **inside the
+`chrome` binary itself, ~3MB in**, and made zero progress over 20 minutes. That
+is the direct proof that `chromepath.mjs`'s 64KB health probe is
+necessary-but-not-sufficient: it validated this exact build, and the browser
+then hung 180s on launch. A probe that reads 64KB of a 389MB file says nothing
+about the other 388MB.
+
+Treat every browser gate as unavailable until the disk is replaced. Node-only
+tools (`attackfloor`, `masking`) run fine and are the whole verification surface
+for now — which means S1's mix-balance and listening checks are deferred, not
+passed.

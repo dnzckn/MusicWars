@@ -1227,12 +1227,50 @@ export function buildMotor(m: MusicalState): Pattern {
    * Quiet on purpose. It runs constantly, so it has to sit under everything;
    * a metronome you notice is a metronome that is too loud.
    */
-  const voice = (pattern: string, level: Patternable, velocity: number): Pattern =>
+  /*
+   * ARTICULATION, and until now this lane had exactly one.
+   *
+   * `sustain(0)` means the amplitude is already zero at attack+decay and stays
+   * there until the note ends, so a note's WRITTEN LENGTH changes nothing about
+   * how long it sounds. Every note in this lane was the same 74ms blip —
+   * `attackfloor` measured its tail as a flat 74/74/74 over a twelve-minute
+   * sweep, the same number on every one of 25,340 haps.
+   *
+   * Look at what `motorVoicing` writes against that. The gallop is
+   * `[root@3 third]`: a dotted-eighth and a sixteenth, 667ms against 222ms, the
+   * William Tell figure its own comment is proud of. `shuffle` is triplets.
+   * Half-time is a dotted-eighth displacement. The fill bar ends in four
+   * sixteenths. Five distinct articulations were written and all five came out
+   * as the same blip — the long-short of a gallop survived only in WHEN the
+   * next note started, never in the notes themselves. That is the audible
+   * difference between a line that is played and one that is sequenced, and it
+   * is this lane's share of "clavichord": not that the attack is fast, but that
+   * nothing about a note ever varies.
+   *
+   * So the beat layer gets a sustain, and the written length becomes audible
+   * for the first time. The 70ms decay is untouched, so the percussive front
+   * that makes it a motor is exactly as it was; what follows it is now a body
+   * that lasts as long as the note asked to. A held 0.3 under a 0.22 gain is
+   * 0.066 — this stays the quiet inner voice its comment below insists on.
+   *
+   * The offbeat layer keeps `sustain(0)` on purpose. It is garnish at a tenth
+   * of the level, it lands between the beat layer's notes, and giving it a body
+   * too would fill the gaps that are the whole reason the two layers read as
+   * separate. One voice sings, the other ticks.
+   */
+  const voice = (
+    pattern: string,
+    level: Patternable,
+    velocity: number,
+    sustain: Patternable,
+    release: Patternable,
+  ): Pattern =>
     note(pattern)
       .s('pulse')
       .pw(0.5)
       .ad('0.004:0.07')
-      .sustain(0)
+      .sustain(sustain)
+      .release(release)
       .lpf(m.sig.openness.range(1400, 4000))
       .hpf(220)
       .lpq(1)
@@ -1249,14 +1287,40 @@ export function buildMotor(m: MusicalState): Pattern {
    * division-swapping hat 45% nested, the worst lane in the mix.
    */
   const drive = Math.min(1, (m.barInPhrase % 4 === 3 ? 0.3 : 0) + (rapid > 0 ? 0.25 + rapid * 0.08 : 0));
-  const base = voice(line, 0.22, 1);
+  /*
+   * How much body the beat layer holds, and how long it takes to let go.
+   *
+   * Both ride `openness`, which is the master filter position — how big and
+   * open the mix currently is. When it closes down the motor tightens back
+   * towards the pluck it used to be; when the arrangement opens up the inner
+   * voice sings a little more. A curve rather than a constant, for the reason
+   * this file keeps relearning: a fixed number here would trade one invariant
+   * envelope for a different invariant envelope.
+   *
+   * The release is short by design. On the fill bar's sixteenths (111ms at 135
+   * bpm) a 90-160ms release overlaps the next note by about one note's worth at
+   * a third of the level, which is a chromatic run smearing into itself very
+   * slightly — the intended sound of a run-up. Anything near the 250ms floor
+   * §4 proposes would put three notes on top of each other and turn the lane
+   * into a drone, which would undo the pulse inversion this whole arrangement
+   * is built on. The floor is wrong for this lane and should not be applied to
+   * it; see the plan's note on retiring it.
+   */
+  const base = voice(
+    line,
+    0.22,
+    1,
+    m.sig.openness.range(0.22, 0.36),
+    m.sig.openness.range(0.09, 0.16),
+  );
   if (half) return base;
   return stack(
     base,
     // The offbeat sixteenths, quieter and thinner: this is what turns a pulse
     // into a motor. Rides `sig.fill`, so pressure drives it rather than a
-    // threshold rewriting the part.
-    voice(`[~ ${third}]*4`, m.sig.fill.range(drive * 0.14, 0.14), 0.5),
+    // threshold rewriting the part. Stays a pluck — see the note on the two
+    // articulations above.
+    voice(`[~ ${third}]*4`, m.sig.fill.range(drive * 0.14, 0.14), 0.5, 0, 0),
   );
 }
 
