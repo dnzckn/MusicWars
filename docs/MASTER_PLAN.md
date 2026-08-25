@@ -854,3 +854,48 @@ number selects the wrong branch.
 Every claim in S1 so far came from `attackfloor`, which has always called
 `getADSRValues` and was never affected. But it does mean nothing rendered before
 today can be trusted as a "before" recording.
+
+### A negative result: the mix has no gaps, so "choppy" is probably not gaps
+
+With `render.mjs` corrected, an honest A/B is possible — same renderer, same
+composition (1764 events queried and 1484 synthesised in BOTH runs), pre-S1
+`layers.ts` against current. Measured off the audio in 5ms frames, thresholds
+relative to each file's own median frame:
+
+| metric | before | after |
+|---|---|---|
+| % of time >12dB under median | 0.7 | 0.7 |
+| % of time >20dB under median | 0.4 | 0.4 |
+| mean per-frame level drop | 2.309 dB | 2.284 dB |
+| crest | 6.38 dB | 6.32 dB |
+
+**Nothing moved above the noise floor**, and `render.mjs`'s own header sets that
+floor: it says in capitals that the tool is not deterministic and that identical
+runs gave peaks of 0.408 / 0.421 / 0.414. A 0.025dB difference in mean drop is
+not a result.
+
+The interesting number is not the comparison, it is the level: **the full mix
+sits more than 12dB below its own median only 0.7% of the time.** With eleven
+lanes sounding at once, one lane's gaps are another lane's notes. Per-lane
+envelope work is real at the hap level and largely invisible in the sum, and
+more importantly *the score does not have a silence problem to fix*.
+
+So the S-a framing needs re-examining. If "choppy / abrasive over time" is not
+gaps, the leading remaining candidate is **onset DENSITY** — `attackfloor`
+measures 64.1 haps per bar, **36.0 onsets per second**, a fresh transient every
+28ms. That is a lot even against the chiptune canon, it is cumulative in exactly
+the way "over time" describes, and it is a *count* problem rather than an
+*envelope* problem. Reducing it means removing notes, which is an arrangement
+change and collides directly with the retention doctrine, so it must not be
+started on a hunch.
+
+**What is and is not established.** The hap-level defects were real and are
+fixed: a 1ms attack and 10ms release on the loudest pitched lane, a `.s('sine')`
+that never reached the output, five written articulations rendered as one, and a
+score containing a single vibrato. That those fixes improve what a person hears
+is **unproven**. Both WAVs have been handed to the user, who is the only
+instrument available for the question that actually matters.
+
+**Do not tune further envelope numbers until that comes back.** Continuing to
+optimise a quantity with no demonstrated link to the complaint is precisely the
+"gates optimised against" failure, and it would be self-inflicted this time.
