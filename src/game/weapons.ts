@@ -305,14 +305,50 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: 'Strikes something at random from above. You do not aim it.',
     character: 'shimmering — a single struck bell, long decay',
     weight: 0.9,
-    base: stats({ interval: 1.4, count: 1, damage: 16, area: 34, range: 460 }),
+    /*
+     * TWO BELLS AT LEVEL 1, AND THE REASON IS A CHANGE IN `world.ts`.
+     *
+     * `fireSeek` used to fan its bolts as `t = i/(n - 1) - 0.5`, which for any
+     * EVEN count never takes the value 0 — so the starting weapon's two bolts
+     * flew either side of the aim and nothing was ever fired along it. It now
+     * CONVERGES the bolts on the n nearest targets, which turned `count` on a
+     * seek weapon from "a wider spray" into "one more enemy hit per volley".
+     *
+     * Two of the three openers are `seek` and both got that for free. CHIME is
+     * `strike` and got nothing, and `tools/openers.mjs` caught it: the weakest
+     * opener fell to **68% of the strongest against a 70% floor**, with CHIME
+     * named as the trap. The floor was NOT relaxed — it is correct, and it is
+     * the gate doing its job.
+     *
+     * The fix is the same property, given to the shape that lacked it. A strike
+     * is already multi-target by `count`; CHIME simply opened with `count: 1`,
+     * so it was the one opener with no count for the change to be worth
+     * anything to. Two bells restores the share to **77%**, which is exactly
+     * what `openers` measured before the convergence change landed — the
+     * roster catching up, not overtaking. Swept against the gate's own
+     * measurement: `count 2` -> 77%, `interval 1.4 -> 1.0` -> 74%,
+     * `damage 16 -> 24` -> 74%, `area 34 -> 56` -> 68% (no effect at all), and
+     * `count 2 + interval 1.15` -> 81%, which overshoots the historical figure
+     * and was therefore not taken.
+     *
+     * WATCH ECHO CHAMBER, NOT CHIME, NEXT TIME. With this in, CHIME reaches 84%
+     * and **ECHOES becomes the binding opener at ~78%**. The gate only ever
+     * names the worst one, so the next regression in this area will be reported
+     * against a different instrument than the one that moved.
+     *
+     * The ladder is renumbered rather than re-costed: every `add` below is
+     * unchanged, so the ceiling moves 5 strikes -> 6 and the early game moves
+     * 1 -> 2. That is deliberate — `openers` measures the first four minutes,
+     * which is where the trap was.
+     */
+    base: stats({ interval: 1.4, count: 2, damage: 16, area: 34, range: 460 }),
     steps: [
-      { note: 'a second strike', add: { count: 1 } },
-      { note: 'strikes land wider', mul: { area: 1.35 } },
       { note: 'a third strike', add: { count: 1 } },
+      { note: 'strikes land wider', mul: { area: 1.35 } },
+      { note: 'a fourth strike', add: { count: 1 } },
       { note: 'rings out faster', mul: { interval: 0.7 } },
       { note: 'each strike is heavier', mul: { damage: 1.5 } },
-      { note: 'a fourth and fifth strike', add: { count: 2 } },
+      { note: 'a fifth and sixth strike', add: { count: 2 } },
       { note: 'strikes reach the whole arena', mul: { range: 1.8, area: 1.25 } },
     ],
   },
@@ -582,23 +618,71 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'chorale',
     label: 'CHORALE',
-    shape: 'orbit',
+    /*
+     * THE SHAPE CHANGED HERE, AND THE BLURB IS THE EVIDENCE.
+     *
+     * This was `orbit` — the same shape as DRONE PODS — so the evolution was a
+     * rename and a stat bump, which is the defect the file header at the top of
+     * this file promises does not exist ("a different verb, not a bigger
+     * number"). Measured, 13 of the 15 recipes in `FUSIONS` produced a result
+     * with their base's shape; this is one of the two that moved.
+     *
+     * FOUR INDEPENDENT THINGS SAY `beam`, and none of them is taste:
+     *
+     *   1. **The blurb already said so.** "…sustaining BEAMS between them." It
+     *      has said so since the row was written. Nothing but the `shape` field
+     *      disagreed.
+     *   2. **The catalyst's stat was dead.** FERMATA is this recipe's catalyst
+     *      and FERMATA moves `linger`; `firePods` does not read `linger`.
+     *      `tools/deadhunt-ranges.mjs` printed exactly that — `DEAD
+     *      chorale.linger=1 (set, static)` under `orbit`. `fireBeam` reads
+     *      `linger` as the beam's life, so the catalyst now buys something.
+     *   3. **The one per-shape floor in the whole simulation that BITES was
+     *      this row.** Same tool: `firePods Math.max(200, s.speed) … BITES for
+     *      chorale`, because CHORALE declared `speed: 0` and pods have to fire
+     *      a bullet at *some* speed. `world.ts`'s own comment on that floor
+     *      says the quiet part: "the `orbit` shape has no input that could
+     *      express 'the satellites stop moving', and CHORALE's stated identity
+     *      cannot currently be built out of the stats it has." A held beam has
+     *      no travel speed, so the contradiction dissolves rather than being
+     *      papered over with a hand-picked bullet speed.
+     *   4. **`character` is "a sustained four-part choir with no attack."** A
+     *      held beam is the only shape in the table with no attack transient.
+     *
+     * WHAT IT COSTS, said plainly: DRONE PODS' pods each eat one bullet, and
+     * that defence is a property of the `orbit` shape, not of the stat block.
+     * Evolving now gives it up. That is deliberate — Ball x Pit's Black Hole
+     * one-shots and then destroys itself, and an evolution that only adds is
+     * the thing this change exists to stop — but it does mean `orbit` has no
+     * authored ending any more. It is not gone from built runs: DRONE PODS
+     * itself is draftable all run, and any duet with drones as parent A is
+     * still an orbit. Giving some OTHER evolution the `orbit` shape to fill the
+     * hole was considered and rejected; see the note above `FUSIONS`.
+     *
+     * TUNED TO BE POWER-NEUTRAL ON BOTH METRICS, so the shape change can be
+     * measured on its own. Nominal `damage x count / interval` is 360, exactly
+     * what the `orbit` block produced. And because a beam's `dps` is
+     * `damage / life` while `life / interval` generations overlap, a target
+     * standing in one spoke takes `damage / interval` = 60/s — which is also
+     * what six pods firing 12-damage bullets outward every 0.2s delivered to a
+     * single target, since only about one pod in six was ever pointing at it.
+     * `area` came down 120 -> 18 because on `orbit` it was the ORBIT radius and
+     * on `beam` it is the beam's half-width; 120 would have been a 240px-thick
+     * beam. `pierce: 99` is gone: `fireBeam` ignores `pierce` (it damages
+     * everything along its length anyway), and BOW and HARMONICS already carry
+     * that dead stat — a third copy is not worth the tidiness.
+     *
+     * FERMATA still does something, and it is coverage rather than power: a
+     * longer life means more overlapping generations at more aim angles, while
+     * `damage / interval` is unchanged. That is the same power-neutral shape as
+     * the `pushField` count repair in `world.ts`, and for the same reason.
+     */
+    shape: 'beam',
     fused: true,
     weight: 0,
     blurb: 'The pods stop circling and hold station, sustaining beams between them.',
     character: 'mournful — a sustained four-part choir with no attack',
-    /*
-     * `speed: 0` is EXPLICIT, and it is the whole evolution.
-     *
-     * The line for this fusion is "the satellites stop moving and start
-     * singing", and stopping is now something the data can say: `firePods`
-     * spins the pods only while `speed > 0`. It was previously just absent
-     * from this block, which is not the same thing — an unset stat landing on
-     * `firePods`' `Math.max(200, s.speed)` floor is an omission that looks
-     * like a decision, and `tools/deadhunt-ranges.mjs` reports that floor as
-     * the only per-shape floor in six routines that actually bites.
-     */
-    base: stats({ interval: 0.2, count: 6, damage: 12, area: 120, speed: 0, pierce: 99, linger: 1, range: 700 }),
+    base: stats({ interval: 0.5, count: 6, damage: 30, area: 18, linger: 0.9, range: 700 }),
     steps: [],
   },
   {
@@ -659,12 +743,62 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'vibrato',
     label: 'VIBRATO',
-    shape: 'field',
+    /*
+     * THE SECOND SHAPE RE-POINT. `field` -> `strike`, and the tell was a stat
+     * the simulation never read.
+     *
+     * TREMOLO FIELD drops pools where you have been and they stay there.
+     * VIBRATO's whole blurb is "the pools go hunting" — and it was `field`, so
+     * the pools went on staying exactly where they were put. The row tried to
+     * say otherwise: it declared `speed: 190`, and `tools/deadhunt-ranges.mjs`
+     * printed `DEAD vibrato.speed=190 (set, static)`, because `fireField`
+     * ignores `speed`. A stat set to express the evolution's entire identity,
+     * read by nothing, is this repository's signature defect.
+     *
+     * `strike` is what "hunting" actually means here. `fireStrike` lands
+     * `count` hits per activation ON randomly chosen live enemies within
+     * `range`, each burning a circle of `area` around where it landed. That is
+     * a pool that appears where the enemies are instead of where you were —
+     * the same damage shape, relocated, which is the smallest change that makes
+     * the sentence true.
+     *
+     * `speed` is DELETED rather than moved, and this is the honest part:
+     * `fireStrike` ignores `speed` too. No shape in the table is "a pool that
+     * travels". The hunting is expressed by the targeting, not by a velocity,
+     * so the number goes rather than being carried to a second shape that also
+     * cannot read it. `linger: 5.5` goes for the same reason — a strike is
+     * instantaneous, and leaving it set would trade one dead stat for another.
+     * `range: 620` is new because a strike needs a reach and `fireField` had no
+     * use for one; 620 is short of CARILLON's 900 on purpose.
+     *
+     * NOMINAL POWER IS UNCHANGED at 96 (`damage x count / interval`) so the
+     * shape change is what gets measured. REAL delivery is not unchanged and
+     * saying so matters: on `field`, `pushField` splits one activation's damage
+     * across its pools and spreads it over `linger`, so a maxed TREMOLO put
+     * about 0.37 dps into each of a handful of wells. Nominal dps flatters
+     * `field` badly. This is therefore a genuine buff in play, not only a
+     * re-point, and `builds` / `combine` are the numbers that decide whether it
+     * is too much — not the nominal column.
+     *
+     * IT DOES NOT BLUR CHIME. `strike` now has two members and so do `seek`
+     * (three), `arc` (three) and `beam`; sharing a routine is not sharing a
+     * role. CARILLON is five tight 30-damage bells in a 60px circle out to
+     * 900px; this is four wide 12-damage washes in a 96px circle out to 620.
+     * Strong-and-narrow against weak-and-wide is the same axis SPICCATO and
+     * SNAP already split on.
+     *
+     * WHAT STILL DOES NOT WORK, recorded so it is not re-derived: HOMING is
+     * this recipe's catalyst and `Modifiers.homing` steers PLAYER BULLETS
+     * (`world.ts`, `steerPlayerBullets`). A field spawns none and a strike
+     * spawns none, so the catalyst was inert before this change and is inert
+     * after it. Making HOMING mean something for this line needs `world.ts`.
+     */
+    shape: 'strike',
     fused: true,
     weight: 0,
     blurb: 'The pools go hunting.',
     character: 'eerie — pitch wobbling as it hunts',
-    base: stats({ interval: 0.5, count: 4, damage: 12, area: 96, linger: 5.5, speed: 190 }),
+    base: stats({ interval: 0.5, count: 4, damage: 12, area: 96, range: 620 }),
     steps: [],
   },
   {
@@ -847,6 +981,75 @@ export const RIG: readonly RigDef[] = [
  *
  * Unions take two *evolved* instruments and free a slot, as Fuwalafuwaloo does.
  * They are the ceiling and they are meant to be rarely reached.
+ *
+ * ---------------------------------------------------------------------------
+ * DOES AN EVOLUTION CHANGE THE VERB? COUNTED, AND THEN ACTED ON.
+ *
+ * The header of this file promises "a different verb, not a bigger number".
+ * Walking this table and comparing each result's `shape` to its base's:
+ *
+ *     before   13 of 15 recipes kept the base's shape   (13 of 13 evolutions,
+ *              0 of 2 unions)
+ *     after    11 of 15                                 (11 of 13 evolutions,
+ *              0 of 2 unions)
+ *
+ * Two moved: `drones -> chorale` orbit -> beam, and `tremolo -> vibrato`
+ * field -> strike. Both are argued at their rows in `INSTRUMENTS`. The test
+ * they had to pass was not "is a different shape imaginable" — it always is —
+ * but **does the re-point make more of the row's own declared stats live?**
+ * `tools/deadhunt-ranges.mjs` prints that per shape, so it is a number rather
+ * than an opinion, and both re-points remove a DEAD row it was reporting.
+ *
+ * THE OTHER ELEVEN WERE EXAMINED AND LEFT. Recording why, because
+ * `docs/research-items.md` §5 Gap 1 proposes six re-points and four of them are
+ * on this list — do not re-propose them without answering the objection.
+ *
+ *   - `blackhole + compressor -> downbeat`, field -> strike. **Blocked.**
+ *     `World.fieldSwallows` is `id === 'blackhole' || id === 'downbeat'`, and
+ *     that is what banks a charge into `player.wells` for the player to throw.
+ *     DOWNBEAT is the only fused instrument that keeps the throw. Re-pointing
+ *     it deletes a player-facing verb and leaves the second half of that
+ *     predicate unreachable. Needs `fieldSwallows` to become a data flag first.
+ *   - `echoes + timewarp -> canon`, seek -> field. **Blocked.** CANON is
+ *     `bounces: 8` and `range: 2600`; `fireField` reads neither. `bounces` is
+ *     the flagship dead-stat repair in this repo (see `InstrumentStats.bounces`)
+ *     and this would re-kill it on the one instrument built around it.
+ *   - `bow + laser -> harmonics`, beam -> arc. **Rejected.** It would collapse
+ *     STRING SECTION — one of only two recipes that changes shape at all — from
+ *     beam -> arc to arc -> arc, so the count would not improve. It also puts a
+ *     `speed: 0` arc into SNARE's sweep branch, or a travelling fan into HARP's.
+ *   - `snare + rapid -> blastbeat`, arc -> orbit. **Blocked, concretely.**
+ *     `World` writes `player.podCount` once per orbit instrument inside the
+ *     firing loop, last write wins. Today at most one orbit instrument can ever
+ *     be held (CHORALE and every drones-parented duet consume DRONE PODS), so
+ *     the collision has never been reachable. A second orbit RESULT makes
+ *     DRONE PODS + BLAST BEAT a legal pair and the collision real. Separately:
+ *     "the roll never lands" is already satisfied inside `arc` — the sweep's
+ *     life is 0.16s and the interval is 0.16s, so there is literally no gap.
+ *   - `chime + resonance -> carillon`, strike -> aura. **Rejected on the
+ *     census.** `aura` is already 4 of the 15 results (CATHEDRAL, WALL OF
+ *     SOUND, TUTTI, REQUIEM) against `beam` 1 and `strike` 1; three of those
+ *     four are "a very large ring". A fifth would be the same-verb-bigger-number
+ *     problem reproduced at roster level. And `strike` was split out of `seek`
+ *     *for* the CHIME family — moving CHIME's own ending off it a change later
+ *     is churn. Nothing in the recipe argues for it either: RESONANCE moves
+ *     `xpGain`, which no shape reads.
+ *   - `pizzicato + capo -> spiccato` / `+ compressor -> snap`. **Left, twice
+ *     over.** The branch note on SNAP records the decision and its reason. And
+ *     "the bow starts to bounce" is not an unimplemented shape: `bounces: 2`
+ *     plus `fireSeek` forwarding it to a reflecting pool IS that line. CAPO
+ *     moves `speed`, which only seek, travelling arc and orbit read.
+ *
+ * NOT SHAPE BUGS, BUT PROSE THE SIMULATION DOES NOT DELIVER. Left alone here
+ * because no existing shape implements them and inventing one is a `world.ts`
+ * feature, not a data edit: TUTTI's "everything is pulled to the centre first"
+ * (no shape has a pull except a swallowing field, and that list is hardcoded),
+ * WALL OF SOUND's "the field grows with your speed" (no shape reads player
+ * speed), CANON's "every bounce spawns a delayed copy" (the pool reflects, it
+ * does not spawn), CARILLON's "every strike chains to two more" (`fireStrike`
+ * picks random targets; it does not chain), and STRING SECTION's "all of them
+ * held" on an `arc`, which is why `deadhunt-ranges` reports its `linger: 1.2`
+ * as dead.
  * ------------------------------------------------------------------------ */
 
 export interface FusionDef {
