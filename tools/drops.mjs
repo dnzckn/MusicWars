@@ -15,7 +15,7 @@
  * A single-source uptime number is the defect, so it is checked here directly.
  */
 import './lib/headless-audio.mjs';
-const R = new URL('../src/', import.meta.url).pathname;
+const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
 const { POWERUPS } = await import(`${R}game/powerups.ts`);
 

@@ -18,6 +18,7 @@
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { makeSignals } from './lib/headless-audio.mjs';
+import { fileURLToPath } from 'node:url';
 const strudel = await import('@strudel/core');
 const L = await import('../src/audio/layers.ts');
 const { buildChord, PROGRESSIONS, degreeToSemitone } = await import('../src/audio/theory.ts');
@@ -27,7 +28,7 @@ const SR = 44100;
 const BPM = Number(process.env.HUM_BPM ?? 96);
 const MODE = process.env.HUM_MODE ?? 'aeolian';
 const TONIC = 69; // A4 — comfortably in the middle of a singer's range.
-const OUT_DIR = new URL('../renders/', import.meta.url).pathname;
+const OUT_DIR = fileURLToPath(new URL('../renders/', import.meta.url));
 
 const SLOTS = cellForBar(THEMES[0], 0, 0).length;
 const secPerSlot = (60 / BPM) / (SLOTS / 4); // four beats to a bar, SLOTS slots

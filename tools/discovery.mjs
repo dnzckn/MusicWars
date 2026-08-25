@@ -18,7 +18,7 @@
  *   3. the line the title screen shows says something true at 0, mid and full.
  */
 import './lib/headless-audio.mjs';
-const R = new URL('../src/', import.meta.url).pathname;
+const R = new URL('../src/', import.meta.url).href;
 const W = await import(`${R}game/weapons.ts`);
 const D = await import(`${R}game/discovery.ts`);
 

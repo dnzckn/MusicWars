@@ -20,7 +20,7 @@
  */
 import './lib/headless-audio.mjs';
 import { makeBrain } from './lib/bot-brain.mjs';
-const R = new URL('../src/', import.meta.url).pathname;
+const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
 const { MusicDirector } = await import(`${R}audio/director.ts`);
 const { Transport } = await import(`${R}core/transport.ts`);

@@ -23,6 +23,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { makeSignals } from './lib/headless-audio.mjs';
+import { fileURLToPath } from 'node:url';
 const strudel = await import('@strudel/core');
 const L = await import('../src/audio/layers.ts');
 const { buildChord, PROGRESSIONS } = await import('../src/audio/theory.ts');
@@ -31,7 +32,7 @@ const LANES = [
   ['sub', L.buildSub], ['motor', L.buildMotor], ['bass', L.buildBass],
   ['chords', L.buildChords], ['arp', L.buildArp], ['lead', L.buildLead],
 ];
-const BASE = new URL('./lib/leadfreeze.baseline.txt', import.meta.url).pathname;
+const BASE = fileURLToPath(new URL('./lib/leadfreeze.baseline.txt', import.meta.url));
 
 function state(over) {
   const mode = over.mode;

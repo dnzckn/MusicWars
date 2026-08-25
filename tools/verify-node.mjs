@@ -51,7 +51,24 @@ function run(tool, timeoutSec) {
   if (!cmd) return Promise.resolve({ tool, code: 127, ms: 0, why: 'no such npm script' });
   const started = Date.now();
   return new Promise((resolve) => {
-    const p = spawn('sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+    /*
+     * `shell: true` rather than an explicit `sh -c`.
+     *
+     * The original spawned `sh` directly, which does not exist on a stock
+     * Windows box and made every one of these checks report a crash as a
+     * FAIL. Node picks cmd.exe or sh per platform when `shell` is true, and
+     * the script bodies are plain `node tools/x.mjs` either way.
+     *
+     * NODE_OPTIONS carries the type-stripping flag so a tool works whether or
+     * not its own npm script spells it out. Node >=23.6 strips types with no
+     * flag; on 22.x it is required, and the scripts disagree about which of
+     * them carry it. Setting it here means the runner does not depend on that.
+     */
+    const p = spawn(cmd, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      env: { ...process.env, NODE_OPTIONS: `--experimental-transform-types ${process.env.NODE_OPTIONS ?? ''}`.trim() },
+    });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { out += d; });

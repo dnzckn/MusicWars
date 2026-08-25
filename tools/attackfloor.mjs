@@ -81,7 +81,7 @@ const { getADSRValues } = await import('superdough/helpers.mjs');
 const strudel = await import('@strudel/core');
 const { note, noteToMidi } = strudel;
 
-const R = new URL('../src/', import.meta.url).pathname;
+const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
 const { MusicDirector } = await import(`${R}audio/director.ts`);
 const { Transport, BARS_PER_PHRASE } = await import(`${R}core/transport.ts`);

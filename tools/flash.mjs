@@ -18,6 +18,7 @@
  * for that, on a box where it can run.
  */
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /*
  * A MIRROR THAT CAN DRIFT IS A GATE THAT LIES.
@@ -29,7 +30,7 @@ import { readFileSync } from 'node:fs';
  * parity-blink shape must not be. Same approach `clash.mjs` takes to
  * `theory.ts` — read the file as text rather than trusting a copy of it.
  */
-const RENDERER = new URL('../src/render/renderer.ts', import.meta.url).pathname;
+const RENDERER = fileURLToPath(new URL('../src/render/renderer.ts', import.meta.url));
 const src = readFileSync(RENDERER, 'utf8');
 /*
  * Comments stripped first, and that is not a detail. The block above
