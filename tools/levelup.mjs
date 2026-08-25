@@ -56,17 +56,54 @@ console.log('\nTABLE');
   const fused = W.INSTRUMENTS.filter((d) => d.fused);
   console.log(`  ${instruments.length} instruments  ${W.RIG.length} rig  ${fused.length} fusions  ${W.FUSIONS.length} recipes`);
 
-  // Every base instrument evolves exactly once; every rig item catalyses once.
+  /*
+   * COVERAGE, not uniqueness — and the difference is a design change, so it is
+   * spelled out rather than quietly relaxed.
+   *
+   * This used to assert `n === 1` in both directions: every instrument evolves
+   * exactly once, every rig item catalyses exactly once. The at-LEAST-one half
+   * is the part worth having and is unchanged below — an instrument with no
+   * evolution is a dead end a player can commit to and never be paid for, and a
+   * rig item that catalyses nothing is filler competing for the same four card
+   * slots as everything else.
+   *
+   * The at-MOST-one half was never justified in this file beyond restating the
+   * table, and it encoded the flaw rather than a requirement: with one ending
+   * per instrument, committing to an instrument also chose its ending, and the
+   * only open question was whether its single catalyst ever appeared. That is a
+   * lookup. Branches are the fix, so a gate forbidding them has to go — but it
+   * is replaced by a STRONGER check, not deleted, because "the test failed so I
+   * removed it" and "the test encoded an assumption I am deliberately changing"
+   * look identical in a diff and only one of them is honest.
+   *
+   * What replaces it: a branch must be UNAMBIGUOUS. Two recipes sharing a base
+   * must ask for different catalysts, or the game could not tell which one a
+   * player meant; and they must produce different results, or the branch is
+   * cosmetic. Both are checked below, and the branch count is printed so a
+   * second one cannot appear by accident and go unnoticed.
+   */
   const evolutions = W.FUSIONS.filter((f) => f.kind === 'evolution');
   const unions = W.FUSIONS.filter((f) => f.kind === 'union');
   for (const d of instruments) {
-    const n = evolutions.filter((f) => f.base === d.id).length;
-    if (n !== 1) fail(`${d.id} has ${n} evolutions, want exactly 1`);
+    const mine = evolutions.filter((f) => f.base === d.id);
+    if (mine.length === 0) fail(`${d.id} has no evolution — a dead end to commit to`);
+    const cats = new Set(mine.map((f) => f.catalyst));
+    if (cats.size !== mine.length) fail(`${d.id} has two evolutions sharing a catalyst — ambiguous`);
+    const outs = new Set(mine.map((f) => f.result));
+    if (outs.size !== mine.length) fail(`${d.id} has two evolutions with the same result`);
   }
   for (const d of W.RIG) {
     const n = evolutions.filter((f) => f.catalyst === d.id).length;
-    if (n !== 1) fail(`rig ${d.id} catalyses ${n} evolutions, want exactly 1`);
+    if (n === 0) fail(`rig ${d.id} catalyses nothing — filler in a zero-sum offer`);
   }
+  const branched = instruments
+    .map((d) => [d.id, evolutions.filter((f) => f.base === d.id).length])
+    .filter(([, n]) => n > 1);
+  console.log(
+    branched.length
+      ? `  branching: ${branched.map(([id, n]) => `${id} x${n}`).join(' ')}`
+      : '  branching: none — every instrument has exactly one ending',
+  );
   const results = new Set(W.FUSIONS.map((f) => f.result));
   if (results.size !== W.FUSIONS.length) fail('two recipes produce the same fusion');
   for (const f of W.FUSIONS) {

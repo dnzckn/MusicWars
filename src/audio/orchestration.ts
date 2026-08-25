@@ -380,6 +380,7 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
 
   // Evolutions inherit their parent's voice and push it harder.
   spiccato: 'arp',
+  snap: 'arp', //      pizzicato's other ending — same voice, harder attack
   blastbeat: 'clap',
   harmonics: 'chords',
   carillon: 'lead',

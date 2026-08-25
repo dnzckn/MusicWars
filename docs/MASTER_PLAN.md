@@ -955,3 +955,65 @@ Counted with a table-walking parse rather than by reading, because `RIG` and
 `INSTRUMENTS` both contain `id:` fields and a naive grep returns 38 for RIG by
 running off the end of one table into the next. That wrong number is what a
 casual look gives you.
+
+### Track G, first landing: PIZZICATO branches
+
+The first instrument in the game with two endings. `pizzicato + capo → spiccato`
+(unchanged) now sits beside `pizzicato + compressor → snap`.
+
+**Why a branch is the right shape, given the constraints already earned.** The
+offer pool is zero-sum and adding card types has been measured to make things
+worse. A branch adds nothing to it: `compressor` already exists as BLACKHOLE's
+catalyst so the deliberate 12×12 rig is untouched, and `availableOptions` skips
+`def.fused` outright (`progression.ts:606`) so the result is never drafted. An
+existing card simply becomes worth more — the only exit from the zero-sum trap
+this project has found.
+
+**The decision is real because `applyFusion` deletes the base.** Hold PIZZICATO
+at 8 with both catalysts maxed and both cards are on the table; take either and
+the base is spent, so the other is gone for the run. `readyFusions` already
+collected every matching recipe with no early exit, so it needed no change.
+
+It is a sidegrade and deliberately not an arc: HARP owns the fan-of-bolts line
+and CROSSSTRUNG is its ending, so an arc here would blur two roster lines — the
+objection that killed the RICOCHET rig item. Both branches stay `seek` and split
+on stat philosophy: SPICCATO is seven fast light bouncing bolts (crowds), SNAP
+is one heavy piercing bolt (375 dmg/s single-target against SPICCATO's 630, far
+more through a line).
+
+**The gate that failed was the design, and it was replaced rather than
+relaxed.** `levelup.mjs` asserted `n === 1` in both directions — every
+instrument evolves exactly once, every rig item catalyses once. The
+at-least-one half is worth keeping and is unchanged (an instrument with no
+evolution is a dead end; a rig item catalysing nothing is filler in a zero-sum
+offer). The at-most-one half was never justified beyond restating the table, and
+it *encoded the flaw*: one ending per instrument means committing to an
+instrument chose its ending, and only the catalyst's arrival was in question.
+It is replaced by a stronger check — two recipes sharing a base must ask
+different catalysts and produce different results — plus a printed branch count
+so a second branch cannot appear unnoticed. **All three new assertions were
+verified to fail when deliberately broken**, per this repo's rule that a gate
+never seen red is not evidence.
+
+**Gates, same code before and after:**
+
+| | before (14 recipes) | after (15) |
+|---|---|---|
+| `mirror` | — | 4000 loadouts, 0 disagreed; all five checks ok |
+| `discovery` | 14 obtainable | **15** obtainable, counter derived not hardcoded |
+| `builds` | ok | ok — the pick still changes the run |
+| intent ratio | 2.00 vs 0.88 = 2.3× | 1.88 vs 0.63 = **3.0×** |
+| power | 30.0 vs 27.1 = **+11%** | 29.8 vs 27.6 = **+8%** |
+| fusions / 8 runs | 21 | 19 |
+| **LOCKED offers** | 105/412 = **25%** | 180/406 = **44%** |
+
+**The LOCKED number is unresolved and is the reason this entry exists.** It
+counts offers where the bot's target catalyst is unheld and the rig is full, so
+it is a property of *which fusion the bot chose to chase* — and adding an
+instrument shifts the RNG stream, so the runs diverge (412 offers against 406)
+and different targets get picked. Seeds 3 and 6 still targeted
+`pizzicato+capo`, not the new branch, which is evidence the change is moving the
+stream rather than the mechanic. Eight divergent runs cannot separate those two
+explanations. **A 24-seed comparison is the next job; do not treat +8% or 44% as
+established until it lands.** Every gate is green, and that is the only claim
+being made.

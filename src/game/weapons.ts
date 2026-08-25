@@ -481,6 +481,61 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     steps: [],
   },
   {
+    /*
+     * PIZZICATO'S SECOND ENDING, and the first branch in the tree.
+     *
+     * Every other evolution in this table is the only one its base has. Twelve
+     * instruments, twelve evolutions, one catalyst each — so choosing an
+     * instrument chose its ending too, and the only open question was whether
+     * that one catalyst ever came up. That is a lookup, not a decision, and it
+     * is the half of "the concept of mixing weapons together isn't really
+     * there" that survives every other system working correctly.
+     *
+     * A branch costs nothing the offer pool cares about, which is why this is
+     * the shape the fix takes. `compressor` already exists — it is BLACKHOLE's
+     * catalyst — so no thirteenth rig item is added and the deliberate 12x12
+     * survives. The result is `fused`, and `availableOptions` skips fused defs
+     * outright, so it is never drafted and occupies no card slot. Nothing is
+     * added to a four-card offer; an existing card simply becomes worth more,
+     * which is the only way out of the zero-sum trap this project has found.
+     *
+     * The decision is real because `applyFusion` deletes the base. Hold
+     * PIZZICATO at 8 with both CAPO and COMPRESSOR maxed and both cards are on
+     * the table; take either and the base is spent, so the other is gone for
+     * the run. That is the Ball x Pit shape — commit, and the commitment costs
+     * you the alternative.
+     *
+     * IT IS A SIDEGRADE ON PURPOSE, and deliberately not an arc. HARP already
+     * owns the fan-of-bolts territory and CROSSSTRUNG is its 360-degree
+     * ending; giving PIZZICATO an arc would blur two roster lines into one,
+     * which is the objection that killed the RICOCHET rig item. So both
+     * branches stay `seek` and split on stat philosophy instead. SPICCATO is
+     * seven fast light bolts that bounce — it clears crowds. This is one heavy
+     * bolt that goes through things — 375 dmg/s on a single target against
+     * SPICCATO's 630, and far more than that through a line. Trading raw
+     * single-target damage for penetration is a direction, and it is the
+     * direction SPICCATO cannot go.
+     *
+     * The name is real technique: Bartok pizzicato, the snap where the string
+     * is pulled clear of the fingerboard and slaps back against it. The
+     * loudest sound a plucked string can make, and a percussive one.
+     *
+     * BALANCE IS GATE-CHECKED, NOT PLAYTESTED. `tools/combine.mjs` asserts a
+     * committed build still beats a fusion-ignoring control, and
+     * `tools/builds.mjs` asserts the pick still moves the outcome. Read those
+     * numbers rather than these; nobody has played this.
+     */
+    id: 'snap',
+    label: 'SNAP',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: 'One bolt, pulled clear and let go. It goes through whatever is in the way.',
+    character: 'aggressive — Bartok snap, string against fingerboard',
+    base: stats({ interval: 0.28, count: 1, damage: 105, speed: 2200, pierce: 6, range: 1400 }),
+    steps: [],
+  },
+  {
     id: 'blastbeat',
     label: 'BLAST BEAT',
     shape: 'arc',
@@ -807,6 +862,7 @@ export interface FusionDef {
 
 export const FUSIONS: readonly FusionDef[] = [
   { kind: 'evolution', base: 'pizzicato', catalyst: 'capo', result: 'spiccato', line: 'the bow starts to bounce' },
+  { kind: 'evolution', base: 'pizzicato', catalyst: 'compressor', result: 'snap', line: 'the string is pulled clear and let go' },
   { kind: 'evolution', base: 'snare', catalyst: 'rapid', result: 'blastbeat', line: 'the roll never lands' },
   { kind: 'evolution', base: 'bow', catalyst: 'laser', result: 'harmonics', line: 'the fundamental splits' },
   { kind: 'evolution', base: 'chime', catalyst: 'resonance', result: 'carillon', line: 'one bell becomes a tower of them' },

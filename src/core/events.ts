@@ -87,7 +87,15 @@ export type EvolvedId =
   | 'tutti'
   | 'vibrato'
   | 'requiem'
-  | 'stringsection';
+  | 'stringsection'
+  /*
+   * The first BRANCH: a second destination for an instrument that already had
+   * one. Every other id above is the sole evolution of its base, so committing
+   * to an instrument determined its ending and the only question was whether
+   * its one catalyst ever showed up. `snap` makes PIZZICATO the first
+   * instrument you can take two ways. See the note beside it in `weapons.ts`.
+   */
+  | 'snap';
 
 /**
  * Passive items. Global multipliers, so their honest voicing is to MODIFY an
