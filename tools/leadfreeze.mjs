@@ -107,7 +107,21 @@ if (!existsSync(BASE)) {
     'not after — a baseline captured afterwards proves nothing.');
   process.exit(1);
 }
-const old = readFileSync(BASE, 'utf8').split('\n');
+/*
+ * Normalise line endings before comparing.
+ *
+ * The baseline is written with LF, but git checks it out as CRLF on Windows
+ * unless .gitattributes says otherwise. Splitting on LF then leaves a trailing
+ * CR on every line of `old` and none on `now`, so EVERY line mismatches and the
+ * tool reports a total drift -- "the output moved" -- that is entirely its own.
+ *
+ * That is this repo's own tools/contrast.mjs incident in a new costume: a gate
+ * lying about the very thing it was built to protect, and reporting a failure
+ * of the code when the defect was in the check. A .gitattributes now pins the
+ * baseline to LF as well. This is the belt to that pair of braces, and it means
+ * the comparison cannot be fooled on a platform nobody has tried yet.
+ */
+const old = readFileSync(BASE, 'utf8').replace(/\r\n/g, '\n').split('\n');
 const now = text.split('\n');
 const diffs = [];
 for (let i = 0; i < Math.max(old.length, now.length); i++) {

@@ -1,0 +1,4 @@
+# The leadfreeze golden baseline is compared line-by-line against generated
+# output that uses LF. A CRLF checkout makes every line differ and the gate
+# reports a total drift that is entirely its own.
+tools/lib/leadfreeze.baseline.txt eol=lf

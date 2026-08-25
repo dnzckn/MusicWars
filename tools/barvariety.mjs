@@ -39,7 +39,7 @@
 import './lib/headless-audio.mjs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const R = join(new URL('.', import.meta.url).href, '..', 'src');
+const R = new URL('../src', import.meta.url).href;
 const { World } = await import(`${R}/game/world.ts`);
 const { MusicDirector } = await import(`${R}/audio/director.ts`);
 const { Transport } = await import(`${R}/core/transport.ts`);
