@@ -831,6 +831,17 @@ export class World {
   // main step
   // -------------------------------------------------------------------------
 
+  /*
+   * Previous-step state and this-step edge for the level-triggered inputs.
+   *
+   * Two objects rather than one so the read site says `this.edge.well` and
+   * cannot accidentally read the held value: the whole defect being fixed is a
+   * consumer treating a level as an edge, and a single object with both would
+   * put the wrong field one keystroke away from the right one.
+   */
+  private readonly held = { well: false, reroll: false, banish: false };
+  private readonly edge = { well: false, reroll: false, banish: false };
+
   update(
     dt: number,
     input: {
@@ -847,6 +858,46 @@ export class World {
     },
   ): void {
     if (this.frozen) return;
+
+    /*
+     * Latch the level-triggered inputs into edges, once, at the top.
+     *
+     * `Input.sample()` now drains its own edge set, so a real keyboard, touch
+     * or pad press yields `well === true` on exactly one step and the shipping
+     * game is already correct without this. But `World.update` is a public API
+     * taking a plain object, and THREE callers hold these fields true on every
+     * step for as long as they want the action: `main.ts`'s dev-only
+     * `__botInput` override, which bypasses `Input` entirely,
+     * `tools/lib/driver.mjs`, and `tools/decisions.mjs` / `tools/arena.mjs`.
+     *
+     * Measured on the real `World` at seed 0x51ed with one field held true
+     * across the two sim steps of a 60Hz frame: rerolls 3 -> 1 and banishes
+     * 2 -> 0. Neither closes the offer, so both double-spent. `choice` and
+     * `skip` happened to be protected because they do close it — which is
+     * exactly the kind of accidental correctness that stops being true the day
+     * someone reorders the branches.
+     *
+     * The bots are worse than the frame multiple suggests: they set `well` true
+     * on every step where danger is high, so a held field spends a well per
+     * step at 120Hz. Every arena / decisions / brain / builds number involving
+     * wells was therefore measured against a player who can do something no
+     * human can. Fixing the measurement before moving the measured is the same
+     * rule Stage 0b was landed under, which is why this goes in now rather than
+     * after the density work.
+     *
+     * ABOVE the hitstop return, deliberately. `update` bails out at
+     * `simDt <= 0` a few lines down, and a latch updated below that would keep
+     * a stale `true` across the whole freeze and then refuse the first genuine
+     * press after it. It also must not sit inside the `phase !== 'over'` guard
+     * for the same reason -- it would go stale on death.
+     */
+    this.edge.well = input.well === true && !this.held.well;
+    this.held.well = input.well === true;
+    this.edge.reroll = input.reroll === true && !this.held.reroll;
+    this.held.reroll = input.reroll === true;
+    const banishing = input.banish !== undefined && input.banish >= 0;
+    this.edge.banish = banishing && !this.held.banish;
+    this.held.banish = banishing;
 
     // Hitstop freezes the simulation but never the transport: the music must
     // keep time through an explosion or the whole illusion falls apart.
@@ -960,7 +1011,7 @@ export class World {
        * a damage pool is not, and asking the player to aim one every second
        * would be busywork.
        */
-      if (input.well && this.player.wells > 0) {
+      if (this.edge.well && this.player.wells > 0) {
         this.player.wells--;
         this.throwWell();
       }
@@ -1518,6 +1569,19 @@ export class World {
         prog.grantShard(this.progression, n.tier);
         const hue = SHARD_HUES[n.tier];
         this.particles.emit(n.x, n.y, 0, -40, 0.24, 2.2, hue, ParticleShape.Dot, 2);
+        /*
+         * The most frequent reward in the game finally makes a sound.
+         *
+         * This emitted a single 2px dot and nothing else. Measured in ordinary
+         * play that is 92-108 silent rewards every two minutes, and separately
+         * a third to a half of all shards expire uncollected — which is not a
+         * surprise, because nothing ever told the player that collecting one
+         * did anything. The event carries `tier` and `combo` so the sound can
+         * distinguish the three grades and climb with the streak; the SFX layer
+         * throttles and merges the channel, so a bomb that collects thirty in
+         * one frame is one louder tick rather than thirty overlapping ones.
+         */
+        this.bus.emit('shard:collect', { tier: n.tier, combo: this.combo });
         n.alive = false;
       }
       if (n.age > 11) n.alive = false;
@@ -2256,7 +2320,38 @@ export class World {
     const big = e.archetype === 'conductor' || e.archetype === 'subdrop';
     this.particles.burst(this.rng, e.x, e.y, big ? 60 : 18, big ? 420 : 220, e.hue, big ? 0.9 : 0.5, big ? 5 : 3);
     this.particles.ring(e.x, e.y, e.radius * (big ? 3 : 1.8), e.hue, big ? 0.5 : 0.3);
-    this.camera.shake(big ? 0.55 : 0.12);
+    /*
+     * 0.28, not 0.12, and the old number was invisible rather than subtle.
+     *
+     * `Camera.update` computes the shake amplitude as `trauma * trauma * 22`
+     * (`camera.ts:52`), which is quadratic on purpose so that small hits stay
+     * quiet and big ones are violent. The consequence nobody checked is that
+     * the quiet end collapses: 0.12 squares to 0.0144 and yields a peak
+     * displacement of **0.32 pixels**. On any display that is no shake at all.
+     * The most frequent event in the game -- a kill, 78 to 153 times a minute
+     * measured off `arena` -- was writing to a feedback channel that could not
+     * express it, and every discussion of the game feeling mushy was downstream
+     * of that.
+     *
+     * 0.28 squares to 1.7px, which reads as a distinct knock without becoming
+     * the boss treatment. `big` stays at 0.55 (6.7px) so the gap between a mob
+     * and a conductor is preserved -- the point is to lift the floor off zero,
+     * not to flatten the range.
+     *
+     * NO HITSTOP ON AN ORDINARY KILL, deliberately, and this is the part worth
+     * arguing. `Camera.freeze` pauses the whole SIMULATION (`consumeHitstop`
+     * returns 0 dt), and it is `Math.max`, so concurrent kills do not stack --
+     * but consecutive ones do, one after another. At today's 1.55 kills/second
+     * a 35ms freeze each would already be 5% of the run spent frozen, and the
+     * density work this turnaround is heading for is explicitly aiming to
+     * multiply the kill rate several times over. That ends in a game that
+     * stutters continuously and reads as frame drops, not as impact. Vampire
+     * Survivors, the reference for this, has no hitstop on trash at all: it
+     * sells a kill with particles, numbers and sound, and reserves the freeze
+     * for events that are actually rare. `big` keeps its 0.06 for exactly that
+     * reason.
+     */
+    this.camera.shake(big ? 0.55 : 0.28);
     if (big) this.camera.freeze(0.06);
     this.shock(e.x, e.y, big ? 260 : 130, big ? 2600 : 900);
 
@@ -2851,12 +2946,12 @@ export class World {
     skip?: boolean;
   }): void {
     if (!prog.isChoosing(this.progression)) return;
-    if (input.reroll) {
+    if (this.edge.reroll) {
       const next = prog.rerollOffer(this.progression);
       if (next) this.emitOffer(next);
       return;
     }
-    if (input.banish !== undefined && input.banish >= 0) {
+    if (this.edge.banish && input.banish !== undefined && input.banish >= 0) {
       const next = prog.banishOption(this.progression, input.banish);
       if (next) this.emitOffer(next);
       return;

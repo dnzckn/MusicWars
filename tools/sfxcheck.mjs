@@ -93,6 +93,9 @@ const ARGS = {
   sfxPlayerHit: [],
   sfxGraze: [],
   sfxPickup: [5],
+  // tier 2 = rare, combo 40: the loudest, highest form the tick takes, so a
+  // regression that silences it cannot hide in the quiet end of the range.
+  sfxShard: [2, 40],
   sfxBomb: [CHORD],
   sfxExtend: [],
   sfxRunStart: [CHORD],

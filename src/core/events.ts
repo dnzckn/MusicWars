@@ -21,6 +21,18 @@ export type EnemyArchetype =
   | 'rush'
   | 'conductor';
 
+/**
+ * Shard grades. Vampire Survivors blue / green / red.
+ *
+ * Defined here rather than in progression.ts because this file is where the
+ * shared vocabulary lives -- AbilityId, PowerupKind and GraceKind are all
+ * declared here and imported by game/, never the other way round. The
+ * shard:collect event needs the type, and a core module reaching into
+ * game/ for it would invert that. progression.ts re-exports it, so every
+ * existing prog.ShardTier reference is unchanged.
+ */
+export type ShardTier = 'minor' | 'major' | 'rare';
+
 export type PowerupKind =
   | 'spread'
   | 'laser'
@@ -189,6 +201,21 @@ export type GameEvents = {
   'player:graze': { total: number };
   'player:bomb': Record<string, never>;
   'player:extend': { livesLeft: number };
+
+  /**
+   * A note shard was collected.
+   *
+   * The single most frequent reward in the game — 92 to 108 of them in a two
+   * minute stretch — and until this event existed it had NO audio channel at
+   * all. Collecting one emitted a 2px dot particle and nothing else, which is
+   * why the XP economy read as something happening to the player rather than
+   * something they were doing.
+   *
+   * `tier` selects the pitch so the three shard grades are distinguishable by
+   * ear, and `combo` lets the sound climb with the streak — the streak is
+   * otherwise visible only as a number in the corner.
+   */
+  'shard:collect': { tier: ShardTier; combo: number };
 
   'powerup:pickup': { kind: PowerupKind; level: number };
   'powerup:expire': { kind: PowerupKind };

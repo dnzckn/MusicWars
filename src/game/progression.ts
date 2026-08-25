@@ -62,7 +62,7 @@
  * been caught by that three times already.
  */
 
-import type { AbilityId, AbilitySlot, EvolvedId } from '../core/events';
+import type { AbilityId, AbilitySlot, EvolvedId, ShardTier } from '../core/events';
 import { Rng } from '../core/rng';
 import {
   FUSIONS,
@@ -236,7 +236,18 @@ export const OFFER_TUNING = {
 export const LEVEL_UP_TIME_SCALE = 0.12;
 
 /** Shard values. Vampire Survivors' blue / green / red. */
-export type ShardTier = 'minor' | 'major' | 'rare';
+/*
+ * Re-exported, not re-declared.
+ *
+ * The layering rule in core/events.ts says core must not import from game/,
+ * and GraceKind obeys it by keeping a second copy of a three-member union.
+ * ShardTier is now needed on BOTH sides -- the shard:collect event carries it
+ * and every prog.ShardTier reference in game/ expects it here -- so it is
+ * declared once in core and re-exported from its historical home. That keeps
+ * the dependency pointing the right way AND avoids the drift a second copy
+ * invites, which is the failure mode this repo has been bitten by before.
+ */
+export type { ShardTier };
 export const SHARD_XP: Readonly<Record<ShardTier, number>> = { minor: 1, major: 4, rare: 12 };
 
 /* ------------------------------------------------------------------------ *

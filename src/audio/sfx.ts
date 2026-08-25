@@ -51,6 +51,17 @@ const CHANNEL_SPACING: Record<string, number> = {
   death: 0.07,
   enemyFire: 0.06,
   graze: 0.05,
+  /*
+   * Shards are the densest channel in the game and the one that most needs the
+   * merge. 92-108 are collected in a two minute stretch in ordinary play, and a
+   * bomb into a packed wave collects thirty inside a single frame. 35ms is
+   * tighter than any other channel because a shard tick has to feel like it
+   * belongs to the individual pickup rather than to the group -- at 70ms a
+   * fast sweep through a trail of them merges into one event and stops reading
+   * as "I am hoovering these up". The burst credit above is what stops that
+   * being a problem: thirty in a frame become one tick with thirty's weight.
+   */
+  shard: 0.035,
 };
 
 const lastFired: Record<string, number> = {};
@@ -341,6 +352,50 @@ export function sfxPickup(step = 0): void {
       i * 0.045,
     );
   });
+}
+
+/**
+ * A note shard collected — the game's most frequent reward, and until now a
+ * silent one.
+ *
+ * WHAT WAS WRONG. Collecting a shard emitted a 2px dot particle and nothing
+ * else. Measured in ordinary play, that is 92 to 108 unacknowledged rewards
+ * every two minutes, and separately a third to a half of all shards expire
+ * uncollected — a player has no way to learn that picking them up matters when
+ * picking one up makes no sound. The XP economy read as weather rather than as
+ * something the player was doing.
+ *
+ * WHY IT IS A TICK AND NOT AN ARPEGGIO. `sfxPickup` exists and is a rising
+ * four-note figure over 135ms; it is right for a powerup, which happens rarely.
+ * Firing it at 50 a minute would be a melody nobody wrote fighting the eleven
+ * stems that someone did. This is one short voice, deliberately quiet, sitting
+ * an octave above the pad where there is room.
+ *
+ * `tier` moves the pitch so the three shard grades are audibly different -- a
+ * rare shard should sound like a better thing to have chased. `combo` lifts it
+ * by up to a fifth across the streak, so a run of pickups walks upward and the
+ * streak becomes something you hear rather than something you would have to
+ * read off the corner of the screen.
+ *
+ * The `shard` channel merges bursts; see CHANNEL_SPACING.
+ */
+export function sfxShard(tier = 0, combo = 0): void {
+  // Root an octave above the pickup arpeggio's base, so it sits clear of the
+  // pad and the motor rather than competing in the 200-800Hz crowd.
+  const step = Math.min(7, Math.round(combo * 0.12));
+  fire(
+    {
+      s: 'triangle',
+      note: 84 + tier * 3 + step,
+      decay: 0.05,
+      sustain: 0,
+      gain: 0.055,
+      room: 0.12,
+    },
+    0.07,
+    0,
+    'shard',
+  );
 }
 
 export function sfxPlayerHit(): void {
