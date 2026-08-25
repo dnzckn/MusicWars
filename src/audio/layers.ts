@@ -1626,15 +1626,84 @@ export function buildBass(m: MusicalState): Pattern {
     // notes takes the floor out from under the whole mix eight times a bar.
     .ds('0.3:0.42')
     .release(m.sig.drive.range(0.26, 0.14))
-    // Out of the sub's way. Without this the two low sources sum into a boom
-    // that swamps the kick and reads as distortion rather than weight.
-    .hpf(95)
     /*
-     * The floor was 240Hz. Against hpf(95) that is barely an octave of window,
-     * so at low openness — which is most of a fight — the layer had almost no
-     * band to speak in and measured -22.5dB under the kick. A bass needs its
-     * second and third harmonics to read at all on a laptop speaker. 500 keeps
-     * it dark when the mix closes down without muting it.
+     * NO HIGHPASS HERE, AND IT IS NOT AN OVERSIGHT. There used to be a
+     * `.hpf(95)` on this line, commented "out of the sub's way — without this
+     * the two low sources sum into a boom that swamps the kick". It did the
+     * exact opposite of that, and then the measurement said the boom was never
+     * there in the first place.
+     *
+     * WHAT IT ACTUALLY DID. superdough has ONE filter-model control. `hpMap`
+     * maps `model: 'ftype'` (`superdough.mjs:706`), the same key `lpMap` uses
+     * at :671, so `.ftype('ladder')` below chose the model for BOTH filters —
+     * and `createFilter` (`helpers.mjs:237`) routes `model === 'ladder'` to the
+     * `ladder-processor` worklet and returns before ever reaching
+     * `filter.type = type`. The worklet declares three parameters, `frequency`,
+     * `q`, `drive` (`worklets.mjs:366`); there is no type, and it is a Moog
+     * ladder LOWPASS. So `.hpf(95).ftype('ladder')` was a second 24 dB/oct
+     * lowpass at 95 Hz sitting under a bass whose notes are 110-220 Hz. Every
+     * note of this lane was in the stopband of its own filter.
+     *
+     * MEASURED, rendering the real superdough chain (dist worklets, real haps
+     * off `buildBass`, OfflineAudioContext, Welch spectrum over the bar).
+     * Removing the highpass against leaving it:
+     *
+     *              rms   20-95Hz  95-250  250-1k   1k-6k
+     *   with       -28.1    31.7    49.3    15.8   -24.2
+     *   without    -11.6    38.2    64.5    59.1    50.0
+     *
+     * 17 dB of overall level and 43 dB of the 250 Hz-1 kHz band — the second
+     * and third harmonics the `distort` comment below exists to produce. The
+     * lane was audible only as its own sub content, which is precisely the
+     * thing the deleted comment was trying to remove.
+     *
+     * WHY NOT KEEP THE HIGHPASS AND DROP `.ftype('ladder')` INSTEAD. That is
+     * the other side of the fork and it was measured, not argued.
+     *
+     *   1. It buys almost nothing. With the ladder gone and a real 12 dB/oct
+     *      biquad highpass at 95 Hz, this lane's 20-95 Hz band reads 36.6 dB
+     *      against 38.2 without any highpass — 1.6 dB. `buildSub` alone reads
+     *      52.5 dB in that band, so the two summed come to 52.65 dB with the
+     *      highpass and 52.60 without. The highpass moves the low end of the
+     *      mix by 0.05 dB. It could not have been swamping anything: a
+     *      sawtooth at 110 Hz has no partial below 110 Hz, and `distort` is a
+     *      per-voice waveshaper, so it makes harmonics and never a difference
+     *      tone between two notes.
+     *   2. It silently kills `.drive()`. superdough hands `drive` to
+     *      `createFilter` and `createFilter` reads it only inside the ladder
+     *      branch. Pinned to each end of its 0.6-1.35 range, the biquad render
+     *      moved 0.0 dB in every band — against a repeat-render noise floor of
+     *      0.0 dB, so that is a dead control, not a small one. The ladder moved
+     *      0.6 dB in 1-6 kHz over the same range.
+     *   3. It is brighter, not just different: the biquad pair reads 53.1 dB
+     *      in 1-6 kHz against the ladder's 50.0.
+     *
+     * `.ftype('24db')` was the third candidate and measured the best low-end
+     * separation of all (fund-minus-sub 7.8 dB under MAGNET, against 5.7 for
+     * the biquad pair and 28.8/28.7 with no MAGNET). Rejected anyway: it is two
+     * cascaded biquads, so `.lpq(6)` becomes two stacked Q6 peaks (+4.1 dB in
+     * 1-6 kHz here, +6.6 dB on the wobble), it kills `.drive()` for the same
+     * reason as (2), and it swaps a tone every comment in this lane was written
+     * about for one nobody has heard.
+     *
+     * THE ONE CASE WHERE THE HIGHPASS WAS WORTH SOMETHING, recorded because it
+     * is a real regression and not a rounding error. Under MAGNET the bar's
+     * first note drops an octave to MIDI 33 = 55 Hz, on top of the sub. There
+     * the biquad highpass was worth 5.1 dB of 20-95 Hz band, and without it
+     * this lane reads 58.9 dB there against `buildSub`'s 52.5 — the bass
+     * becomes the louder of the two low sources. That is accepted rather than
+     * filtered, because the octave drop exists to make the floor SAG as MAGNET
+     * sucks (see `low` above); a 95 Hz highpass removing the sag is the
+     * powerup's own effect being cancelled by a guard against it.
+     */
+    /*
+     * The floor was 240Hz. Against the old hpf(95) that was barely an octave of
+     * window, so at low openness — which is most of a fight — the layer had
+     * almost no band to speak in and measured -22.5dB under the kick. A bass
+     * needs its second and third harmonics to read at all on a laptop speaker.
+     * 500 keeps it dark when the mix closes down without muting it. The
+     * highpass is gone now and the floor stays where it is: 500 was chosen for
+     * the tone at low openness, not as clearance above a highpass.
      */
     .lpf(m.sig.openness.range(500, 2300))
     .ftype('ladder')
@@ -1655,6 +1724,31 @@ export function buildBass(m: MusicalState): Pattern {
       // and third to read on a laptop speaker, not its tenth.
       .drive(m.sig.drive.range(0.6, 1.35))
       .distort(m.sig.drive.range(1.05, 1.8))
+      /*
+       * 0.86 IS NOW LOAD-BEARING IN A WAY IT WAS NOT BEFORE, and this is an
+       * open question rather than a settled number.
+       *
+       * Until the highpass above was removed, the lowpass-at-95Hz bug was
+       * acting as a 17 dB pad nobody knew was there. Soloed and rendered
+       * through the real chain — one bar, no stem fader and no master volume,
+       * so these are relative figures and not what a player hears:
+       *
+       *   buildMotor -41.7   buildArp -36.9   buildLead -27.4
+       *   buildSub   -24.9   buildChords -23.4  buildKick -21.8
+       *   buildBass  -11.6 dBFS, peak 1.28   (it was -28.1, peak 0.20)
+       *
+       * So the lane now measures ~10 dB above the sub and ~13 dB above the
+       * kick, and clips on its own before any fader touches it. That is not
+       * obviously wrong: `attackfloor` has always modelled this lane at
+       * -11 dBFS as the loudest pitched lane in the game, because its dBFS
+       * column is a control multiplier that is blind to filters — it was
+       * reporting the level the gain staging intended all along, and the
+       * filter bug was quietly cancelling it. The gain was never the defect.
+       *
+       * It is left alone deliberately. Re-staging it wants the whole mix, the
+       * stem faders and the master volume in the measurement, not one soloed
+       * lane, and nobody has HEARD any of this yet.
+       */
       .gain(0.86)
       .orbit(ORBIT_LOW),
     );

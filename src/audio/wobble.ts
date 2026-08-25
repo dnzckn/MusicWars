@@ -138,9 +138,37 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
       .sustain(1)
       .release(0.08)
       .clip(1)
-      // Out of the sub's way, same as the house bass. Two low sources summing
-      // is a boom, not weight.
-      .hpf(74)
+      /*
+       * NO HIGHPASS. There was a `.hpf(74)` here, "out of the sub's way, same
+       * as the house bass" — and it was the same bug as the house bass, with
+       * the same fix and the same reasoning. `buildBass` carries the long
+       * version; the short one is that superdough has a single `ftype` control
+       * shared by the lowpass and the highpass (`superdough.mjs:671` and :706
+       * both map `model: 'ftype'`), and the ladder path in `createFilter`
+       * returns before `filter.type = type` ever runs. `.hpf(74).ftype('ladder')`
+       * was therefore a SECOND 24 dB/oct lowpass at 74 Hz, under a wobble
+       * playing 110-165 Hz. Measured on this voice alone, real superdough
+       * chain, before and after removing it:
+       *
+       *            rms   20-95Hz  95-250  250-1k   1k-6k
+       *   with    -41.0    21.3    35.7    -2.0   -44.6
+       *   without -21.5    29.7    55.2    47.4    28.9
+       *
+       * The lane was 20 dB down and had no harmonics at all, which for a part
+       * whose entire content is a resonant peak sweeping through its harmonics
+       * means it was not playing.
+       *
+       * KEEPING THE LADDER AND LOSING THE HIGHPASS IS THE RIGHT WAY ROUND HERE
+       * even more clearly than on the house bass, because of `.lpq(7)` below.
+       * A ladder turns q into a feedback coefficient — `k = min(8, q * 0.13)`,
+       * so 7 becomes 0.91 — while a biquad turns Q7 into a ~17 dB peak. Swap
+       * the model and the sweep stops being a filter you follow and becomes a
+       * whistle: measured, dropping `.ftype('ladder')` puts +7.0 dB into
+       * 1-6 kHz on this voice, which is the fatigue band the cutoff ceiling in
+       * `buildBass` was capped to stay out of. And the highpass was buying
+       * 2.5 dB of 20-95 Hz on notes whose lowest fundamental is 110 Hz — a
+       * sawtooth has nothing below its own fundamental to remove.
+       */
       .lpf(o.cutoff)
       /*
        * Q7 on a ladder, which is a lot, and is the sound.
@@ -181,9 +209,21 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
  * sweeps drift in and out of phase across the bar. That interference is the
  * whole reason a real wobble sounds alive; one LFO is a siren.
  *
- * Octave up and high-passed at 180, so it is all growl and no weight: the
- * bottom belongs to the layer below and to the sub, and this is the part you
- * actually hear on a phone.
+ * Octave up, so it is all growl and no weight: the bottom belongs to the layer
+ * below and to the sub, and this is the part you actually hear on a phone.
+ *
+ * THE REGISTER DOES THAT JOB, NOT A FILTER. This used to say "and high-passed
+ * at 180" and carry a `.hpf(180)`, which — with `.ftype('ladder')` below and
+ * superdough's one shared filter model — was a 24 dB/oct LOWPASS at 180 Hz on
+ * a voice sounding at 220-330 Hz. Measured on this voice alone it cost 21 dB
+ * of level and 30 dB of the 250 Hz-1 kHz band: rms -51.2 with it, -34.7
+ * without. See `wub` above and `buildBass` for the mechanism.
+ *
+ * Removing it loses nothing it claimed to do. With no highpass at all this
+ * voice measures -8.0 dB in 20-95 Hz against 40.5 dB in 95-250 — 48 dB of
+ * separation that the octave transpose had already produced. A highpass at
+ * 180 Hz under a 220 Hz supersaw was always close to a no-op; the comment was
+ * crediting the filter for what the `.add(note(12))` above it was doing.
  */
 export function reese(notes: Patternable, o: WubOpts): Pattern {
   // Two thirds the main rate, rounded to something that still divides the bar.
@@ -200,7 +240,6 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .sustain(0.95)
     .release(0.12)
     .clip(1)
-    .hpf(180)
     .lpf(o.cutoff)
     .lpq(5)
     .ftype('ladder')

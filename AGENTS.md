@@ -133,7 +133,27 @@ whose parameters are only `frequency`, `q`, `drive` — there is no type. The
 `filter.type = type` assignment lives in the `else` branch and never runs. And
 `hpMap` maps `model: 'ftype'` (`superdough.mjs:706`), so the same control feeds
 the highpass. **`.hpf(95).ftype('ladder')` is a second 24 dB/oct LOWPASS, not a
-highpass.** This is live in `buildBass` today and is unfixed.
+highpass.**
+
+**FIXED — but the trap is permanent, so this entry stays.** There were three
+sites, not the one this entry used to name: `buildBass` (`.hpf(95)`) and both
+wobble voices (`.hpf(74)`, `.hpf(180)`). All three highpasses are gone; the
+ladder lowpass is kept because it is the tone the score wants. Rendered through
+real superdough, the bass lane gained 33 dB at 250 Hz, 47 dB at 500 Hz and
+52 dB at 1 kHz — it had been reduced to 99.7% of its energy in the 125 Hz
+octave band, which is to say its own fundamental and nothing else.
+
+**There is one filter-model control and it is shared.** `lpMap`
+(`superdough.mjs:671`) and `hpMap` (:706) both map `model: 'ftype'`. You
+therefore cannot have a ladder lowpass and a working highpass in the same
+chain — that is not a bug to route around, it is the shape of the API. If you
+add an `.hpf()` anywhere, check the whole chain for an `.ftype()` and choose
+which one you actually want.
+
+Verified off the emitted haps, not by grep: 664,460 haps swept across every
+builder, feel, section, powerup, movement, bar and boss flag — 453,180 carry
+`hcutoff`, 60,160 carry `ftype`, **0 carry both**. Re-introducing `.hpf(95)`
+alone turns that into 48,960 colliding haps, so the count has been seen red.
 
 **Vibrato fails silently in both directions.** The oscillator is behind
 `if (vib > 0)`, so `.vibmod()` alone is inert; and `.vib()` alone takes a
