@@ -42,17 +42,41 @@ const rows = await p.evaluate(async (TYPES) => {
   const w = window.__musicwars.world;
   const mod = await import('/src/game/enemies.ts');
   const out = [];
+  /*
+   * THE TEST PAIR IS A FIXED PIXEL SEPARATION, NOT A FRACTION OF THE FIELD.
+   *
+   * This read `w.player.y = w.height * 0.8` and spawned at `w.height * 0.4`,
+   * so the gap the volley has to cross was 40% of the field height. The whole
+   * quantity this tool reports — what share of the ship's output reaches a
+   * shape that is moving sideways — is a function of that gap: further away,
+   * the sway has longer to carry the target out of the stream. On a 3x arena
+   * the pair would be 3x apart and the hit rate would fall for reasons that
+   * have nothing to do with any weapon or any archetype.
+   *
+   * The offsets reproduce today's 900x1120 positions EXACTLY (560 + 336 = 896
+   * = 1120*0.8; 896 - 448 = 448 = 1120*0.4), so this is a numeric no-op now.
+   * Anchored to the field centre, not the bottom edge, so a bigger arena keeps
+   * the pair where the game is played rather than against a far wall.
+   *
+   * SEPARATION is passed as the archetype's `standoff` too, which is what the
+   * old code did by coincidence of both being `w.height * 0.4`: the shape holds
+   * the radius it was spawned at instead of closing on the ship.
+   */
+  const SEPARATION = 448;                 // px between ship and target
+  const SHIP_Y = w.height / 2 + 336;      // px below the field centre
+  const TARGET_Y = SHIP_Y - SEPARATION;
+  const LANE_X = w.width / 2;             // both on one vertical line
   for (const t of TYPES) {
     w.enemies.length = 0;
     w.enemyBullets.clear();
-    w.player.x = w.width / 2;
-    w.player.y = w.height * 0.8;
+    w.player.x = LANE_X;
+    w.player.y = SHIP_Y;
     w.player.invuln = 999;
-    const e = mod.spawnEnemy(t, w.width / 2, w.height * 0.4, 0.5, w.height * 0.4, false);
+    const e = mod.spawnEnemy(t, LANE_X, TARGET_Y, 0.5, SEPARATION, false);
     // Its own homeX is what the movement oscillates around, so centre that on
     // the ship: the test is "parked directly underneath", not "parked next to".
-    e.homeX = w.width / 2;
-    e.x = w.width / 2;
+    e.homeX = LANE_X;
+    e.x = LANE_X;
     e.vy = 0;
     w.enemies.push(e);
     const hp0 = e.hp;
@@ -63,7 +87,7 @@ const rows = await p.evaluate(async (TYPES) => {
       const tick = () => {
         if (!w.enemies.includes(e) || performance.now() - t0 > 12000) return done();
         e.vy = 0;
-        maxDx = Math.max(maxDx, Math.abs(e.x - w.width / 2));
+        maxDx = Math.max(maxDx, Math.abs(e.x - LANE_X));
         requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);

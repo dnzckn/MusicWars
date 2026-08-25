@@ -105,10 +105,34 @@ export function makeBrain(mode) {
       mx += Math.cos(out) * enc * 1.8;
       my += Math.sin(out) * enc * 1.8;
     }
-    // Stay off all four walls, not just the two vertical ones: being pinned
-    // against any edge in the round means half the escape directions are gone.
-    if (px < 110) mx += 1; if (px > w.width - 110) mx -= 1;
-    if (py < 110) my += 1; if (py > w.height - 110) my -= 1;
+    /*
+     * Stay off all four walls, not just the two vertical ones: being pinned
+     * against any edge in the round means half the escape directions are gone.
+     *
+     * THE MARGIN IS A FRACTION OF THE FIELD, NOT 110 PIXELS.
+     *
+     * This read `if (px > w.width - 110)`, in this file and in seven verbatim
+     * copies. 110px was tuned against a 900x1120 field, where it is 12.2% of
+     * the short side. On a 3x arena it is 3.7%, and a bot that stays near the
+     * action is never inside it — the term does nothing, silently. Nothing
+     * fails; every balance number every tool driving this brain prints just
+     * re-baselines, against a player that changed at the same moment as the
+     * thing being measured. That is exactly the reading a field refactor
+     * cannot afford, so the player model is pinned to a scale-invariant form
+     * BEFORE the field moves.
+     *
+     * The SHORT side, not per-axis. A per-axis margin would be 1120*110/900 =
+     * 136.9 vertically and would therefore change the bot today; this change
+     * has to be a numeric no-op at 900x1120, and `Math.min(900, 1120) *
+     * (110/900)` is exactly 110 in IEEE754 (checked, not assumed).
+     *
+     * Written the same way in all eight copies. `makeBrain` still takes no
+     * imports and no closures, because `makeBrain.toString()` is what the
+     * browser path evaluates — a shared constant module would break that.
+     */
+    const wall = Math.min(w.width, w.height) * (110 / 900);
+    if (px < wall) mx += 1; if (px > w.width - wall) mx -= 1;
+    if (py < wall) my += 1; if (py > w.height - wall) my -= 1;
 
     const len = Math.hypot(mx, my);
     inp.x = len > 0.05 ? mx / len : 0;

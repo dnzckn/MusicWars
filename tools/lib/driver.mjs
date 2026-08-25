@@ -104,8 +104,12 @@ export async function installDriver(page, mode = 'dodge') {
     }
     // Stay off all four walls, not just the two vertical ones: being pinned
     // against any edge in the round means half the escape directions are gone.
-    if (px < 110) mx += 1; if (px > w.width - 110) mx -= 1;
-    if (py < 110) my += 1; if (py > w.height - 110) my -= 1;
+    // The margin is a FRACTION of the field, not a fixed 110px — see
+    // tools/lib/bot-brain.mjs, which this is the verbatim page-side copy of.
+    // Math.min(900, 1120) * (110/900) is exactly 110: no-op at today's size.
+    const wall = Math.min(w.width, w.height) * (110 / 900);
+    if (px < wall) mx += 1; if (px > w.width - wall) mx -= 1;
+    if (py < wall) my += 1; if (py > w.height - wall) my -= 1;
 
     const len = Math.hypot(mx, my);
     inp.x = len > 0.05 ? mx / len : 0;

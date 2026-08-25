@@ -254,10 +254,16 @@ function drive(w, inp) {
     mx += Math.cos(w.wayOut) * enc * 1.8;
     my += Math.sin(w.wayOut) * enc * 1.8;
   }
-  if (px < 110) mx += 1;
-  if (px > w.width - 110) mx -= 1;
-  if (py < 110) my += 1;
-  if (py > w.height - 110) my -= 1;
+  // Wall repulsion, scaled to the field, not a fixed 110px: on a bigger arena
+  // a 110px margin goes inert and every number here re-baselines against a
+  // player that quietly changed. See tools/lib/bot-brain.mjs for the full
+  // reasoning. Math.min(900, 1120) * (110/900) is exactly 110, so this is a
+  // no-op at today's field size.
+  const wall = Math.min(w.width, w.height) * (110 / 900);
+  if (px < wall) mx += 1;
+  if (px > w.width - wall) mx -= 1;
+  if (py < wall) my += 1;
+  if (py > w.height - wall) my -= 1;
   const len = Math.hypot(mx, my);
   inp.x = len > 0.05 ? mx / len : 0;
   inp.y = len > 0.05 ? my / len : 0;
