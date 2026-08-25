@@ -447,6 +447,26 @@ export function combinationPlan(
    * combining exists, and spoiling which is what the collection is for.
    */
   const held = abilities as Readonly<Record<string, number>>;
+  /*
+   * ONE UNKNOWN ROW PER BASE, because a branched instrument has more than one
+   * recipe and the unknown wording names the BASE rather than the result.
+   *
+   * A known row reads "SNAP — needs COMPRESSOR" and is distinct from
+   * "SPICCATO — needs CAPO". An UNKNOWN row deliberately names neither, so both
+   * of PIZZICATO's recipes render the identical string "PIZZICATO is at its
+   * ceiling — something you are not carrying", with the same `away` (both
+   * catalysts cap at 5) so they even sort adjacent. The pause overlay draws
+   * `plan.slice(0, 6)`, so the duplicate is not merely untidy: it spends one of
+   * six rows saying the same sentence twice and can push a real aim under the
+   * "+N further off" line.
+   *
+   * This appeared the moment PIZZICATO branched — before that, one recipe per
+   * base made it unreachable. Deduping on `to` (below) cannot catch it: the two
+   * rows carry different results, `spiccato` and `snap`. It is the rendered
+   * TEXT that collides, which is why `tools/mirror.mjs` passed 11,015 rows
+   * without noticing and now has an assertion of its own.
+   */
+  const ceilingSaid = new Set<string>();
   for (const f of FUSIONS) {
     if (f.kind !== 'evolution') continue;
     if (held[f.result]) continue;
@@ -454,6 +474,10 @@ export function combinationPlan(
     if ((held[f.catalyst] ?? 0) > 0) continue;
     if (rows.some((r) => r.to === f.result)) continue;
     const seen = known.has(f.result);
+    if (!seen) {
+      if (ceilingSaid.has(f.base)) continue;
+      ceilingSaid.add(f.base);
+    }
     rows.push({
       to: f.result,
       label: seen ? labelOf(f.result) : `${labelOf(f.base)} is at its ceiling`,

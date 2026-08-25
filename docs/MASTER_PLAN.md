@@ -1017,3 +1017,62 @@ stream rather than the mechanic. Eight divergent runs cannot separate those two
 explanations. **A 24-seed comparison is the next job; do not treat +8% or 44% as
 established until it lands.** Every gate is green, and that is the only claim
 being made.
+
+### Demo prep: an adversarial audit of everything no browser has run
+
+Twelve agents over four lenses, each finding then put to a skeptic told to
+refute it. Two survived; five were refuted with measurements.
+
+**CONFIRMED and fixed — a regression from the PIZZICATO branch.** The pause
+workbench printed the same row twice. A half-done recipe whose result is
+undiscovered deliberately names neither the result nor the catalyst — it reads
+`<BASE> is at its ceiling — something you are not carrying` — so the moment an
+instrument has TWO recipes, both rows render the identical sentence while
+carrying different `to` values (`spiccato`, `snap`). Both catalysts cap at 5, so
+`away` matched too and they sorted adjacent. The overlay draws `plan.slice(0,6)`,
+so it also spent a row and could push a real aim under the "+N further off" line.
+
+Fixed by emitting one unknown-ceiling row per base. Known rows are untouched, so
+a player who has made both still sees `SNAP — COMPRESSOR` and `SPICCATO — CAPO`
+separately — the branch stays visible, only the deliberately-anonymous rows
+collapse.
+
+`mirror.mjs` passed 11,015 rows on the day this shipped, because its duplicate
+check keys on the RESULT ID and the ids differ. It now also asserts the
+**rendered text** is unique: two assertions, not one, and the difference was the
+bug. Verified to fail — 48 rows across the seed sweep — when the fix is reverted.
+
+**CONFIRMED, pre-existing, not a demo blocker but important.**
+`.ftype('ladder')` makes superdough IGNORE the filter type: `helpers.mjs:238`
+routes `model === 'ladder'` to the `ladder-processor` worklet, which
+(`worklets.mjs:365-427`) is a four-pole Moore ladder **lowpass** with no type
+parameter at all. So the bass's `.hpf(95)` is not a highpass — it is a second
+24 dB/oct lowpass. That is why the "an 808 is a sine" fix moves so little
+audible energy, and it deserves its own investigation. **It is unrelated to any
+recent change** — both lines are unchanged context.
+
+**REFUTED, with measurements** — recorded so they are not re-raised:
+- *"The motor stops being a pulse"* — the onsets are byte-identical; node
+  lifetime 454ms → 604ms against `setMaxPolyphony(96)`. No leak, no clipping.
+- *"The chase bass sine adds +4 dB"* — the lane sits ~20 dB below the mix peak
+  (`STEM_CURVES.bass` has the lowest ceiling of any pitched lane, 0.6). Measured
+  at the master, full-mix peak went **down** 0.16 dB. The `-11 dBFS` figure was
+  a misread: `attackfloor`'s dBFS column is `gain² · level² · masterVolume²`, a
+  control multiplier that is byte-identical before and after. The "sub-100 Hz"
+  claim is also wrong — the notes are 110-175 Hz behind `hpf(95)`.
+- *"A failed audio boot is swallowed"* — all three named causes are caught
+  upstream inside superdough and can never reach the catch.
+- *"The standalone drops the viewport meta"* — true, but desktop browsers ignore
+  it; it is a phone-distribution polish item, and predates everything here.
+
+**A separate measurement, and it corrects a claim in the branch commit.** That
+commit said both branch cards are "on the table" together. `availableOptions`
+does push both, but `makeOffer` calls `draw()`, a WEIGHTED draw without
+replacement — high weight is not a guarantee. Measured over 2,000 offers with
+both branches ready and in the pool: **both shown 38.1%, exactly one 49.5%,
+neither 12.4%**. So the simultaneous commit-and-lose-the-other moment is visible
+about a third of the time, and `availableOptions`' own comment that "a ready
+fusion is always on the table" is false one time in eight. That is pre-existing
+and applies to every fusion, not just this branch (snap appeared 1,289 times
+against spiccato's 1,224 — no bias between them). Worth fixing; not fixed hours
+before a demo.

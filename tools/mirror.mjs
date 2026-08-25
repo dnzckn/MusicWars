@@ -164,6 +164,7 @@ for (let seed = 1; seed <= 4000; seed++) {
     ...P.readyDuets(st).map((f) => f.result),
   ]);
   const seen = new Set();
+  const shown = new Set();
   let sawPending = false;
   for (const row of plan) {
     planRows++;
@@ -173,6 +174,24 @@ for (let seed = 1; seed <= 4000; seed++) {
     };
     if (seen.has(row.to)) fail('listed twice');
     seen.add(row.to);
+    /*
+     * The RENDERED TEXT must be unique, not just the result id.
+     *
+     * These are two different assertions and the difference is a real bug this
+     * check missed. An unknown half-done recipe deliberately names neither its
+     * result nor its catalyst — it reads "<BASE> is at its ceiling — something
+     * you are not carrying" — so once an instrument has TWO recipes, both rows
+     * render the identical sentence while carrying different `to` values
+     * (`spiccato` and `snap`). The id check above passes; the player reads the
+     * same line twice, and the pause overlay draws only `plan.slice(0, 6)`, so
+     * the duplicate can push a real aim off the screen.
+     *
+     * 11,015 rows passed this check on the day that shipped. What a person sees
+     * is the text, so that is what has to be asserted.
+     */
+    const rendered = `${row.label}|${row.needs}|${row.ready}`;
+    if (shown.has(rendered)) fail(`renders identically to another row: "${row.label} — ${row.needs}"`);
+    shown.add(rendered);
     // Ready must mean ready.
     if (row.ready && !offerable.has(row.to)) fail('marked ready but the game will not deal it');
     if (!row.ready && offerable.has(row.to)) fail('shown as an aim while already available');
