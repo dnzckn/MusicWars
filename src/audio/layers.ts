@@ -1271,12 +1271,41 @@ export function buildMotor(m: MusicalState): Pattern {
       .ad('0.004:0.07')
       .sustain(sustain)
       .release(release)
-      .lpf(m.sig.openness.range(1400, 4000))
+      /*
+       * A little more top, because this is the only continuous voice left.
+       *
+       * The comment above justifies a 4 kHz ceiling on the grounds that above
+       * it "a repeated note contributes nothing but hiss", and that is right
+       * about the ceiling and silent about the floor: at the mid openness the
+       * score actually sits at, `range(1400, 4000)` evaluates to 2700 Hz.
+       * Measured over the whole mix, everything above 2 kHz — four octave
+       * bands — comes to 3.2% of total energy, because `buildHats` was deleted
+       * (see its tombstone below) and nothing replaced it as a source of air.
+       * Nothing is wrong with deleting it; what is wrong is that the lane that
+       * took its job kept its darkness as well as its rhythm.
+       *
+       * 1800-4800 leaves the ceiling essentially where its own argument put it
+       * and lifts the middle of the range by about 900 Hz. On a 25%-duty pulse
+       * that is the 8th to 12th partial, at -18 to -22 dB — presence, which is
+       * what the inner voice of a chip score is FOR, and a long way from the
+       * unbounded high-passed white noise the hi-hat used to be.
+       */
+      .lpf(m.sig.openness.range(1800, 4800))
       .hpf(220)
       .lpq(1)
       .velocity(velocity)
       .gain(level)
-      .pan(0.5)
+      /*
+       * Off centre, opposite the lead's sawtooth body at 0.40.
+       *
+       * Those two lanes share an octave and always will: the motor's window is
+       * MIDI 57-69 by contract and the lead's doubling measures 57-68. They
+       * cannot be separated in register without breaking one of them, so they
+       * are separated in the field instead — 28% of the width apart, which is
+       * the cheapest separation available and costs no notes. The clock being
+       * slightly to one side is also simply how a rhythm section is recorded.
+       */
+      .pan(0.68)
       .orbit(ORBIT_HARMONY);
 
   /*
@@ -1893,6 +1922,75 @@ export function buildChords(m: MusicalState): Pattern {
     : opened;
 
   /*
+   * THE STABS ARE NO LONGER THE PAD'S NOTES.
+   *
+   * Measured, off the haps rather than off this file: `tools/registermap.mjs`
+   * groups the `chords` lane by oscillator and duty, and `chords/pulse:pw0`
+   * (the pad) and `chords/pulse:pw0.5` (the stab) came back with the IDENTICAL
+   * range, MIDI 51-62 at p5-p95, over 21,120 and 46,464 haps. They were in
+   * unison, on one orbit, differing only in envelope and pan. Two voice groups
+   * playing the same notes in the same octave are not two parts; they are one
+   * part with a tremolo, and they were the two largest contributors to a mix
+   * with 66.6% of its energy in the 250 and 500 Hz bands.
+   *
+   * A comping keyboard does not double its own left hand. The pad keeps the
+   * low open fifths it was deliberately moved down to — it is the bed — and
+   * the stab takes the UPPER STRUCTURE: the full triad, third included, folded
+   * into the octave above the pad. Three consequences, and the third is the
+   * one that matters:
+   *
+   *   1. The third comes back into the harmony. `opened` drops it from the pad
+   *      whenever the melody is playing, on the grounds that the motor is
+   *      already stating it. Now the stab states it too, in its own register,
+   *      so the chord is complete without the pad having to hold the interval
+   *      that grinds against the tune.
+   *   2. The two lanes are audibly two parts: root-and-fifth held low, triad
+   *      struck on the offbeats an octave up.
+   *   3. It empties the 250 Hz band of one of its two largest occupants
+   *      without removing a note from the score.
+   *
+   * The window is 64-76 rather than the pad's 51-62: above the motor's own
+   * 57-69 ceiling at the bottom, and below the lead triangle's measured 69-80
+   * at the top is impossible with thirteen semitones, so the overlap that
+   * remains is with the tune — and against the tune this lane is a 25%-duty
+   * pulse lasting 220 ms on the offbeats, which is the one relationship in the
+   * file where two lanes in one octave do not fight.
+   */
+  const STAB_BOTTOM = 64;
+  const STAB_TOP = 76;
+  const stabFolded = m.chord.notes
+    .map((n) => {
+      let v = n;
+      while (v > STAB_TOP) v -= 12;
+      while (v < STAB_BOTTOM) v += 12;
+      return v;
+    })
+    .sort((a, b) => a - b);
+  /*
+   * The root goes, and that keeps the ONSET COUNT flat.
+   *
+   * An upper structure is the chord minus the note the bass and the bed are
+   * already holding. Dropping the root is what makes this two parts instead of
+   * one: the pad holds root and fifth low, the stab strikes third and fifth an
+   * octave up, and between them the triad is complete with no pitch stated
+   * twice in the same instant.
+   *
+   * It is also the difference between an arrangement change and an addition.
+   * The pad is a dyad whenever the melody is playing, so folding the full
+   * triad into the stab took this lane from two voices to three: measured on
+   * the first pass, `chords/pulse:pw0.5` went from 46,464 haps to 69,696 over
+   * the identical 10,560-state sweep, and mean pitched note-events per bar
+   * from 41.1 to 44.7. `attackfloor` already reads 36 onsets a second and
+   * `MASTER_PLAN` §7 names onset density as the leading remaining suspect for
+   * "abrasive over time"; paying for register separation in transients would
+   * be trading one complaint for another. Back to 46,464.
+   *
+   * Guarded, because a voicing rule that can empty a lane is a bug waiting for
+   * the one chord that trips it — the same guard `opened` carries above.
+   */
+  const stabVoiced = stabFolded.length >= 3 ? stabFolded.slice(1) : stabFolded;
+
+  /*
    * A pad first, stabs second.
    *
    * Previously this was stabs only, which left nothing sustaining anywhere in
@@ -1994,7 +2092,30 @@ export function buildChords(m: MusicalState): Pattern {
      * also where it belongs musically: this is the bed, not a voice.
      */
     .lpf(m.sig.openness.range(560, 1900))
-    .hpf(m.sig.thin.range(20, 400))
+    /*
+     * 110 Hz, not 20 — a REGISTER BOUNDARY that exists at full health.
+     *
+     * `thin` is the player-damage signal (`director.ts:955`,
+     * `pow(1 - health, 1.35)` through a damp), so it is 0 whenever nobody has
+     * been hit. Measured off the haps by `tools/registermap.mjs`: every one of
+     * this lane's 21,120 haps carried `hcutoff` exactly 20 at full health.
+     * Five highpasses across `layers.ts` read as lane separation and all five
+     * were doing nothing in ordinary play; they were a mix-wide thinning
+     * gesture wearing a boundary's clothes.
+     *
+     * The base is now the boundary and the damage signal still rides on top of
+     * it. 110 Hz is a fifth below this lane's lowest fundamental (measured
+     * MIDI 51 = 156 Hz at p5, and `voiced` will not fold below 45), so it
+     * removes only the skirt this pulse puts under the bass and the sub, and
+     * not one note.
+     *
+     * NO `.ftype()` ANYWHERE IN THIS CHAIN, and that is load-bearing rather
+     * than incidental: superdough has one shared filter-model control, so an
+     * `.hpf()` beside an `.ftype('ladder')` is a second 24 dB/oct LOWPASS
+     * (AGENTS.md §4). `registermap` prints the `ftype` count per voice group
+     * and this lane reads 0.
+     */
+    .hpf(m.sig.thin.range(110, 400))
     // A resonant peak is a narrow band the ear cannot stop hearing. On a
     // sustained source it should be nearly flat.
     .lpq(m.sig.ring.range(0.9, 3.4))
@@ -2068,15 +2189,49 @@ export function buildChords(m: MusicalState): Pattern {
       .decay(0.5)
       .sustain(0.8)
       .release(m.sig.hold.range(1.1, 2.6))
-      .lpf(m.sig.openness.range(700, 2200))
-      .hpf(m.sig.thin.range(20, 400))
+      /*
+       * THE FILTER WAS BELOW THE NOTE.
+       *
+       * These are the highest sustained pitches in the arrangement and the
+       * whole argument above is about what their harmonics do. Measured off
+       * the haps (`tools/registermap.mjs`, 21,120 haps): this group emits
+       * MIDI 79-91 at p5-p95 — fundamentals of 784-1568 Hz — behind a lowpass
+       * that sat at 1450 Hz at mid openness. The ratio of cutoff to
+       * fundamental was **1.4x**, the lowest of any voice group in the score,
+       * so for the top of its own range this lane was being attenuated below
+       * its fundamental and everywhere else reduced to a sine. A 7th and a 9th
+       * written as "colour" were rendered as two test tones.
+       *
+       * That is also half of "dull", measured: the full mix carries 3.2% of
+       * its energy above 2 kHz across four octave bands, and no pitched lane
+       * in the file had a lowpass above 2.8 kHz.
+       *
+       * 2600-6500 lets the 3rd and 5th partials through. On a triangle those
+       * fall as 1/n squared — the 3rd is 19 dB down and the 5th 28 dB — so
+       * this is air rather than edge, which is exactly why the source is a
+       * triangle and not a saw. Two voices, at gain 0.3, on the quietest
+       * pitched group in the mix.
+       */
+      .lpf(m.sig.openness.range(2600, 6500))
+      // A real boundary, not the dead one. See the pad's highpass: `thin` is 0
+      // at full health, so `range(20, ...)` was 20 Hz on every hap. 420 Hz is
+      // well under this group's lowest measured fundamental of 784 Hz.
+      .hpf(m.sig.thin.range(420, 900))
       .lpq(m.sig.ring.range(0.9, 3.4))
       .room(m.sig.space.range(0.62, 0.95))
       .roomsize(7)
       .gain(level)
-      // FLANKED puts the two colour tones on opposite sides, so the harmony
-      // itself arrives from the wings rather than only the arp.
-      .pan(0.5 + pan * wide)
+      /*
+       * Placed either side, always — not only when FLANKED.
+       *
+       * `registermap` counted 9 of 15 voice groups sitting inside +/-0.05 of
+       * centre, this one among them: `0.5 + pan * wide` is exactly 0.5 unless
+       * the wave happens to be a flank, which is one wave in twelve. Two
+       * sustained tones a tone or a semitone apart, summed to the same point,
+       * beat against each other; the same two tones 36% of the field apart are
+       * heard as two voices. FLANKED still widens them further.
+       */
+      .pan(0.5 + pan * (0.18 + wide))
       .orbit(ORBIT_HARMONY);
   const colourGain = 0.3;
   /*
@@ -2157,7 +2312,14 @@ export function buildChords(m: MusicalState): Pattern {
      * A clav is the opposite of all three — one narrow band, gone in 80ms — so
      * it cuts through the wobble instead of piling onto it.
      */
-    const chord = chordOf(voiced);
+    // The upper structure, same as the stab. See `stabVoiced`: a clav is a
+    // comping instrument and it was playing the pad's notes in unison too,
+    // which on this feel put it under its OWN highpass — measured hcutoff 260
+    // against fundamentals of 156-294 Hz, so the bottom two thirds of its
+    // range was in the stopband of the filter that was supposed to keep it
+    // clear of the wobble. Moving it up is what makes that highpass mean
+    // something.
+    const chord = chordOf(stabVoiced);
     /*
      * The comp, split so that the eighth-note skeleton and the offbeat
      * sixteenths are separate layers.
@@ -2186,7 +2348,18 @@ export function buildChords(m: MusicalState): Pattern {
         .ad('0.003:0.08')
         .sustain(0)
         .release(0.05)
-        .lpf(m.sig.openness.range(400, 950))
+        /*
+         * 700-1600, and the envelope peak lands where the comment always said
+         * it did. The old ceiling of 950 Hz with `lpenv(1.4)` topped the wah
+         * out at 950 * 2^1.4 = 2.5 kHz only at FULL openness; at the mid
+         * openness this score spends its time at, the cutoff measured 675 Hz
+         * and the peak reached 1.8 kHz — 3.1 harmonics of a note whose
+         * fundamental is 330 Hz. A clav with three harmonics is a sine with a
+         * wah on it. This puts the peak at 4.2 kHz when the mix is open, which
+         * is where a clavinet actually speaks and is the band the whole mix is
+         * missing.
+         */
+        .lpf(m.sig.openness.range(700, 1600))
         .lpq(3.2)
         .lpenv(1.4)
         .lpattack(0.004)
@@ -2214,12 +2387,12 @@ export function buildChords(m: MusicalState): Pattern {
   let coreRhythm: string;
   let fillRhythm: string | null = null;
   if (m.feel === 'shuffle') {
-    coreRhythm = `[~ ${chordOf(voiced)}] ~ [~ ${chordOf(voiced)}] ~`;
+    coreRhythm = `[~ ${chordOf(stabVoiced)}] ~ [~ ${chordOf(stabVoiced)}] ~`;
   } else if (m.feel === 'chase') {
-    coreRhythm = `~ ~ ${chordOf(voiced)} ~`;
+    coreRhythm = `~ ~ ${chordOf(stabVoiced)} ~`;
   } else {
-    coreRhythm = `~ ${chordOf(voiced)} ~ ${chordOf(voiced)}`;
-    if (!half) fillRhythm = `${chordOf(voiced)} ~ ${chordOf(voiced)} ~`;
+    coreRhythm = `~ ${chordOf(stabVoiced)} ~ ${chordOf(stabVoiced)}`;
+    if (!half) fillRhythm = `${chordOf(stabVoiced)} ~ ${chordOf(stabVoiced)} ~`;
   }
 
   const stabVoice = (rhythm: string, level: Patternable): Pattern =>
@@ -2261,8 +2434,13 @@ export function buildChords(m: MusicalState): Pattern {
     .ad('0.008:0.22')
     .sustain(0.3)
     .release(0.2)
-    .lpf(m.sig.openness.range(700, 2800))
-    .hpf(m.sig.thin.range(20, 400))
+    .lpf(m.sig.openness.range(1100, 3600))
+    // A boundary that exists at full health, and now it can be a real one:
+    // `stabVoiced` folds into MIDI 64-76, so 300 Hz is a fourth below this
+    // lane's own lowest fundamental of 330 Hz. Against the old unison voicing
+    // (MIDI 51 = 156 Hz) it would have eaten the part. See the pad's highpass
+    // for why the old base of 20 was doing nothing.
+    .hpf(m.sig.thin.range(300, 700))
     // The filter envelope is what makes a stab bite. Halving it keeps the
     // articulation and drops the click that rides on top of it.
     .lpq(m.sig.ring.range(1.5, 4.5))
@@ -2430,15 +2608,41 @@ export function buildArp(m: MusicalState): Pattern {
        */
       .add(note(transpose))
       /*
-       * ...and out of the melody's octave when the melody is present.
+       * ...and out of the melody's octave when the melody is present — UPWARD.
        *
        * A signal, so it slides the already-scheduled notes rather than
        * replacing the phrase. Same `note()` wrapping rule as above applies —
        * `sig.arpOctave` is built with `signal()` in the director and is a plain
        * value pattern, so it needs the control wrapper to have a field to add
        * against. See `Signals.arpOctave`.
+       *
+       * THE SIGN IS INVERTED HERE, DELIBERATELY, and this is the one change in
+       * this lane that is worth arguing about.
+       *
+       * `orchestration.arpDisplacement` returns **-12** when the lead and the
+       * arp both survive the voice budget. Its reasoning is right — two lanes
+       * in the melody's octave means neither reads — and its direction is
+       * wrong, because it moves the arp into the only octave in the score that
+       * is already full. Measured with `tools/registermap.mjs`: undisplaced
+       * this lane emits MIDI 69-83 at p5-p95; displaced by -12 it emits 57-71,
+       * which is the pad's window (51-62), the motor's entire window (57-69)
+       * and the lead's sawtooth doubling (57-68) simultaneously — and the
+       * displacement fires exactly when all three of those are sounding,
+       * because that is what "both lanes won a slot" means. The octave ABOVE
+       * the arp holds nothing at all: the highest thing in the mix is the
+       * colour 7th and 9th at 784-1568 Hz, at gain 0.3.
+       *
+       * So orchestration decides WHETHER to displace and the builder decides
+       * WHICH WAY, because the builder is the only thing that knows where it
+       * has room. Displaced, this lane plays 81-95 — 1109-2489 Hz — which is
+       * the register the mix has 3.2% of its energy in. `MASTER_PLAN` §1 S-c
+       * asks for exactly this ("upward displacement with an hpf sparkle") and
+       * has asked since before S3 was written.
+       *
+       * If the sign is ever fixed upstream, delete the `.mul(-1)` and not this
+       * comment.
        */
-      .add(note(m.sig.arpOctave))
+      .add(note(m.sig.arpOctave.mul(-1)))
       /*
        * Triangle, and the resonant filter comes off with it.
        *
@@ -2465,8 +2669,23 @@ export function buildArp(m: MusicalState): Pattern {
       .ad(half ? '0.006:0.26' : '0.004:0.2')
       .sustain(0.4)
       .release(0.18)
-      .lpf(m.sig.openness.range(450, 2800))
-      .hpf(m.sig.thin.range(20, 520))
+      /*
+       * Brighter, because this lane is now the sparkle.
+       *
+       * Measured before: fundamentals 440-988 Hz behind a cutoff of 1625 Hz at
+       * mid openness — 2.5 harmonics, on a triangle, which is a sine with a
+       * slight edge. Filigree that the ear cannot separate from the pad is not
+       * filigree. 900-4600 lets the 3rd, 5th and 7th partials through at
+       * -19/-28/-34 dB, which is what makes a triangle read as a bell rather
+       * than as a flute, and it is deliberately the brightest lowpass in the
+       * file because this is the highest-pitched repeating line in it.
+       */
+      .lpf(m.sig.openness.range(900, 4600))
+      // A boundary rather than the dead 20 Hz this used to sit at whenever the
+      // player was undamaged — see the pad's highpass. 330 Hz is a fifth below
+      // the lowest fundamental this lane emits (MIDI 69 = 440 Hz), so it takes
+      // out the low skirt this lane puts across the pad and nothing else.
+      .hpf(m.sig.thin.range(330, 700))
       .lpq(m.sig.ring.range(2, 5))
       .lpenv(1.4)
       .lpdecay(0.11)
@@ -2580,7 +2799,30 @@ export function buildLead(m: MusicalState): Pattern {
   // moves audibly is heard as an effect, and this should only be missed.
   const vibRate = m.boss ? 5.6 + m.bossPhase * 0.4 : 5.1;
 
-  const voice = (line: string, transpose: number, level: Patternable, osc: string): Pattern =>
+  /*
+   * THE SAWTOOTH DOUBLING HAD THE TRIANGLE'S FILTER.
+   *
+   * The comment above says "the octave below stays a sawtooth, low-passed
+   * hard". It was not. `voice()` set one lowpass for both oscillators, and
+   * `tools/registermap.mjs` reads the same number off both groups' haps:
+   * `lead/sawtooth` and `lead/triangle` each carried cutoff 2550 at mid
+   * openness, 52,800 haps apiece. So the "body" layer was three sawtooth
+   * lines at MIDI 57-68 — 220-415 Hz, which is the motor's exact octave — with
+   * eleven harmonics reaching 2.5 kHz, in the loudest stem in the game
+   * (`lead` has the highest ceiling in `STEM_CURVES`, 0.95, and rendered at a
+   * fader of 0.74 in the 32-bar capture). Soloed, this lane measures 64.4% of
+   * its energy in the 500 Hz band and 22.7% in the 1 kHz band; the 250/500
+   * pair holds 66.6% of the whole mix. This layer is the largest single
+   * contributor to that, and it is a contribution nobody wrote.
+   *
+   * A body is a fundamental and its first two or three partials. That is what
+   * an orchestrator means by doubling at the octave, and it is why the trick
+   * costs nothing: the bright instrument on top supplies the harmonics, the
+   * one underneath supplies the weight. Eleven harmonics of the doubling is
+   * not a body, it is a second lead in the wrong octave.
+   */
+  const isBody = (osc: string): boolean => osc === 'sawtooth';
+  const voice = (line: string, transpose: number, level: Patternable, osc: string, pan: number): Pattern =>
     note(line)
       // See the note on `.add(note(n))` in buildArp: a bare number is dropped.
       .add(note(transpose))
@@ -2609,10 +2851,27 @@ export function buildLead(m: MusicalState): Pattern {
        * and low harmonics, and everything above that is texture. Taking the
        * ceiling down loses nothing of the tune.
        */
-      .lpf(m.sig.openness.range(1100, 4000))
-      .hpf(m.sig.thin.range(20, 600))
+      /*
+       * The tune keeps the top; the doubling gets a body's worth and stops.
+       *
+       * 4000 was the ceiling and the argument for it stands — above about
+       * 4 kHz a melody gains no pitch information, only edge. What was missing
+       * is the FLOOR: at the mid openness the score spends most of its time
+       * at, `range(1100, 4000)` evaluates to 2550 Hz, and a triangle at
+       * 440-830 Hz behind 2550 keeps its 3rd partial and loses its 5th. That
+       * is a flute with the lid on, and it is the other half of "dull".
+       * 1900-5000 puts the 5th and 7th back at mid openness without moving the
+       * top of the range far.
+       */
+      .lpf(isBody(osc) ? m.sig.openness.range(500, 1400) : m.sig.openness.range(1900, 5000))
+      // Real boundaries; `thin` is 0 at full health, so both of these read 20 Hz
+      // on every hap until the player is hit. 90 clears the boss octave (the
+      // -24 saw bottoms at MIDI 45 = 110 Hz); 300 is under the triangle's
+      // lowest fundamental of 440.
+      .hpf(isBody(osc) ? m.sig.thin.range(90, 400) : m.sig.thin.range(300, 700))
       .lpq(m.sig.ring.range(1.3, 4))
       .gain(level)
+      .pan(pan)
       .orbit(ORBIT_HARMONY);
 
   /*
@@ -2670,15 +2929,31 @@ export function buildLead(m: MusicalState): Pattern {
    * a fifth of the way up as a ghost note — and the ornament fades in on top.
    * All three are the same notes at every intensity; only their balance moves.
    */
-  const trio = (transpose: number, level: number, osc: string): Pattern[] => [
-    voice(lines.skeleton, transpose, level, osc),
-    voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), osc),
-    voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), osc),
+  const trio = (transpose: number, level: number, osc: string, pan: number): Pattern[] => [
+    voice(lines.skeleton, transpose, level, osc, pan),
+    voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), osc, pan),
+    voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), osc, pan),
   ];
   // The tune sings on a triangle; the octave below is the saw that gives it
   // body. The descant is a triangle too — a sixth above the melody is the
   // highest pitch in the mix and the last place that wants a saw.
-  const voices = [...trio(0, lead * 1.15, 'triangle'), ...trio(-12, 0.3, 'sawtooth')];
+  /*
+   * WIDTH, and where it is NOT applied.
+   *
+   * `tools/registermap.mjs` counted 9 of 15 voice groups sitting within 0.05
+   * of centre, weighted by written gain, and the two loudest pitched groups in
+   * the mix were both of these. The whole lead stack then had `.pan(0.5)`
+   * applied to it at the end, which is a later-writes-win site: any per-voice
+   * pan set here would have been silently erased by it. That line is gone.
+   *
+   * The TUNE stays dead centre and always will — a melody that wanders across
+   * the field is a production effect, and the one lane a listener is following
+   * is the last place to put one. What moves is the doubling: the sawtooth
+   * body sits at 0.40 and the descant answers at 0.62, so the lead reads as a
+   * voice with something behind it rather than as one point source. Stereo
+   * placement is the cheapest separation there is, and it costs no notes.
+   */
+  const voices = [...trio(0, lead * 1.15, 'triangle', 0.5), ...trio(-12, 0.3, 'sawtooth', 0.4)];
   /*
    * A boss is scored for LOW BRASS.
    *
@@ -2699,17 +2974,16 @@ export function buildLead(m: MusicalState): Pattern {
    * this costs nothing but a gain.
    */
   if (m.boss) {
-    voices.push(...trio(-12, 0.34 + m.bossPhase * 0.08, 'sawtooth'));
-    voices.push(...trio(-24, 0.3 + m.bossPhase * 0.07, 'sawtooth'));
+    voices.push(...trio(-12, 0.34 + m.bossPhase * 0.08, 'sawtooth', 0.6));
+    voices.push(...trio(-24, 0.3 + m.bossPhase * 0.07, 'sawtooth', 0.42));
   }
-  if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'triangle'));
+  if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'triangle', 0.62));
   return octave(stack(...voices))
     .delay(open ? 0.46 : 0.3)
     .delaysync(open ? 1 / 4 : 3 / 16)
     .delayfeedback(open ? 0.52 : 0.34)
     .room(m.sig.space.range(open ? 0.66 : 0.34, 0.95))
-    .roomsize(open ? 8 : 4)
-    .pan(0.5);
+    .roomsize(open ? 8 : 4);
 }
 
 /**

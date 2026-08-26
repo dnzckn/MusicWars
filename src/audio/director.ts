@@ -27,7 +27,7 @@ import { clamp, clamp01, damp, Latch, lerp, remap, StickyBucket } from '../core/
 import { BARS_PER_PHRASE, type Transport } from '../core/transport';
 import { Arranger } from './arrangement';
 import { setTempo } from './engine';
-import { masterVolume } from './volume';
+import { ensureMasterCeiling, masterVolume, musicTrim } from './volume';
 import {
   MOVEMENT_MIX,
   buildArp,
@@ -624,8 +624,27 @@ export class MusicDirector {
            * only caller is diagnostic tooling asking "what does this layer
            * actually sound like", the fader is the wrong thing to include.
            */
+          /*
+           * `musicTrim()` is the calibrated makeup gain for the whole music
+           * bus — see `volume.ts` for the measurement that fixes its value.
+           * It multiplies in here, at the one place every stem passes
+           * through, so the balance the builders wrote is untouched: every
+           * lane moves by exactly the same number of dB.
+           *
+           * NOT on the solo path, for the same reason the fader is not on it.
+           * Solo asks what one LANE sounds like, pinned to unity; the makeup
+           * is a property of the MIX. Including it would put a soloed lane at
+           * 2.3 in amplitude, well into `ensureMasterCeiling`'s knee, so every
+           * diagnostic reading — `mixaudit`, `stemprobe`, `capture --stem=` —
+           * would come back through a nonlinearity, and none of the soloed
+           * figures already recorded in `docs/` would still be comparable.
+           */
           signal(() =>
-            this.solo ? (this.solo === id ? masterVolume() : 0) : this.levels[id] * masterVolume(),
+            this.solo
+              ? this.solo === id
+                ? masterVolume()
+                : 0
+              : this.levels[id] * masterVolume() * musicTrim(),
           ),
         ),
       ),
@@ -662,10 +681,30 @@ export class MusicDirector {
     const filterable = master as Pattern & {
       filterValues(f: (v: Record<string, unknown>) => boolean): Pattern;
     };
+    /*
+     * The floor moves with the makeup gain, so the SET of haps dropped is
+     * unchanged.
+     *
+     * `AUDIBLE_FLOOR`'s value is not a loudness, it is a position between the
+     * two yield levels in `orchestration.ts` — `YIELD_NEAR` survives,
+     * `YIELD_FAR` does not. `postgain` now carries `musicTrim()`, which is a
+     * factor of 3.1 in `pg * pg`, and comparing against the raw constant
+     * would have quietly promoted every `YIELD_FAR` lane back above it: the
+     * measured 0.0018 becomes 0.0056 against a floor of 0.0025. That is the
+     * 21% of voice allocations the floor exists to refuse, reinstated as a
+     * side effect of a level change. Scaling the threshold by the same
+     * constant keeps the decision where it was written — measured: 1493 haps
+     * over 32 bars before the makeup and 1493 after, the identical set.
+     *
+     * Read per hap rather than hoisted because the makeup is not on the solo
+     * path, so the scaling must not be either; a soloed render has to drop
+     * exactly the haps it dropped before.
+     */
     return filterable.filterValues((v) => {
       const g = typeof v.gain === 'number' ? v.gain : 1;
       const pg = typeof v.postgain === 'number' ? v.postgain : 1;
-      return g * g * pg * pg > AUDIBLE_FLOOR;
+      const t = this.solo ? 1 : musicTrim();
+      return g * g * pg * pg > AUDIBLE_FLOOR * t * t;
     });
   }
 
@@ -745,6 +784,15 @@ export class MusicDirector {
   /** Called every frame, after the transport has advanced. */
   update(snap: GameSnapshot, transport: Transport, dt: number): void {
     if (!this.started) return;
+    /*
+     * Arm the master ceiling.
+     *
+     * Here rather than in `bootAudio` because superdough builds its output
+     * controller lazily, on the first sound, so at boot there is nothing to
+     * splice into. After the first success this is a node-identity comparison,
+     * and in Node it returns immediately. See `ensureMasterCeiling`.
+     */
+    ensureMasterCeiling();
     this.snapshot = snap;
     // Wall-clock for this run, used to rate-limit event-driven section forces.
     this.runSeconds += dt;

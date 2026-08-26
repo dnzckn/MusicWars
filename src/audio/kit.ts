@@ -69,13 +69,29 @@ export function kick(rhythm: Patternable, weight = 0.5): Pattern {
  */
 export function clap(rhythm: Patternable, bright = 0.5): Pattern {
   return stack(
-    // The crack. 1.6-7kHz is where a snare's information is; above that is
-    // spray, and spray on every backbeat is what makes a mix tiring.
+    /*
+     * The crack. 1.6-7kHz is where a snare's information is; above that is
+     * spray, and spray on every backbeat is what makes a mix tiring.
+     *
+     * The ceiling moves up by about an octave anyway, and the reason is a
+     * measurement rather than a preference. Rendered through the real chain,
+     * the full mix carries **3.2% of its energy above 2 kHz** across the 2k,
+     * 4k, 8k and 16k octave bands combined — that is what "dull" is. This
+     * burst and the drop-bar crash are the only broadband sources left in the
+     * whole score since `buildHats` was deleted, and this one is the only one
+     * that plays every bar. At 5200 the old ceiling put the top of the crack
+     * inside the 4 kHz band, which measures 0.4% of the mix; 6800 puts it
+     * across the 4k band properly and touches the 8k.
+     *
+     * It is still band-limited and it is still two hits a bar, which is the
+     * difference between a bright backbeat and a hi-hat: the fatiguing thing
+     * is a continuous high-passed noise source, not a transient one.
+     */
     s('white')
       .struct(rhythm)
       .ds(`${(0.095 + bright * 0.03).toFixed(3)}:0`)
       .hpf(1600)
-      .lpf(5200 + bright * 1800)
+      .lpf(6800 + bright * 2600)
       .hpq(1.4)
       .gain(0.42),
     // The body: a short tuned thud so the backbeat has pitch as well as noise.
