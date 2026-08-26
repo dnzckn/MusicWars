@@ -1187,9 +1187,41 @@ export class LevelUpOverlay {
       g.fillText(this.fit(g, c.label, sw - 8), sx, top);
     }
 
+    /*
+     * The note wraps to a SECOND LINE rather than taking an ellipsis, for the
+     * same reason the fusion label above does: it matters WHICH half gets cut.
+     *
+     * This was a single `fit()` call. It was fine while every passive was a
+     * multiplier — "+12% damage" has nothing to lose — but the rig now installs
+     * RULES, and their notes are sentences. COMPRESSOR rendered as
+     *
+     *     one more shield — and every hit you take blows a ring back out of
+     *     you that hurts wha…
+     *
+     * which drops precisely the clause that says what the item does. An item
+     * whose whole purpose is to change how the game plays, described by a
+     * sentence the card refuses to finish, is worse than the percentage it
+     * replaced: the player cannot even tell that something changed.
+     *
+     * Two lines, and the ellipsis is kept as the backstop on the second — a
+     * note long enough to overrun both is an authoring problem, and `levelup`
+     * asserts every rung has a described change so there is somewhere for that
+     * to be caught. Breaking on the last space that fits keeps words whole.
+     */
     g.font = '600 13px ui-monospace, monospace';
     g.fillStyle = 'rgba(226,234,250,0.9)';
-    g.fillText(this.fit(g, c.note, sw - 96), sx, cy - h * 0.09);
+    const noteMax = sw - 96;
+    if (g.measureText(c.note).width <= noteMax) {
+      g.fillText(c.note, sx, cy - h * 0.09);
+    } else {
+      let cut = c.note.length;
+      while (cut > 1 && g.measureText(c.note.slice(0, cut)).width > noteMax) cut--;
+      const space = c.note.lastIndexOf(' ', cut);
+      const head = space > 12 ? c.note.slice(0, space) : c.note.slice(0, cut);
+      const tail = c.note.slice(head.length).trim();
+      g.fillText(head, sx, cy - h * 0.09 - 7);
+      g.fillText(this.fit(g, tail, noteMax), sx, cy - h * 0.09 + 7);
+    }
 
     g.font = '400 11px ui-monospace, monospace';
     g.fillStyle = `hsla(${hue}, 55%, 72%, 0.62)`;

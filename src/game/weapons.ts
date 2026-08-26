@@ -1550,7 +1550,7 @@ export const RIG: readonly RigDef[] = [
       { overchargeEvery: 3, overchargeDamage: 3 },
     ],
     notes: [
-      'every fifth time an instrument comes round it fires white — twice as hard, straight through the whole line, and every bolt in it hunts',
+      'every fifth shot fires white — twice as hard, straight through the line, and every bolt hunts',
       'every fourth, and the charged volley hits two and a half times as hard',
       'every third shot is the charged one, three times as hard, and nothing stops it',
     ],
@@ -1737,7 +1737,7 @@ export const RIG: readonly RigDef[] = [
     notes: [
       'one more shield — and every hit you take blows a ring back out of you that hurts what caused it',
       'the ring goes out further and lands much harder',
-      'getting hit clears the room: a wide ring that eats the shots still in the air and takes a real bite out of whatever is standing in it',
+      'getting hit clears the room — a wide ring that eats the shots in the air and bites whatever stands in it',
     ],
   },
   {
@@ -1796,9 +1796,9 @@ export const RIG: readonly RigDef[] = [
       { chargeSeconds: 1.5, chargeDamage: 2.6 },
     ],
     notes: [
-      'hold still for a breath and the band swells — everything you fire while planted lands over half again as hard, and it drops the moment you break',
+      'hold still a breath and the band swells — planted shots land half again as hard, and it drops when you move',
       'the swell arrives sooner and climbs to double',
-      'a second and a half of stillness and you are hitting for two and a half; standing your ground is now a weapon, and moving costs you it',
+      'a second and a half planted and you hit for two and a half — standing your ground is the weapon now',
     ],
   },
   {

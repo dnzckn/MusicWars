@@ -174,7 +174,58 @@ console.log('\nTABLE');
   console.log(`  ${ruleItems} of ${W.RIG.length} passives install a rule; ${W.RIG.length - ruleItems} are pure numbers`);
   if (ruleItems === 0) fail('no passive installs a rule — the trigger surface is unused');
   if (ruleItems === W.RIG.length) fail('every passive is a rule — the numeric baseline they read against is gone');
-  if (failures === 0) pass('every level of every ability has a described, non-empty change');
+  /*
+   * A NOTE THAT DOES NOT FIT THE CARD IS NOT A DESCRIBED CHANGE.
+   *
+   * The assertion above only asks that a note is non-empty, and that was enough
+   * while every passive was a multiplier -- "+12% damage" has nothing to lose.
+   * The rig now installs RULES and their notes are sentences, and the level-up
+   * card rendered COMPRESSOR as
+   *
+   *     one more shield -- and every hit you take blows a ring back out of you
+   *     that hurts wha...
+   *
+   * dropping exactly the clause that says what the item does. The card wraps to
+   * two lines now, but four notes were long enough to overrun BOTH (144, 134,
+   * 134 and 133 characters) and were trimmed. Nothing stopped them being written
+   * that long, and nothing would stop the next one.
+   *
+   * The budget is derived from the drawn geometry rather than guessed: the note
+   * box is `sw - 96` at 13px ui-monospace, whose advance is almost exactly 0.6em,
+   * over two lines. It is deliberately a CHARACTER budget and not a pixel
+   * measurement, because this check must run without a canvas -- so it carries a
+   * small safety margin and the real backstop stays the ellipsis in the
+   * renderer. What it catches is the case that matters: prose written at
+   * paragraph length for a space that holds a sentence.
+   */
+  {
+    const CARD_W = 610;            // narrowest card drawn by LevelUpOverlay
+    const PER_CHAR = 13 * 0.6;     // 13px ui-monospace advance
+    const BUDGET = Math.floor(((CARD_W - 96) / PER_CHAR) * 2);
+    let longest = 0;
+    let longestId = '';
+    let checked = 0;
+    for (const d of W.INSTRUMENTS) {
+      for (const st of d.steps ?? []) {
+        if (!st.note) continue;
+        checked++;
+        if (st.note.length > longest) { longest = st.note.length; longestId = d.id; }
+        if (st.note.length > BUDGET) fail(`${d.id} note is ${st.note.length} chars, over the ${BUDGET} the card can draw`);
+      }
+    }
+    for (const d of W.RIG) {
+      for (const n of d.notes ?? []) {
+        if (!n) continue;
+        checked++;
+        if (n.length > longest) { longest = n.length; longestId = d.id; }
+        if (n.length > BUDGET) fail(`${d.id} note is ${n.length} chars, over the ${BUDGET} the card can draw`);
+      }
+    }
+    if (checked === 0) fail('no notes were measured against the card width — this check proved nothing');
+    console.log(`  ${checked} notes measured against a ${BUDGET}-char card; longest ${longest} (${longestId})`);
+  }
+
+  if (failures === 0) pass('every level of every ability has a described, non-empty change that fits its card');
 
   /*
    * The rule fold has to be order-independent for the same reason the modifier
