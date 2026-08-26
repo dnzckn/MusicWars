@@ -19,47 +19,41 @@
  */
 
 /*
- * The field, widened from 720x960.
+ * The field: 720x960, then 900x1120, now 3000x3000.
  *
- * "Perhaps expand the map size", asked for alongside "enemies that shoot should
- * be rare, they should move slower, and take a few more hits" — the same wish
- * from two directions. A bigger field is what makes fewer, tougher enemies read
- * as a stage you pick apart instead of a swarm you flinch at: there is somewhere
- * to go, and a bullet crossing it gives you time to decide.
+ * "The arena is too small" was one of the four launch complaints, and until
+ * this line the field WAS the screen — one static rectangle, no scrolling, no
+ * camera. It is now eleven times the area and the camera shows one screen of
+ * it, which is the change a player actually notices.
  *
- * Widened proportionally more than it is heightened (0.75 -> 0.80 aspect)
- * because lateral room is the axis dodging actually uses, and because the stage
- * is height-limited on screen — a wider field is physically larger in the
- * window as well as in simulation units, which puts the horizontal space a
- * 1440px window was wasting to work.
+ * SQUARE, AND NOT 3x OF 900x1120. The comment this replaces argued the case
+ * against itself for two revisions: a survivor arena wants to be square or
+ * landscape, 900x1120 is a shmup's portrait aspect, and it meant the ring the
+ * enemies arrive on was 25% further away north and south than east and west.
+ * Keeping 0.80 while multiplying by three would have preserved that asymmetry
+ * at three times the scale. The spawn ring is the VIEW now, so the arrival
+ * geometry is symmetric-or-not independently of this number — but the FIELD's
+ * shape still decides which corners exist, how far a run can go in each
+ * direction, and where the camera clamps. Square is the honest answer to all
+ * three.
  *
- * Everything downstream reads `world.width`/`world.height`; only the two canvas
- * elements and the CSS aspect-ratio carry the numbers separately.
+ * 3000, not the 1000x1000 the old comment recommended. 1000x1000 was written
+ * when the field and the screen were the same rectangle, so it was a proposal
+ * about the SCREEN. With a camera the two numbers are free of each other, and
+ * 3000 is 3.3 screens wide by 2.7 tall — big enough to have somewhere to run
+ * to, small enough that `CULL_MARGIN` and the wall-bounce rectangle still mean
+ * something and a wave can still end.
+ *
+ * WHAT DOES NOT MOVE WITH IT. `src/style.css`'s `aspect-ratio: 900 / 1120` and
+ * the two `<canvas>` elements in `index.html` describe the VIEW. They stay.
+ * Both files now say so in a comment, because the previous version of this
+ * note warned that moving the field without moving them makes the simulation
+ * and the viewport disagree — that warning was correct about the coupling and
+ * wrong about the direction, and a reader arriving from either file needs to
+ * be told which of the two pairs it belongs to before they "fix" it.
  */
-/*
- * DELIBERATELY UNCHANGED BY THE ARENA CONVERSION, and this is the wrong shape.
- *
- * A survivor arena wants to be square or landscape; 900x1120 is a shmup's
- * aspect ratio and it means the ring the enemies arrive on is 25% further away
- * north and south than east and west. The conversion works anyway — `edgePoint`
- * spawns against the rectangle so the geometry is correct, it is just not
- * symmetric — but a squarer field would be better and 1000x1000 is the
- * recommendation.
- *
- * It is not changed here because the number lives in three places and only one
- * of them is in this file: `src/style.css` carries a hardcoded
- * `aspect-ratio: 900 / 1120` and the two canvas elements in `index.html` carry
- * their own copies, and both belong to another workstream. Moving the field
- * without moving those makes the simulation and the viewport disagree, and the
- * last time this constant moved it silently broke `tools/contrast.mjs`
- * completely — that tool kept its own copy and then reported a total
- * readability failure that was entirely its own.
- *
- * Those two files describe the VIEW, though, not the field — see below. When
- * the field finally grows it is `VIEW_W/H` that must stay pinned to them.
- */
-export const PLAYFIELD_W = 900;
-export const PLAYFIELD_H = 1120;
+export const PLAYFIELD_W = 3000;
+export const PLAYFIELD_H = 3000;
 
 /*
  * WHAT THE CANVAS SHOWS, as opposed to what the simulation contains.

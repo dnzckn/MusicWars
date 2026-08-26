@@ -10,10 +10,22 @@
 import type { EnemyArchetype } from '../core/events';
 import { clamp } from '../core/math';
 import { Emitter, type EmitterSpec } from './emitters';
+import { VIEW_H, VIEW_W } from './field';
 
 export interface EnemyContext {
   playerX: number;
   playerY: number;
+  /**
+   * The FIELD, not the view, and nothing reads them.
+   *
+   * `bossMove` was the last consumer and now orbits an anchor captured at
+   * spawn instead. They are kept because `EnemyContext` is the published shape
+   * a mover receives and a mover that wants the arena bounds has nowhere else
+   * to get them — but per AGENTS.md §3 an unread field is exactly the kind of
+   * thing that rots, so: if you are reading this and still nothing consumes
+   * them, delete them. Anything wanting "how big is the screen" should import
+   * `VIEW_W`/`VIEW_H` directly, as `bossMove` does.
+   */
   width: number;
   height: number;
   /** Transport position in beats, so movement can step in time. */
@@ -301,12 +313,28 @@ const echoDrift: MoveFn = (e, dt, ctx) => {
  * parked at one edge would let the player fight it from the opposite side of
  * the field with three quarters of the arena behind them as a retreat, which is
  * the opposite of what a boss is for.
+ *
+ * "THE MIDDLE" IS AN ANCHOR CAPTURED AT SPAWN, NOT THE MIDDLE OF THE FIELD.
+ * This read `ctx.width/2, ctx.height/2` with a radius of
+ * `min(ctx.width, ctx.height) * 0.17`, both of which were the screen because
+ * the field was the screen. On a 3000px field that is a 510px orbit — one and a
+ * half screens across — around a point the player may never go near, so the
+ * boss would spend the fight off camera and the set piece would be a health bar
+ * with nothing under it. `homeX`/`homeY` hold the arena centre the boss was
+ * summoned around (`spawnBoss`), and the radius comes from `VIEW_*`, so the
+ * orbit is the same fraction of the SCREEN it has always been.
+ *
+ * The anchor is fixed for the boss's life rather than tracking the camera:
+ * an orbit that followed the view would let the player drag the boss around
+ * the arena by walking, which is the "fight it from the far side" failure this
+ * comment already argues against, only worse — the boss would never be
+ * anywhere the player was not.
  */
-const bossMove: MoveFn = (e, dt, ctx) => {
-  const cx = ctx.width / 2;
-  const cy = ctx.height / 2;
+const bossMove: MoveFn = (e, dt) => {
+  const cx = e.homeX;
+  const cy = e.homeY;
   const speed = 0.5 + e.phase * 0.28;
-  const r = Math.min(ctx.width, ctx.height) * 0.17;
+  const r = Math.min(VIEW_W, VIEW_H) * 0.17;
   const tx = cx + Math.cos(e.age * speed) * r;
   const ty = cy + Math.sin(e.age * speed * 1.3) * r * 0.8;
   // Ease in rather than snapping: it arrives from off-field and has to cross.
@@ -874,14 +902,35 @@ function bossVariantB(d: number): EmitterSpec[][] {
   ];
 }
 
-export function spawnBoss(x: number, y: number, difficulty: number, width: number, variant = 0): Enemy {
+/**
+ * `x, y` is where it enters from — off the ring. `anchorX, anchorY` is the
+ * point it will orbit, which is the centre of the arena AT THE MOMENT IT IS
+ * SUMMONED and is stored in `homeX`/`homeY` for `bossMove` to read.
+ *
+ * The fourth argument used to be the field width, from which this derived
+ * `homeX = width / 2` and `bossMove` separately derived the same centre and its
+ * own radius. Two places computing "the middle" from the field is one place too
+ * many the day the field stops being the screen; the caller decides now, and
+ * `world.ts` passes the camera's centre.
+ *
+ * `homeY` was `y` — the off-field entry height — and was read by nothing, which
+ * is why it could be wrong for the whole life of the boss without showing.
+ */
+export function spawnBoss(
+  x: number,
+  y: number,
+  difficulty: number,
+  anchorX: number,
+  anchorY: number,
+  variant = 0,
+): Enemy {
   const e = blank();
   e.id = nextId++;
   e.archetype = 'conductor';
   e.x = e.prevX = x;
   e.y = e.prevY = y;
-  e.homeX = width / 2;
-  e.homeY = y;
+  e.homeX = anchorX;
+  e.homeY = anchorY;
   e.standoff = 0;
   /*
    * Was 900 * (1 + d*1.1), then 620 * (1 + d*0.7). A boss should be a set

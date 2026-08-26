@@ -191,8 +191,10 @@ const effect = (over) => ({
 function makeWorld(effects, novas = [], wells = []) {
   return {
     /*
-     * `width`/`height` are the SIMULATION extent and `viewW`/`viewH` are what
-     * the canvas shows. They are the same numbers today and the renderer reads
+     * `width`/`height` are the SIMULATION extent (3000x3000) and `viewW`/`viewH`
+     * are what the canvas shows (900x1120). They were the same numbers when
+     * this stub was written and they are not any more, which is precisely why
+     * both are imported rather than typed in. The renderer reads
      * both — the gameplay draws against the first pair, the background, the
      * overlay and every readout against the second. Omitting `viewW`/`viewH`
      * puts `undefined` into `fitCanvases`, `this.scale` becomes NaN, and every
@@ -208,8 +210,12 @@ function makeWorld(effects, novas = [], wells = []) {
      * `x`/`y` are the COMPOSED render offset the renderer translates by
      * (`-viewX + shakeX`); `viewX`/`viewY` are where the top-left of the view
      * sits in world space, which the renderer reads to clip the warp lattice.
-     * At the origin with no shake all four are zero, which is the state the
-     * game is in today.
+     * All four are pinned at zero here — the camera at the corner of the
+     * arena, no shake. That is a legal state of the real game rather than the
+     * only one now, and it is the right one for this file: these checks are
+     * about whether an effect DRAWS and draws finite numbers, and a nonzero
+     * camera would move every recorded coordinate without testing anything
+     * extra. The clip test that does care lives in `tools/gridview.mjs`.
      */
     camera: { x: 0, y: 0, viewX: 0, viewY: 0, flash: 0, flashHue: 0 },
     // Every field `drawPlayer` and `drawDrones` read. An absent one becomes
@@ -267,6 +273,18 @@ function frame(effects, novas = [], wells = []) {
  */
 frame([]);
 
+/*
+ * The geometry this file draws against, PRINTED rather than merely used.
+ *
+ * `research-camera.md` §9 Stage 6 gates each repaired tool on being run with
+ * `VIEW_W` 20% off and confirmed to move. Every verdict below is a count of
+ * draw ops and a hue, both of which are invariant under a wider canvas -- so
+ * without this line the output is byte-identical at 900 and at 1080 and an
+ * imported constant cannot be told apart from a hardcoded one. The point of
+ * importing was that the numbers follow the program; saying which numbers
+ * they are is what makes that visible.
+ */
+console.log(`\nGEOMETRY  view ${VIEW_W}x${VIEW_H}   field ${PLAYFIELD_W}x${PLAYFIELD_H}   (imported from src/game/field.ts)`);
 console.log('\nCONTROL — can this tool tell drawn from not drawn?');
 {
   // The negative control, and it is the whole basis of every count below: the

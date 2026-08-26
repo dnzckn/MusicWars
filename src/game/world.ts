@@ -62,6 +62,7 @@ import {
   formationWidth,
   planWave,
   type Formation,
+  type SpawnRing,
   type WavePlan,
 } from './waves';
 
@@ -93,6 +94,16 @@ const SCAN_RADIUS = 300;
  * out and creeps for its telegraph is still outside the field when it commits.
  */
 const SPAWN_MARGIN = 70;
+
+/**
+ * How far outside the view an enemy still counts toward the population floor.
+ *
+ * See `populationNearPlayer()`. It has to be at least the deepest formation
+ * stagger (`columns` reaches `SPAWN_MARGIN + 128`) or a group in the middle of
+ * arriving would not be counted and the schedule would slide another one in on
+ * top of it.
+ */
+const POPULATION_MARGIN = 200;
 
 /**
  * Seconds an unanswered level-up offer waits before the game picks card 0.
@@ -1248,15 +1259,19 @@ export class World {
     this.transport.advance(dt);
     this.camera.update(dt);
     /*
-     * The camera tracks the ship, and today it cannot move.
+     * The camera tracks the ship.
      *
-     * `PLAYFIELD_*` and `VIEW_*` are the same numbers, so `follow`'s clamp has
-     * the range [0, 0] and `camera.viewX/viewY` stay at the origin no matter
-     * what this asks for. It is called anyway rather than left dormant: an
-     * uncalled `follow()` is an unproven `follow()`, and the property that
-     * matters here is that the camera is downstream of the simulation and can
-     * never feed back into it. `tools/arena.mjs` is bit-identical with this
-     * line present, which is what proves it.
+     * This was a no-op for two stages — `PLAYFIELD_*` and `VIEW_*` were the
+     * same numbers, so `follow`'s clamp had the range [0, 0] — and it was
+     * called anyway rather than left dormant, because an uncalled `follow()`
+     * is an unproven `follow()`. `tools/arena.mjs` was bit-identical with this
+     * line present, which is what proved the camera is strictly downstream of
+     * the simulation and can never feed back into it.
+     *
+     * It moves now. The one place the view is allowed to reach back into the
+     * world is `spawnRing()`, which is deliberate and is the entire point of
+     * the stage: groups arrive around the player rather than around the
+     * middle of a 3000px arena the player may be nowhere near.
      *
      * On the RAW dt, not `simDt`. A camera that stops moving during hitstop
      * would jerk on every impact, and hitstop is meant to be felt in the world
@@ -1512,34 +1527,58 @@ export class World {
     this.lastBeat = this.transport.beat;
     this.updateEnemies(simDt, this.warpedBeat, moveScale);
     this.updateWave(simDt);
-    this.enemyBullets.update(simDt * bulletScale, -60, -60, this.width + 60, this.height + 60);
     /*
-     * Player bullets are culled on all four edges by the same margin now.
+     * BULLETS LIVE AND BOUNCE AGAINST THE VIEW, NOT THE FIELD, AND THAT IS
+     * WHAT KEEPS STAGE 5 FROM CHANGING THEM AT ALL.
      *
-     * It used to be `-40, -80, +40, +40` — a deeper margin at the top, because
-     * that was the only direction the ship fired and shots needed room to reach
-     * an enemy that had not finished entering. Firing in the round makes the
-     * asymmetry meaningless, and leaving it in would make shots aimed north
-     * outrange shots aimed south by 40px.
-     */
-    /*
-     * The player pool gets a wall rectangle; the enemy pool above does not.
+     * Both rectangles below used to be `this.width/this.height`, which was the
+     * same rectangle as the view for the whole life of the project. Leaving
+     * them on the field when it grew to 3000x3000 was measured and was a real
+     * regression in two separate ways:
      *
-     * This is what makes `InstrumentStats.bounces` a behaviour instead of a
-     * number in a table. It was declared, folded through `applyModifiers`, set
-     * by ECHO CHAMBER and raised three times across its ladder, set by SPICCATO
-     * and CANON — and read by nothing at all, so "bolts that come back off the
+     *   Player bolts flew 3000px instead of 900 before being culled, so the
+     *   ship killed things it could not see — and the shard each of those
+     *   drops was then abandoned, because the pickup pull is 210px. Measured
+     *   over three 8-minute runs: kills went UP and shards collected per kill
+     *   fell 6.05/6.34 to 3.82/4.40, dragging level-at-20-minutes from 69.3 to
+     *   61.0. More kills, less progress.
+     *
+     *   Enemy bullets accumulated off screen: alive p90 39.7 -> 73.3 and peak
+     *   148 -> 230, while the number ON SCREEN did not move (33.3 -> 32.3).
+     *   Every one of those extra bullets is invisible, unhittable and cannot
+     *   reach a player who is by definition inside the view.
+     *
+     * Against the view, both numbers return to exactly what they were at one
+     * screen, because at one screen the view WAS the field. This is not a
+     * retune; it is the same rectangle, correctly identified.
+     *
+     * Player bullets are culled on all four edges by the same margin. It used
+     * to be `-40, -80, +40, +40` — a deeper margin at the top, because that was
+     * the only direction the ship fired and shots needed room to reach an enemy
+     * that had not finished entering. Firing in the round makes the asymmetry
+     * meaningless, and leaving it in would make shots aimed north outrange
+     * shots aimed south by 40px.
+     *
+     * The player pool gets a wall rectangle; the enemy pool does not. That is
+     * what makes `InstrumentStats.bounces` a behaviour instead of a number in a
+     * table. It was declared, folded through `applyModifiers`, set by ECHO
+     * CHAMBER and raised three times across its ladder, set by SPICCATO and
+     * CANON — and read by nothing at all, so "bolts that come back off the
      * walls" was a blurb describing a shot that left the arena and was culled.
-     *
-     * The rectangle is the arena itself and not the cull bounds passed
-     * alongside it: a bounce has to land on the wall the player can see. See
-     * `BulletPool.update` for why the reflection is done in angle space.
+     * The rectangle is deliberately NOT the cull bounds passed alongside it: a
+     * bounce has to land on the wall the player can see, and on a field eleven
+     * times the size of the screen the only wall that satisfies that sentence
+     * is the edge of the view. See `BulletPool.update` for why the reflection
+     * is done in angle space.
      */
-    this.playerBullets.update(simDt, -60, -60, this.width + 60, this.height + 60, {
-      l: 0,
-      t: 0,
-      r: this.width,
-      b: this.height,
+    const vx = this.camera.viewX;
+    const vy = this.camera.viewY;
+    this.enemyBullets.update(simDt * bulletScale, vx - 60, vy - 60, vx + this.viewW + 60, vy + this.viewH + 60);
+    this.playerBullets.update(simDt, vx - 60, vy - 60, vx + this.viewW + 60, vy + this.viewH + 60, {
+      l: vx,
+      t: vy,
+      r: vx + this.viewW,
+      b: vy + this.viewH,
     });
     // The threat picture the aim and the music both read. Computed before
     // firing so a shot is aimed at where things are this step, not last step.
@@ -1717,16 +1756,25 @@ export class World {
       if (e.age > e.leaveAt && !e.leaving) {
         e.leaving = true;
         /*
-         * Leave by the nearest edge, not by the bottom.
+         * Leave by going away from the PLAYER, not by the bottom and not
+         * radially out from the middle of the field.
          *
          * The old retreat flew +y at 190px/s, which in the round is "walk
          * across the player and out the far side" for anything that came from
-         * the south. Heading radially outward from the arena centre is the same
-         * gesture — give up and go — expressed in a frame where the shape is
-         * not guaranteed to be north of anybody.
+         * the south. That was fixed once by heading radially outward from the
+         * arena centre, which was the right gesture — give up and go — while
+         * the arena centre and the player were never more than half a screen
+         * apart. On a field several screens across they can be, and then an
+         * enemy on the far side of the player from the centre "retreats" by
+         * flying straight through them: the same defect the +y version had,
+         * re-created by a frame of reference that stopped being local.
+         *
+         * Away-from-the-player is the version that means what the gesture says
+         * from any position, and it is the only one of the three that never
+         * needs revisiting when the field changes shape again.
          */
-        const ax = e.x - this.width / 2;
-        const ay = e.y - this.height / 2;
+        const ax = e.x - this.player.x;
+        const ay = e.y - this.player.y;
         const al = Math.hypot(ax, ay) || 1;
         e.vx = (ax / al) * 190;
         e.vy = (ay / al) * 190;
@@ -1785,7 +1833,35 @@ export class World {
           // so these land musically without any extra quantisation.
           if (em.volleyCount > before) {
             this.volleysThisStep++;
-            this.bus.emit('enemy:fire', { archetype: e.archetype, x: e.x / this.width });
+            /*
+             * `pan`, not `x`. This is a STEREO POSITION and never was a
+             * coordinate.
+             *
+             * It used to be `e.x / this.width` — which side of the FIELD the
+             * shot came from. On a one-screen field that is also which side of
+             * the player it came from, so the mix was right by coincidence. On
+             * a 3000px field the player and everything that can shoot at them
+             * occupy under a third of the range, so the value collapses toward
+             * whatever fraction of the arena the player is standing at and
+             * stops varying with the thing it exists to encode. That is exactly
+             * the `s.playerHeight` failure this file already documents at the
+             * bottom of `writeSnapshot`: responsive in the source, a constant
+             * in play.
+             *
+             * `0.5 + (e.x - player.x) / VIEW_W` is "which side of ME", which is
+             * what a listener hears, is independent of the camera and of the
+             * field, and is more correct than the version it replaces even at
+             * one screen. Full left and full right are reached at half a view
+             * away, so a shot from the edge of the screen is hard-panned.
+             *
+             * The FIELD NAME CHANGED with it, on purpose. `x` inherited its
+             * meaning silently into `tools/battlefield.mjs`, which logs it and
+             * asserts on its spread; renaming forces that tool to be edited
+             * rather than to keep printing a column whose definition moved
+             * under it.
+             */
+            const pan = clamp01(0.5 + (e.x - this.player.x) / this.viewW);
+            this.bus.emit('enemy:fire', { archetype: e.archetype, pan });
           }
         }
       }
@@ -1800,6 +1876,26 @@ export class World {
        * margin (320) is four and a half times the spawn margin (70) — a tight
        * one would delete a rush during the telegraph it spends outside the
        * field, and the group would simply never arrive.
+       *
+       * AGAINST THE FIELD, and this is the ONE rectangle in the file that
+       * deliberately stayed there when the field grew. Bullets, drops, the
+       * spawn ring and `hasEntered` all moved to the view; enemies did not,
+       * and it was tested rather than assumed. `research-camera.md` §4
+       * predicted the failure and the prediction was right — culling enemies
+       * at `view ± CULL_MARGIN` deletes shapes that are alive and chasing, and
+       * on a moving camera the player outruns them into the cull:
+       *
+       *              escaped/wave   enemies on screen p90   encirclement p90
+       *   view       13.27          10.3                    0.31
+       *   field       4.11          11.7                    0.33
+       *   (baseline at one screen: 8.58 / 13.0 / 0.32)
+       *
+       * The view version was 55% ABOVE the one-screen escape rate and emptier
+       * with it — it was deleting the crowd. The field version is below the
+       * baseline, which means enemies that used to wander out now stay and get
+       * fought, and that is the direction this workstream wants. So
+       * `CULL_MARGIN` is not retuned either: shrinking it is the same move as
+       * culling against the view and would land in the same place.
        */
       if (
         e.archetype !== 'conductor' &&
@@ -2398,7 +2494,21 @@ export class World {
          * guard is unchanged and is load-bearing; read it before touching this.
          */
         const next = this.plan.entries[this.entryCursor];
-        const gap = next && this.enemies.length < this.targetOnScreen() ? next.atBeat - beatsIn : 0;
+        /*
+         * `populationNearPlayer()`, NOT `this.enemies.length`.
+         *
+         * The floor is called `targetOnScreen` and it was compared against
+         * every enemy alive anywhere in the world, which were the same number
+         * for the whole life of the project because the world was one screen.
+         * At 3000x3000 they are not: measured over three 20-minute runs, the
+         * field held a p50 of 7.0 while the SCREEN held 2.3. The floor was
+         * therefore being satisfied by enemies the player could not see, the
+         * remaining schedule stopped sliding forward, and the arena the player
+         * is actually looking at went quiet — the exact "bigger field, emptier
+         * game" outcome `docs/research-density.md` warned about, arriving
+         * through a comparison rather than through the area.
+         */
+        const gap = next && this.populationNearPlayer() < this.targetOnScreen() ? next.atBeat - beatsIn : 0;
         if (gap > BEATS_PER_BAR + 1) {
           this.waveBeatBias += Math.floor((gap - 1) / BEATS_PER_BAR) * BEATS_PER_BAR;
         }
@@ -2431,7 +2541,36 @@ export class World {
           // Alternate boss variants so the fourth boss is a different problem
           // from the first, not the same one with more health.
           const variant = Math.floor(this.waveIndex / BOSS_EVERY);
-          const boss = spawnBoss(this.width / 2, -120, this.plan.difficulty, this.width, variant);
+          /*
+           * The boss enters on the ring and takes the middle of the SCREEN.
+           *
+           * Was `(this.width / 2, -120)` — literally "off the top of the
+           * playfield" — and it orbited the field centre. Both of those are the
+           * same point only while the field is one screen. In a 3000px arena
+           * the old code would have dropped the boss off the top edge of the
+           * WORLD and sent it to circle the world's middle, which is a place
+           * the player may be a screen and a half away from; the set piece
+           * would be a health bar with nothing under it.
+           *
+           * ENTRY BEARING IS FIXED AT NORTH, not rolled. Rolling it would draw
+           * from `this.rng` and desynchronise every downstream number in a
+           * run, which is a behaviour change wearing a refactor's clothes.
+           *
+           * WRITTEN AS ARITHMETIC RATHER THAN AS `edgePoint(-PI/2, ring, 120)`,
+           * and the reason is measured. The two are the same point in exact
+           * maths, but `Math.cos(-Math.PI/2)` is 6.1e-17 rather than 0, which
+           * puts the boss 4e-14 px off centre — and a twenty-minute run is
+           * chaotic enough to amplify that into a visibly different run. With
+           * `edgePoint`, `tools/arena.mjs` diverged in one of three runs
+           * (level 73 -> 72, kills/min 155.4 -> 155.9); with this line it is
+           * bit-identical to the pre-Stage-4 baseline, which is the evidence
+           * that the rest of this stage is the no-op it claims to be. A
+           * hand-inlined special case of a helper is normally a smell; here it
+           * is the difference between a provable no-op and a plausible one.
+           */
+          const ring = this.spawnRing();
+          const entry = { x: ring.cx, y: ring.cy - ring.h / 2 - 120 };
+          const boss = spawnBoss(entry.x, entry.y, this.plan.difficulty, ring.cx, ring.cy, variant);
           /*
            * A boss gets HALF the roster's ensemble scaling, and the asymmetry
            * is deliberate rather than a compromise.
@@ -2779,6 +2918,35 @@ export class World {
   }
 
   /**
+   * How many enemies are on screen or arriving on the ring — the population
+   * `targetOnScreen()` is a floor for.
+   *
+   * The margin is generous on purpose. A group is PLACED `SPAWN_MARGIN` (70)
+   * outside the view and formations stagger further out than that — `columns`
+   * reaches +128, `centre` +48 per member — so a strictly on-screen count
+   * would treat a group that is one second from arriving as if it did not
+   * exist and pull the next one forward on top of it. `POPULATION_MARGIN`
+   * covers the ring and the deepest stagger and nothing beyond, so an enemy
+   * that has wandered a screen away behind the player stops counting, which is
+   * the whole point.
+   *
+   * Linear in the enemy count, called once per wave step against a list that
+   * peaks around 50. Measured peak `enemies alive` over three 20-minute runs
+   * is 46.
+   */
+  private populationNearPlayer(): number {
+    const l = this.camera.viewX - POPULATION_MARGIN;
+    const t = this.camera.viewY - POPULATION_MARGIN;
+    const r = this.camera.viewX + this.viewW + POPULATION_MARGIN;
+    const b = this.camera.viewY + this.viewH + POPULATION_MARGIN;
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.x > l && e.x < r && e.y > t && e.y < b) n++;
+    }
+    return n;
+  }
+
+  /**
    * Roll a new escape corridor.
    *
    * It jumps by at least a quarter turn every time, because a corridor that
@@ -2821,14 +2989,8 @@ export class World {
   }): void {
     this.rollGap();
     const bearing = this.spawnBearing(entry.formation);
-    const positions = arenaSpawnPositions(
-      entry.formation,
-      entry.count,
-      this.width,
-      this.height,
-      bearing,
-      SPAWN_MARGIN,
-    );
+    const ring = this.spawnRing();
+    const positions = arenaSpawnPositions(entry.formation, entry.count, ring, bearing, SPAWN_MARGIN);
     /*
      * `homeY` was an absolute screen height; it is now read as a STANDOFF from
      * the player. The generator produces 120-280, which as a radius is exactly
@@ -2921,14 +3083,11 @@ export class World {
          * without closing it, which is exactly the flanking feeling.
          */
         if (i % 2 === 1) {
-          const opposite = arenaSpawnPositions(
-            entry.formation,
-            entry.count,
-            this.width,
-            this.height,
-            bearing + Math.PI,
-            SPAWN_MARGIN,
-          )[i];
+          // The same ring, deliberately captured once above rather than
+          // re-derived: the camera moves between frames but not between the two
+          // halves of one group, and re-reading it here would let a fast pan
+          // split a formation across two different rectangles.
+          const opposite = arenaSpawnPositions(entry.formation, entry.count, ring, bearing + Math.PI, SPAWN_MARGIN)[i];
           e.x = e.prevX = e.homeX = opposite.x;
           e.y = e.prevY = e.homeY = opposite.y;
         }
@@ -3707,7 +3866,19 @@ export class World {
     const pullScale = 1 - this.snapshot.campPressure;
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
-      updateDrop(d, dt, this.height, this.player.x, this.player.y, magnetY, pullScale);
+      /*
+       * The despawn floor is the bottom of the VIEW, not of the field.
+       *
+       * `updateDrop` still falls downward and still kills a drop past
+       * `height + 40`; `powerups.ts` flags that as unfinished conversion work
+       * and it is. What must not happen meanwhile is the floor moving to 3000:
+       * a drop would then keep falling for two and a half screens after it has
+       * left the player's sight, invisible, still costing an update and still
+       * collectable by a player who happened to wander under it much later.
+       * The bottom of the screen is where it visibly leaves, which is what the
+       * rule has always meant.
+       */
+      updateDrop(d, dt, this.camera.viewY + this.viewH, this.player.x, this.player.y, magnetY, pullScale);
       const r = PICKUP_RADIUS * this.mods.pickupRadius + 8;
       if (dist2(d.x, d.y, this.player.x, this.player.y) < r * r) {
         const def = powerupDef(d.kind);
@@ -5763,9 +5934,43 @@ export class World {
     return best;
   }
 
-  /** True once an enemy has crossed into the field and may start firing. */
+  /**
+   * True once an enemy has crossed into the VIEW and may start firing.
+   *
+   * Was the field rectangle, which was the same rectangle. The two callers both
+   * want "on screen" and always did — `updateEnemies` uses it to decide whether
+   * an enemy may shoot, and `analyseEncirclement` uses it to decide whether an
+   * enemy counts toward closing the ring. An enemy 2000px behind the player in
+   * a 3000px field is neither a threat the player can answer nor part of a
+   * circle around them, and letting it fire would be shots arriving from
+   * nowhere.
+   *
+   * The 30px of slack is kept from the original: it lets a shape that is
+   * one pixel from the edge open fire rather than waiting a frame, which is
+   * what stops a group's first volley scattering off the beat grid.
+   */
   private hasEntered(e: Enemy): boolean {
-    return e.x > -30 && e.x < this.width + 30 && e.y > -30 && e.y < this.height + 30;
+    const vx = this.camera.viewX;
+    const vy = this.camera.viewY;
+    return e.x > vx - 30 && e.x < vx + this.viewW + 30 && e.y > vy - 30 && e.y < vy + this.viewH + 30;
+  }
+
+  /**
+   * The rectangle groups arrive from the outside of: the VIEW, centred on the
+   * camera.
+   *
+   * `viewX`/`viewY` rather than the composed `camera.x`/`camera.y`, for the
+   * same reason `main.ts`'s `toWorld` does it: the composed offset carries
+   * screenshake, and a spawn ring that jittered with every explosion would
+   * make the arrival distance a function of how recently something blew up.
+   */
+  private spawnRing(): SpawnRing {
+    return {
+      cx: this.camera.viewX + this.viewW / 2,
+      cy: this.camera.viewY + this.viewH / 2,
+      w: this.viewW,
+      h: this.viewH,
+    };
   }
 
   // -------------------------------------------------------------------------

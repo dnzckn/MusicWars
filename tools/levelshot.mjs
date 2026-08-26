@@ -202,6 +202,23 @@ await p.evaluate(() => {
   window.__musicwars.ui.close();
 });
 await p.waitForTimeout(700);
+
+/*
+ * The view size, read off the running game rather than written down.
+ *
+ * Read from the page instead of imported from `src/game/field.ts` for the same
+ * reason `contrast.mjs` does it: this file has a live world in front of it, and
+ * the value the world is laying the cards out with is stronger evidence than
+ * the value the source says it should be. It also keeps `levelshot` runnable
+ * without the TypeScript transform flag, which the rest of the file does not
+ * need.
+ */
+const { VIEW_W, VIEW_H } = await p.evaluate(() => ({
+  VIEW_W: window.__musicwars.world.viewW,
+  VIEW_H: window.__musicwars.world.viewH,
+}));
+console.log(`  view ${VIEW_W}x${VIEW_H} (field ${await p.evaluate(() => `${window.__musicwars.world.width}x${window.__musicwars.world.height}`)})`);
+
 const CARD_REGION = { x: 56, y: 200, w: 788, h: 560 };
 const closedAlpha = await alphaOver(CARD_REGION);
 console.log(`  control: overlay alpha over the card region with nothing open = ${closedAlpha.toFixed(1)}`);
@@ -235,8 +252,18 @@ for (const st of STATES) {
   if (bad.length) fail(`${st.name}: hitTest disagrees with layout at ${bad.join(', ')}`);
   else pass(`${st.name}: hitTest returns the drawn card at every centre`);
 
-  const off = got.rects.filter((r) => r.x < 0 || r.y < 0 || r.x + r.w > 900 || r.y + r.h > 1120);
-  if (off.length) fail(`${st.name}: ${off.length} card(s) fall outside the 900x1120 field`);
+  /*
+   * The VIEW, imported, not `900x1120` written down twice in one line.
+   *
+   * The cards are laid out against `VIEW_W/VIEW_H` — `renderer.ts` passes
+   * exactly that pair into `levelUp.draw` and `main.ts` hit-tests in the same
+   * space — so this bound has to be the view. It also has to be imported:
+   * AGENTS.md §3, a tool holding its own copy of a constant lies the day it
+   * moves, and this file said "the 900x1120 field" in its failure message
+   * while the field became 3000x3000. It was never the field.
+   */
+  const off = got.rects.filter((r) => r.x < 0 || r.y < 0 || r.x + r.w > VIEW_W || r.y + r.h > VIEW_H);
+  if (off.length) fail(`${st.name}: ${off.length} card(s) fall outside the ${VIEW_W}x${VIEW_H} view`);
 
   let overlap = 0;
   for (let i = 0; i < got.rects.length; i++) {

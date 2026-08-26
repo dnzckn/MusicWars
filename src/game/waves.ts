@@ -379,21 +379,51 @@ export function planWave(index: number): WavePlan {
  * ------------------------------------------------------------------------ */
 
 /**
- * Where a ray from the arena centre at `angle` leaves the field, pushed out by
+ * The rectangle enemies arrive from the outside of.
+ *
+ * WHY THIS IS A STRUCT AND NOT FOUR MORE POSITIONAL ARGUMENTS. `edgePoint` used
+ * to be `(angle, width, height, margin)` and read the field's own size, so a
+ * caller could not get it wrong — there was only one rectangle in the program.
+ * There are two now (the field and the view) and they no longer share a centre,
+ * so the call site has to say which, and `edgePoint(a, 900, 1120, 70)` next to
+ * `edgePoint(a, 450, 560, 900, 1120, 70)` is exactly the kind of silent
+ * argument-order defect this repo keeps a tools directory to catch. A named
+ * `{ cx, cy, w, h }` cannot be transposed by accident.
+ *
+ * `cx`/`cy` are the CENTRE, not the top-left, because that is what the ray cast
+ * below actually uses and converting at every call site is where a sign error
+ * would live.
+ */
+export interface SpawnRing {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Where a ray from `ring.cx, ring.cy` at `angle` leaves the ring, pushed out by
  * `margin`.
  *
  * Against the RECTANGLE rather than an inscribed circle, so a spawn at 45
  * degrees comes from the corner rather than from a point floating in open play.
- * A circular ring inside a 900x1120 field would put every diagonal spawn nearly
- * 200px inside the arena, which reads as enemies materialising in the room.
+ * A circular ring inside a 900x1120 rectangle would put every diagonal spawn
+ * nearly 200px inside it, which reads as enemies materialising in the room.
+ *
+ * The ring is the VIEW, centred on the camera — not the field. Those were the
+ * same rectangle when the field was one screen; once it is not, spawning
+ * against the field would put a group off the far corner of a 3000px arena
+ * while the player is at the near one, and the wave would simply never arrive.
+ * `tools/spawnring.mjs` asserts the consequence that matters: nothing is ever
+ * placed inside the rectangle the player is looking at.
  */
-export function edgePoint(angle: number, width: number, height: number, margin: number): { x: number; y: number } {
+export function edgePoint(angle: number, ring: SpawnRing, margin: number): { x: number; y: number } {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
-  const tx = Math.abs(c) > 1e-6 ? width / 2 / Math.abs(c) : Infinity;
-  const ty = Math.abs(s) > 1e-6 ? height / 2 / Math.abs(s) : Infinity;
+  const tx = Math.abs(c) > 1e-6 ? ring.w / 2 / Math.abs(c) : Infinity;
+  const ty = Math.abs(s) > 1e-6 ? ring.h / 2 / Math.abs(s) : Infinity;
   const t = Math.min(tx, ty) + margin;
-  return { x: width / 2 + c * t, y: height / 2 + s * t };
+  return { x: ring.cx + c * t, y: ring.cy + s * t };
 }
 
 /**
@@ -421,15 +451,17 @@ export function formationWidth(formation: Formation): number {
 /**
  * Ring positions for a formation of `count`, centred on `baseAngle`.
  *
- * Depth stagger is expressed as extra margin OUTSIDE the field rather than as
+ * Depth stagger is expressed as extra margin OUTSIDE the ring rather than as
  * a position inside it: everything enters, nothing is ever placed on top of the
  * player, and a group arrives as a wave rather than as a wall that appeared.
+ * That property is what `tools/spawnring.mjs` checks — every branch below adds
+ * to `margin` and none of them subtracts, and a future formation that did
+ * would place a group on the player's head with nothing else noticing.
  */
 export function arenaSpawnPositions(
   formation: Formation,
   count: number,
-  width: number,
-  height: number,
+  ring: SpawnRing,
   baseAngle: number,
   margin = 70,
 ): { x: number; y: number; angle: number }[] {
@@ -477,7 +509,7 @@ export function arenaSpawnPositions(
         depth = margin + (i % 2) * 26;
         break;
     }
-    const p = edgePoint(angle, width, height, depth);
+    const p = edgePoint(angle, ring, depth);
     out.push({ x: p.x, y: p.y, angle });
   }
   return out;

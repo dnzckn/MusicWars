@@ -2487,3 +2487,75 @@ drawing a grid entirely would otherwise report a beautifully constant count).
 Every assertion has been seen red, one defect at a time: deleting the argument
 at the call site reddens part C; making `draw` ignore the rectangle reddens A
 and B; making `draw` return immediately reddens the positive control.
+
+## `spawnring` — nothing may be placed inside the rectangle the player is looking at
+
+`node --experimental-transform-types tools/spawnring.mjs [minutes] [runs]`
+
+Written for Stage 4 of the arena refactor, and it is the clearest example in
+this directory of a check that would have been *vacuous the day before it was
+needed*. Until the camera moved, "enemies arrive from off screen" was true by
+construction: `arenaSpawnPositions` cast its ray from the middle of the field,
+the field was the screen, and the only way to land inside the view was to pass a
+negative margin. The ring is now the VIEW centred on `camera.viewX/viewY` and
+the field is 3000x3000, so there are three new ways to put a group on the
+player's head — a stale centre, a ring sized from `PLAYFIELD_*` instead of
+`VIEW_*`, and a camera read one frame late while the view is panning. **None of
+them throws.** All of them look like enemies materialising in the room, which
+`waves.ts` says in as many words is the failure the rectangle ray-cast exists to
+prevent.
+
+### Two kinds of spawn, and only one of them is an arrival
+
+The first draft asserted "no spawn lands in the view" and went red on **427 of
+2428**, every one of them an `echo` appearing on top of the player. Those are
+not arrivals. `onEnemyKilled` splits an echo into two children at the parent's
+corpse, and the parent was on screen because the player had just shot it —
+appearing in view is the entire point of a split.
+
+So the population is classified: an ARRIVAL is placed by the wave script on the
+ring (`generation === 0`), a BIRTH comes out of a death (`generation > 0`), and
+the gate is on arrivals. **Both counts are printed**, because "0 violations"
+over a population that has quietly stopped containing arrivals is exactly the
+vacuous pass `AGENTS.md` §3 is about — and a run with no births would mean the
+classification itself had never been exercised and could be inverted with
+nothing noticing.
+
+The classification is read off `e.generation` rather than added to the
+`enemy:spawn` event, deliberately: the event carries an id and an archetype, and
+widening the game's public event surface to carry a tool's taxonomy is the wrong
+direction.
+
+### The four assertions, all seen red
+
+| assertion | how it was broken |
+|---|---|
+| arrivals were observed at all | `spawnring 0 1` — zero steps |
+| births were observed at all | `spawnring 0.5 1` — arrivals but no splits yet |
+| no arrival inside the view | `spawnRing()` returning half the view: 200 of 204 inside |
+| clearance >= 30px | `SPAWN_MARGIN` 70 -> 20: 86 of 171 too close |
+
+`MIN_CLEARANCE` is 30 and not `SPAWN_MARGIN` (70), and the difference is
+geometry rather than slack. `edgePoint` pushes the margin along the RAY, so the
+perpendicular clearance from the edge it crossed is `margin * |cos|` or
+`margin * |sin|`, smallest at the corners: for a 900x1120 ring the corner ray
+has `|cos| = 0.626`, giving 43.8px at a margin of 70. The measured worst case
+over 8945 arrivals is **46.4px**, which is that number, which is how you know
+the check and the geometry agree.
+
+### It also reports escaped-per-wave, and does not gate on it
+
+`world.ts` culls enemies at `CULL_MARGIN` outside the FIELD and a wave cannot
+end until every enemy is dead or escaped, so the escape rate is the quantity
+that says whether a geometry change has started stranding enemies (waves stall)
+or deleting them early (waves evaporate). It is reported rather than gated
+because the right value is a design question and the useful comparison is
+against the previous run of this file. It is what caught the enemy-culling
+experiment recorded in `docs/TURNAROUND.md` §9: culling against the view instead
+of the field took escapes per wave from 3.48 to **13.27**, 55% above the
+one-screen baseline of 8.58, while the on-screen population went DOWN — the cull
+was deleting the crowd the player was outrunning.
+
+It drives `lib/bot-brain.mjs` rather than carrying a ninth copy of the movement
+policy, and uses the same seed ladder as `tools/arena.mjs` so a number that
+moves in one can be looked up in the other.

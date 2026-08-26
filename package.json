@@ -165,7 +165,8 @@
     "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs",
     "gridcost": "node --experimental-transform-types tools/gridcost.mjs",
     "gridraster": "node tools/gridraster.mjs",
-    "gridview": "node --experimental-transform-types tools/gridview.mjs"
+    "gridview": "node --experimental-transform-types tools/gridview.mjs",
+    "spawnring": "node --experimental-transform-types tools/spawnring.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",

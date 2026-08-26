@@ -501,10 +501,11 @@ export class Renderer {
       /*
        * The breath is centred on the VIEW, not on the field.
        *
-       * Identical today, because the view is the field. It has to be the view
-       * the moment those differ: a swell centred on the middle of a 2700px
-       * arena is a swell happening somewhere the player is not, which is a
-       * beat the music plays and the screen does not show.
+       * This was written while the two were the same rectangle and was a no-op
+       * then. They differ now — 900x1120 of a 3000x3000 arena — and it is
+       * load-bearing: a swell centred on the middle of the field is a swell
+       * happening somewhere the player is not, which is a beat the music plays
+       * and the screen does not show.
        */
       const view = this.viewRect();
       if (this.legacyStrobe) {

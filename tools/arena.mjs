@@ -246,8 +246,28 @@ function runOnce(seed, pickCard) {
   let lastMinuteKills = 0;
   const enc = [];
   const near = [];
+  /*
+   * ALIVE vs ON SCREEN, and they stopped being the same number.
+   *
+   * This file recorded `w.enemies.length` under the label "enemies" and that
+   * was honest while the field was one screen. It is now 3000x3000 with a
+   * camera showing 900x1120 — 11% of the area — so `enemies.length` counts
+   * shapes the player cannot see, and the density question this whole
+   * workstream turns on ("is the arena emptier?") is a question about the
+   * screen. Reporting only the field count is precisely the silent re-baseline
+   * `docs/research-camera.md` §7b warns about: nothing crashes, the number
+   * even goes UP, and it is answering a different question than it was.
+   *
+   * Both are kept. `alive` is what wave completion and `targetOnScreen()` are
+   * denominated in, so it still matters; `onScreen` is what the player
+   * experiences.
+   */
+  const alive = [];
   const onScreen = [];
   const bullets = [];
+  const bulletsOnScreen = [];
+  const inView = (x, y) =>
+    x >= w.camera.viewX && x <= w.camera.viewX + w.viewW && y >= w.camera.viewY && y <= w.camera.viewY + w.viewH;
   let choosingSteps = 0;
   let diedAt = -1;
 
@@ -262,8 +282,14 @@ function runOnce(seed, pickCard) {
     if (i % 12 === 0) {
       enc.push(w.encircled);
       near.push(w.threatDistance);
-      onScreen.push(w.enemies.length);
+      alive.push(w.enemies.length);
+      onScreen.push(w.enemies.reduce((n, e) => n + (inView(e.x, e.y) ? 1 : 0), 0));
       bullets.push(w.enemyBullets.count);
+      let bv = 0;
+      for (let k = 0; k < w.enemyBullets.count; k++) {
+        if (inView(w.enemyBullets.x[k], w.enemyBullets.y[k])) bv++;
+      }
+      bulletsOnScreen.push(bv);
     }
     // Sampled by step index, not by comparing accumulated float seconds to a
     // whole number — `i * DT` lands on 59.99999 far more often than on 60.
@@ -306,8 +332,10 @@ function runOnce(seed, pickCard) {
     bossStuck: bossStart >= 0 ? elapsed - bossStart : 0,
     enc: quantiles(enc),
     near: quantiles(near),
+    alive: quantiles(alive),
     onScreen: quantiles(onScreen),
     bullets: quantiles(bullets),
+    bulletsOnScreen: quantiles(bulletsOnScreen),
   };
 }
 
@@ -391,8 +419,10 @@ const q = (pick, fmt = f2) => {
 };
 console.log(`  encirclement    ${q((r) => r.enc)}`);
 console.log(`  nearest threat  ${q((r) => r.near)}`);
-console.log(`  enemies         ${q((r) => r.onScreen, f1)}`);
-console.log(`  enemy bullets   ${q((r) => r.bullets, f1)}`);
+console.log(`  enemies alive   ${q((r) => r.alive, f1)}   (anywhere in the ${new World(1).width}x${new World(1).height} field)`);
+console.log(`  enemies ON SCREEN ${q((r) => r.onScreen, f1)}   <- the density number`);
+console.log(`  bullets alive   ${q((r) => r.bullets, f1)}`);
+console.log(`  bullets ON SCREEN ${q((r) => r.bulletsOnScreen, f1)}`);
 
 console.log('\nBOSSES (seconds from arrival to kill; STUCK is a fight still running at the end)');
 for (const [i, r] of rows.entries()) {

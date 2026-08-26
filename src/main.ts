@@ -393,7 +393,7 @@ world.bus.on('ability:duet', () => {
 });
 
 world.bus.on('enemy:fire', (e) => {
-  sfxEnemyFire(e.archetype, director.currentChordNotes()[0] ?? 57, e.x);
+  sfxEnemyFire(e.archetype, director.currentChordNotes()[0] ?? 57, e.pan);
 });
 
 // Hits are frequent; throttle so they stay a confirmation rather than a buzz.

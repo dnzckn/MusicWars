@@ -12,6 +12,21 @@
   <body>
     <div id="app">
       <main id="stage">
+        <!--
+          900x1120 is the VIEW, not the world.
+
+          The simulation is 3000x3000 (`src/game/field.ts`) and the camera
+          shows one 900x1120 rectangle of it. These two attributes are the
+          initial backing-store size of the canvases — `renderer.ts` resizes
+          them to `VIEW_W/VIEW_H * devicePixelRatio` on the first frame — and
+          they must track `VIEW_W`/`VIEW_H`, never `PLAYFIELD_W`/`PLAYFIELD_H`.
+          Setting them from the field would allocate a 3000x3000 bitmap per
+          canvas, 11x the pixels, to draw one screen into.
+
+          The same pair is in `src/style.css` as `aspect-ratio: 900 / 1120`,
+          and `renderer.ts`'s canvas-scale calculation depends on that rule
+          existing. All three move together or none of them do.
+        -->
         <canvas id="playfield" width="900" height="1120"></canvas>
         <canvas id="overlay" width="900" height="1120"></canvas>
 

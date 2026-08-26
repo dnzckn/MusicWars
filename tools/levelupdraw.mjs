@@ -52,9 +52,23 @@ import './lib/ts.mjs';
  */
 let LevelUpOverlay;
 let emptySnapshot;
+/*
+ * The view size, imported rather than written down.
+ *
+ * These were three hardcoded `[900, 1120]` literals. AGENTS.md §3: "a tool
+ * holding its own copy of a constant will lie the day it moves" — and the
+ * constant they were a copy of has now split in two. The level-up card is laid
+ * out against `VIEW_*` (`renderer.ts` passes exactly that pair into
+ * `levelUp.draw`), so this is the pair that must follow, never `PLAYFIELD_*`.
+ * Drawing the card at 3000x3000 would put it somewhere no screen contains and
+ * every assertion here would still pass.
+ */
+let VIEW_W;
+let VIEW_H;
 try {
   ({ LevelUpOverlay } = await import('../src/render/levelup.ts'));
   ({ emptySnapshot } = await import('../src/core/events.ts'));
+  ({ VIEW_W, VIEW_H } = await import('../src/game/field.ts'));
 } catch (err) {
   if (String(err).includes('UNSUPPORTED_TYPESCRIPT_SYNTAX')) {
     console.error('\nlevelupdraw: run this with the transform flag:\n');
@@ -205,9 +219,15 @@ const STATES = [
   },
 ];
 
-/** Field sizes: the real one, the old one, and two deliberately cruel ones. */
+/**
+ * View sizes: the real one, the old one, and two deliberately cruel ones.
+ *
+ * The first entry is imported so it tracks the real viewport; the rest are
+ * literals on purpose — they are historical and hypothetical sizes, not copies
+ * of a constant the program owns.
+ */
 const SIZES = [
-  [900, 1120],
+  [VIEW_W, VIEW_H],
   [720, 960],
   [560, 820],
   [440, 620],
@@ -243,7 +263,14 @@ console.log('\nCONTROL — can this tool fail?');
 }
 
 console.log('\nDRAW — no browser: reconstructing the layout arithmetically');
-console.log(`  ${STATES.length} states x ${SIZES.length} field sizes x ${FRAMES.length} frames, plus exits\n`);
+// The sizes are PRINTED, not just used. `research-camera.md` §9 Stage 6
+// gates each repaired tool on being run with `VIEW_W` 20% off and confirmed
+// to move -- and this file's verdicts are deliberately size-invariant, so
+// without this line the output is byte-identical at 900 and at 1080 and the
+// import cannot be told apart from a hardcode. A tool that reads a constant
+// should say which value it read.
+console.log(`  ${STATES.length} states x ${SIZES.length} view sizes x ${FRAMES.length} frames, plus exits`);
+console.log(`  sizes: ${SIZES.map(([w, h]) => `${w}x${h}`).join('  ')}   (the first is the live VIEW_W x VIEW_H)\n`);
 
 let drew = 0;
 let checked = 0;
@@ -413,7 +440,7 @@ for (const [kind, a, b, to] of [
   // Well past a union's 6.2s life, so the teardown is covered too.
   for (let t = 0; t < 8; t += 0.05) {
     const { g, calls } = recorder(`${kind} t=${t.toFixed(2)}`);
-    ui.draw(g, snap, 0.05, 900, 1120, t * 2.17, 0.4);
+    ui.draw(g, snap, 0.05, VIEW_W, VIEW_H, t * 2.17, 0.4);
     frames++;
     if (calls.length) painted++;
   }
@@ -436,7 +463,7 @@ for (const [kind, a, b, to] of [
   ui.celebrate('evolution', 'chime', 'resonance', 'carillon', 'one bell becomes a tower');
   ui.celebrate('union', 'chorale', 'cathedral', 'requiem', 'the choir and the room become one');
   const snap = snapshot({}, 3, 3, false);
-  for (let t = 0; t < 8; t += 0.1) ui.draw(recorder(`stacked t=${t.toFixed(1)}`).g, snap, 0.1, 900, 1120, t * 2.17, 0.4);
+  for (let t = 0; t < 8; t += 0.1) ui.draw(recorder(`stacked t=${t.toFixed(1)}`).g, snap, 0.1, VIEW_W, VIEW_H, t * 2.17, 0.4);
   pass('two celebrations at once draw without a non-finite value');
 }
 

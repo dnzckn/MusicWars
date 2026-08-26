@@ -121,6 +121,21 @@ body::before {
 
 #stage {
   position: relative;
+  /*
+   * 900 / 1120 is the VIEW's aspect ratio, not the world's.
+   *
+   * The simulation is 3000x3000 (`src/game/field.ts`) and a follow camera
+   * shows one 900x1120 rectangle of it, so this rule and the two `<canvas>`
+   * elements in `index.html` describe the window, not the arena. Changing it
+   * to 1/1 to "match the field" would letterbox the canvas against a backing
+   * store that is still 900x1120 and put every pointer coordinate out by the
+   * difference — `main.ts`'s `toView` derives its scale from this element's
+   * bounding rect.
+   *
+   * `renderer.ts` depends on this rule EXISTING, not merely on its value: the
+   * canvas-scale calculation there assumes the element's height is the
+   * constrained dimension and derives the backing-store size from it.
+   */
   aspect-ratio: 900 / 1120;
   height: min(100%, calc(100vw - 300px) * 960 / 720);
   max-height: 100%;

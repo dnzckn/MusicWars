@@ -1,5 +1,31 @@
 # Blast radius: large scrolling world + follow camera
 
+> **STAGES 0-6 HAVE LANDED. This document is the plan, not the record.**
+>
+> Option (A) was taken and the field is 3000x3000 with a follow camera showing
+> 900x1120. What actually happened — including the three places the plan below
+> was wrong — is in `docs/TURNAROUND.md` §9, "Track A: the arena is 3000x3000
+> and the camera follows". The short version of the corrections:
+>
+> - §4 predicted that camera-relative enemy culling would make `escaped` fire
+>   for live enemies. It does, and by enough to matter: escapes per wave went
+>   55% ABOVE the one-screen baseline and the screen got emptier. Enemy culling
+>   deliberately stayed on the field. Bullets, drops and the wall rectangle all
+>   moved to the view, and that half was necessary rather than optional — on the
+>   field, player bolts killed things off screen whose shards were then
+>   unreachable, which cost 12% of the level pacing.
+> - §8(A) says the wall-bounce rectangle "keeps working by construction". It
+>   survives, but only because it was moved to the view: on an 11x field a
+>   bounce off the field edge is one the player cannot see, which is the
+>   condition `world.ts` says the rectangle exists to satisfy.
+> - Stage 6's gate — run each repaired tool with `VIEW_W` 20% off and confirm it
+>   moves — caught something real about itself. `levelupdraw` and `effectsdraw`
+>   import the constant and were still byte-identical at 900 and 1080, because
+>   their verdicts are size-invariant by design. They print the geometry now.
+>
+> The density question §7b and `research-density.md` both worry about was
+> measured and came out well: encirclement p90 is 0.32 before and after.
+
 Research only. No code was changed. Everything below carries a `file:line` that
 was read out of this tree at commit `35f5cb0`; nothing here is recalled.
 

@@ -91,7 +91,7 @@ Neither fix changes any game or audio behaviour. Both are pure tooling.
 |---|---|---|---|
 | **S** | Not snappy | **The gun missed.** `fireSeek` fanned bolts as `i/(n-1) − 0.5`, which never takes 0 on an even count, and the starting weapon is `count: 2` — so both bolts straddled the target and nothing was ever fired along the aim. Plus a 0.32px kill shake, a silent XP pickup, and edge inputs spent 2–4× per press | **LANDED** |
 | **I** | Item mechanics | Two problems. 13 levels to a fusion, and `catalystHintLevel` silently unreachable. And 27 instruments over **7** verbs with `aura` a quarter of them, 12 passives that were all multipliers, and `Modifiers` with no trigger surface at all | **LANDED** |
-| **A** | Arena too small | `PLAYFIELD_W/H = 900×1120` fixed, single screen, **no follow camera**. Blocked on the renderer, which is now unblocked (§2.1) | renderer cleared / camera not started |
+| **A** | Arena too small | `PLAYFIELD_W/H = 900×1120` fixed, single screen, **no follow camera**. Blocked on the renderer, which was then unblocked (§2.1) | **LANDED** — 3000×3000 with a follow camera, see §9 |
 | **M** | Music is not great | Composed blind — never auditioned in the project's whole history. Bass was spectrally inverted; mix is 13 dB quiet with 66% of its energy in one octave | bass fixed / **rest stashed**, see §2.2 |
 
 ### Track S and Track I: what actually shipped
@@ -540,3 +540,180 @@ inner loops are flat passes over a typed array and their speed is in not
 branching per point. The view argument is optional, so this is a numeric no-op
 until something has a camera to pass; `gridcheck`, `flicker`, `framecheck` and
 `effectsdraw` passing is the evidence for that.
+
+### Track A: the arena is 3000x3000 and the camera follows
+
+Stages 4, 5 and 6 of `docs/research-camera.md` §9. The field went 900x1120 ->
+**3000x3000, square** — eleven times the area — and a follow camera with a
+deadzone shows one 900x1120 window of it. This is the first change in the whole
+arena track a player would notice.
+
+**Stage 4 was a bit-exact no-op except where it was meant not to be, and that
+is the interesting part.** `edgePoint`/`arenaSpawnPositions` now take a
+`SpawnRing { cx, cy, w, h }` instead of a field width and height; `spawnGroup`
+passes the VIEW centred on the camera; the boss enters on that ring and orbits
+an anchor captured at spawn with a `VIEW`-derived radius; `hasEntered` is
+view-relative. With the field still one screen, `tools/arena.mjs` was
+**bit-identical to the pre-stage baseline** with every one of those in place.
+
+The one place it was not was `spawnBoss`'s entry point, and the reason is worth
+recording. `edgePoint(-Math.PI / 2, ring, 120)` is the same point as
+`(cx, cy - h/2 - 120)` in exact arithmetic, but `Math.cos(-Math.PI/2)` is
+6.1e-17 rather than 0, which puts the boss **4e-14 px** off centre — and a
+twenty-minute run amplified that into a visibly different run (one of three
+diverged: level 73 -> 72, kills/min 155.4 -> 155.9). The line is written as
+arithmetic instead, which is what makes the no-op provable rather than
+plausible. A twenty-minute simulation is a chaotic system and 4e-14 is inside it.
+
+**The retreat vector was the only deliberate behaviour change in Stage 4**, and
+it is measurably free: enemies now flee away from the PLAYER rather than
+radially out from the middle of the field. `escaped` per wave 8.58 -> 8.53,
+kills/min 188.2 -> 188.2, encirclement p90 0.32 -> 0.32.
+
+**The pan was a stereo position wearing a coordinate's name.**
+`world.ts` emitted `enemy:fire` with `x: e.x / this.width` and `sfx.ts` used it
+as a pan. On a 3000px field the player and everything that can shoot at them
+occupy under a third of that range, so it collapses toward whatever fraction of
+the arena the player is standing at — the exact `s.playerHeight` failure this
+codebase has already diagnosed once. It is `clamp01(0.5 + (e.x - player.x) /
+VIEW_W)` now, "which side of me", and **the event field was renamed x -> pan
+so `tools/battlefield.mjs` had to be edited rather than inherit a column whose
+definition had moved**. That tool measures `panSpread` 0.98-1.00 against a 0.4
+threshold.
+
+#### The density result, which is the thing that decides whether this is a win
+
+`docs/research-density.md`'s headline was falsified once already; the risk it
+named — spread the same enemies over 11x the floor and the game gets emptier —
+was real and had never been measured, because **nothing measured on-screen
+population at all**. `tools/arena.mjs` recorded `w.enemies.length` under the
+label "enemies", which was honest while the world was one screen and is a
+different question now. It reports both:
+
+| p10 / p50 / p90 / max | 900x1120 | 3000x3000 |
+|---|---|---|
+| enemies **alive** (whole field) | 0.0 / 7.0 / 21.0 / 42.0 | 0.0 / 7.7 / 25.3 / 53.0 |
+| enemies **ON SCREEN** | 0.0 / 2.7 / 13.0 / 34.3 | 0.0 / 2.3 / 12.3 / 33.7 |
+| **encirclement** | 0.00 / 0.04 / **0.32** / 0.82 | 0.00 / 0.04 / **0.32** / 0.82 |
+| bullets on screen | 0.0 / 3.7 / 33.3 / 131.7 | 0.0 / 3.0 / 30.3 / 186.0 |
+
+**Encirclement p90 is identical to three significant figures, against a gate of
+0.25.** On-screen population is down 15% at the median and 5% at p90. The arena
+is eleven times the size and the player is exactly as surrounded — and the
+reason is structural rather than lucky: the spawn ring is the VIEW, so groups
+arrive at the same distance from the player they always did. Enemies were never
+distributed over the field; they were always distributed around the player.
+
+Note also that on-screen p50 of 2.7 was ALREADY far below alive p50 of 7.0 at
+one screen, because enemies spawn 70px outside the rectangle and are culled
+320px outside it. A third of the population has always been off screen. Any
+future density work should be denominated in the on-screen column.
+
+#### What had to move to the view, and the one thing that deliberately did not
+
+Growing the field silently changed four rectangles that had been the view all
+along. Each was measured, not assumed:
+
+- **Bullets, and this one cost real progress.** Player bolts were culled at
+  `field + 60`, so they flew 3000px instead of 900 and killed things off screen
+  — whose shards were then abandoned, because the pickup pull is 210px. Shards
+  collected per kill fell 6.05/6.34 -> 3.82/4.40 and level-at-20-minutes 69.3 ->
+  61.0: **more kills, less progress**. Enemy bullets meanwhile accumulated off
+  screen, alive p90 39.7 -> 73.3 and peak 148 -> 230, while the number ON SCREEN
+  did not move. Both pools are culled against the view now, and so is the
+  wall rectangle player bolts bounce off — which is what keeps
+  `InstrumentStats.bounces` from going inert again, since "a bounce has to land
+  on the wall the player can see" and on an 11x field the only such wall is the
+  edge of the view.
+- **Drop despawn.** `updateDrop` kills a drop past `height + 40`; that floor is
+  the bottom of the view, not of a field two and a half screens further down.
+- **The population floor.** `targetOnScreen()` was compared against every enemy
+  alive anywhere. It is compared against `populationNearPlayer()` now — the view
+  plus 200px, enough to cover the ring and the deepest formation stagger. Worth
+  saying that this moved almost nothing (on-screen p90 11.0 -> 11.7), exactly as
+  the existing note on that function predicts: the floor pulls scheduled groups
+  forward and cannot manufacture enemies a wave does not contain. It is in
+  because the comparison was wrong, not because it was the lever.
+- **Enemy culling stayed on the FIELD, and that was tested.**
+  `research-camera.md` §4 predicted that camera-relative culling would make
+  `escaped` fire for enemies that are alive and chasing. It does:
+
+  | cull rect | escaped/wave | on screen p90 | encirclement p90 |
+  |---|---|---|---|
+  | view +/- 320 | 13.27 | 10.3 | 0.31 |
+  | field +/- 320 | 3.48 | 12.3 | 0.32 |
+  | (one screen, before) | 8.58 | 13.0 | 0.32 |
+
+  The view version ran 55% ABOVE the one-screen escape rate and was emptier
+  with it — it was deleting the crowd the player was outrunning. `CULL_MARGIN`
+  is therefore also not retuned: shrinking it is the same move and lands in the
+  same place.
+
+**A new gate, because this one stopped being true by construction.**
+`tools/spawnring.mjs` asserts that no ARRIVAL lands inside the view rect as it
+stood at the moment of the spawn. Until the camera moved that was guaranteed by
+`arenaSpawnPositions` casting its ray from the middle of the only rectangle
+there was; there are now three ways to break it that do not throw. Its first
+draft went red on 427 of 2428 spawns, every one an `echo` appearing on top of
+the player — which is not an arrival but a SPLIT, born from a death the player
+caused, and appearing in view is the point of it. So the population is
+classified and both counts are printed. All four of its assertions have been
+seen red on purpose. 8945 arrivals over three 20-minute runs, zero inside the
+view, closest 46.4px — which is `SPAWN_MARGIN * cos(corner angle)` and is the
+right answer.
+
+#### Stage 6: the tools that were going to lie
+
+`tools/contrast.mjs` has now been broken twice by the same class of mistake, and
+the second time is the instructive one. Version one hardcoded 720x960. Version
+two read the live field size off the running game — strictly better, still
+wrong, because it assumed **the canvas shows the whole field**. It reads the
+VIEW RECT now, origin included, and translates every world coordinate by it.
+Fail-tested by putting the field mapping back: worst bullet/background distance
+collapses from 399 to **0** and the tool reports a total readability failure
+that is entirely its own, for the third time.
+
+`levelshot` and `levelupdraw` take the view from the game and from `field.ts`
+respectively instead of two hardcoded 900x1120 pairs. `flicker`'s boundary
+jitter was `w.height * 0.006` — 6.7px on the old field and 18px on the new one,
+so the check would have got 2.7x harsher with no diff; it is 6.7 pixels.
+
+And a note on the Stage 6 gate itself, which asks that each repaired tool be run
+with `VIEW_W` 20% off and confirmed to move. `levelupdraw` and `effectsdraw`
+both import the constant and both produced **byte-identical output at 900 and at
+1080**, because every verdict they hold is deliberately size-invariant — they
+sweep four sizes precisely so that no single one matters. An import that cannot
+be told apart from a hardcode is not evidence of anything, so both now PRINT the
+geometry they read. That is the whole fix and it is the point of the gate.
+
+`tools/battlefield.mjs` was pointed at `jumpToWave(15)` — which, with
+`BOSS_EVERY = 8`, is **wave 16, a boss wave**, and a boss wave's `planWave`
+emits seven enemies in total. It got away with that while the whole field was on
+screen; once enemies only fire in VIEW it produced 3, 20 and 35 volleys across
+three consecutive runs against a threshold of 20. Re-pointed at index 16 — wave
+17, difficulty saturated, 31 enemies — with **the threshold unchanged**. It now
+sees three or four archetypes and a pan spread of 0.98 to 1.00.
+
+#### Feel: judged, not measured
+
+`Camera.follow` snaps on its first frame (`centreOn`). Without it, `reset()`
+puts the view at the origin while `World.start()` puts the ship at 1500,1500,
+and every run opened with a second of the camera flying across the map — and
+worse than cosmetic, because the spawn ring and the bullet cull are both derived
+from the view, so the first wave would arrive around a rectangle that was still
+moving.
+
+Driven in Chromium for 42 seconds: the view tracks over 448px of x and 382px of
+y, the ship holds a **mean 82px / max 140px** offset from the view centre
+(inside the 144x157 deadzone), the clamp lands exactly on `(2100, 1880)` at the
+far corner, and nothing clips or tears at the view edge. Deadzone, lookahead and
+smoothing remain the three numbers in this refactor that no gate can judge.
+
+**Two costs that are findings and not passes.** Level at twenty minutes is
+69.3 -> 65.0 and offers arrive every 17.7s -> 18.8s. `docs/progression.md`'s
+stated target is "one offer every 18s", so the pacing moved TOWARD the
+documented figure; its level-pacing row (`1m L4 3m L12 5m L19 8m L28`) is a
+pre-ladder number that the game already overshot before this change and still
+overshoots (`1m L4.7 3m L21.0 5m L31.3 8m L41.7`), so that table does not hold
+and did not hold before. Fusions per run are **5.67 unchanged on both policies**,
+which is the metric the item workstream exists to protect.

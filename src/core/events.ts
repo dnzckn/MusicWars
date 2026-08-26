@@ -169,8 +169,15 @@ export type GameEvents = {
   /**
    * An enemy just loosed a volley. The audio side turns this into a pitched
    * note, so the shot you see telegraphed is the note you hear.
+   *
+   * `pan` is 0..1, hard left to hard right, and is **which side of the PLAYER**
+   * the shot came from — not a position in the world and not a fraction of the
+   * field. It was called `x` and was `e.x / world.width`, which meant the same
+   * thing only while the field was exactly one screen wide. Renamed rather than
+   * redefined in place so that every reader has to look: the old name let
+   * `tools/battlefield.mjs` keep printing a column after its definition moved.
    */
-  'enemy:fire': { archetype: EnemyArchetype; x: number };
+  'enemy:fire': { archetype: EnemyArchetype; pan: number };
   /** A player shot connected. Answers the shot musically. */
   'enemy:hit': { archetype: EnemyArchetype; lethal: boolean };
 

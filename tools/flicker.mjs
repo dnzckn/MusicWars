@@ -15,10 +15,21 @@ const r = await p.evaluate(async () => {
   // Also count how often the pattern set is rebuilt: a boundary that flickers
   // shows up there too, since the register is part of the structure key.
   const rebuild0 = mw.director.rebuildCount;
-  // Hover exactly on the line with a pixel of drift, as a player holding
-  // position mid-field inevitably does.
+  /*
+   * Hover exactly on the line with a few pixels of drift, as a player holding
+   * position mid-field inevitably does.
+   *
+   * THE DRIFT IS PIXELS, NOT A FRACTION OF THE FIELD. This read
+   * `w.height * (0.5 + sin * 0.006)` — 6.7px of wobble on a 1120-tall field
+   * and 18px on a 3000-tall one, so the check would have got 2.7x harsher the
+   * moment the arena grew, with no diff and no failure. That is the silent
+   * re-baseline `docs/research-camera.md` §7b lists this file under. 6.7px is
+   * what it has always measured, so 6.7px is what it measures now.
+   */
+  const DRIFT_PX = 6.7;
+  const mid = w.height * 0.5;
   const hold = setInterval(() => {
-    w.player.y = w.height * (0.5 + Math.sin(performance.now() / 400) * 0.006);
+    w.player.y = mid + Math.sin(performance.now() / 400) * DRIFT_PX;
   }, 16);
   const watch = setInterval(() => {
     const now = mw.readout().leadRegister;

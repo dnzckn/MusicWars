@@ -256,3 +256,40 @@ move together — is unaffected by any of this.
 What changes is the order and the target. Not "retire the deadline, then add a
 spawn director, then grow the field", but: **fix the opening, fill the mid-game
 plateau, profile the renderer, and only then discuss the ceiling.**
+
+
+### 6e. ANSWERED: the bigger arena did not empty the screen
+
+Added after `docs/research-camera.md` Stage 5 landed. The one claim in this
+document that survived §6a and §6b — that growing the field would spread the
+same enemies over more floor — was finally testable, and it is **false as
+stated**, for a reason neither the original nor the correction anticipated.
+
+`tools/arena.mjs` had to be repaired first, and the repair is the finding.
+It reported `w.enemies.length` under the label "enemies", which is every enemy
+alive anywhere in the world. That was the same number as "on screen" while the
+world was one screen, and it is a different question now. Both are printed:
+
+| p10 / p50 / p90 / max | 900x1120 | 3000x3000 |
+|---|---|---|
+| enemies alive (whole field) | 0.0 / 7.0 / 21.0 / 42.0 | 0.0 / 7.7 / 25.3 / 53.0 |
+| enemies ON SCREEN | 0.0 / 2.7 / 13.0 / 34.3 | 0.0 / 2.3 / 12.3 / 33.7 |
+| encirclement | 0.00 / 0.04 / 0.32 / 0.82 | 0.00 / 0.04 / 0.32 / 0.82 |
+
+Eleven times the floor area; encirclement p90 unchanged at 0.32 against a gate
+of 0.25; on-screen population down 15% at the median and 5% at p90.
+
+**Why it does not spread out.** Enemies were never distributed over the field.
+They arrive on a ring and then hold a standoff of 120-280px from the PLAYER, and
+Stage 4 made that ring the VIEW centred on the camera rather than the field
+rectangle. So the geometry that decides density is player-relative from spawn to
+death, and the field size does not enter it. §1's arithmetic — "a median of six
+enemies in nine times the floor space" — assumed a uniform scatter that this
+game has never had.
+
+**The genuinely useful number this produced** is that on-screen p50 was ALREADY
+2.7 against an alive p50 of 7.0 at one screen. Enemies spawn 70px outside the
+rectangle and are culled 320px outside it, so roughly a third of the population
+has always been off camera. Every density figure in §1 and §6b is an alive
+figure. Future work on this should be denominated in the on-screen column,
+which is now printed.

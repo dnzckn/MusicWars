@@ -44,8 +44,10 @@ import { PLAYFIELD_H, PLAYFIELD_W, VIEW_H, VIEW_W } from './field';
  *
  * JUDGED, NOT MEASURED, and it cannot be otherwise: `research-camera.md` §9
  * Stage 7 records deadzone, lookahead and smoothing as the only three numbers
- * in the whole camera refactor that need a person and a browser. They are
- * inert today — see `follow()` — so nothing rests on them yet.
+ * in the whole camera refactor that need a person and a browser. They stopped
+ * being inert the moment `PLAYFIELD_*` grew past `VIEW_*`; nothing node-only
+ * can tell you whether these five constants feel right, and no gate in this
+ * repository will ever go red because they are wrong.
  */
 const DEADZONE_X = 0.16;
 const DEADZONE_Y = 0.14;
@@ -62,11 +64,12 @@ export class Camera {
   /**
    * Top-left of the view in world space.
    *
-   * Zero today and pinned there by the clamp in `follow()`, because the field
-   * is exactly one view wide and one view tall so the legal range is `[0, 0]`.
-   * It is a real quantity all the same: `renderer.ts` composes the grid's clip
-   * rectangle from it, so the day `PLAYFIELD_*` grows this starts moving and
-   * the renderer needs no further change.
+   * Was pinned at zero while the field was exactly one view across, which made
+   * the legal range `[0, 0]`. The field is 3000x3000 now, so the range is
+   * `[0, 2100] x [0, 1880]` and this moves every frame the ship leaves the
+   * deadzone. `renderer.ts` composes the grid's clip rectangle from it and
+   * needed no change when it started moving, which was the point of adding it
+   * a stage early.
    */
   viewX = 0;
   viewY = 0;
@@ -145,14 +148,16 @@ export class Camera {
   /**
    * Track a point — the ship — with a deadzone and a velocity lookahead.
    *
-   * A NUMERIC NO-OP TODAY, and deliberately so. `PLAYFIELD_W === VIEW_W` and
-   * `PLAYFIELD_H === VIEW_H`, so the clamp below has the range `[0, 0]` and
-   * `viewX`/`viewY` cannot leave the origin however hard this function pushes.
-   * It is wired up anyway rather than left as dead code, because a `follow()`
-   * nobody calls is a `follow()` nobody has proved cannot reach the
-   * simulation — and "the camera cannot touch the simulation" is the property
-   * this stage exists to establish. It is established by `tools/arena.mjs`
-   * producing bit-identical output with this running every frame.
+   * THIS IS LIVE NOW. It was written one stage before the field grew, as a
+   * numeric no-op — `PLAYFIELD_* === VIEW_*` gave the clamp below the range
+   * `[0, 0]`, so `viewX`/`viewY` could not leave the origin however hard this
+   * pushed — and it was called every frame anyway rather than left as dead
+   * code, because a `follow()` nobody calls is a `follow()` nobody has proved
+   * cannot reach the simulation. `tools/arena.mjs` produced bit-identical
+   * output with it running, which is what established that the camera is
+   * strictly downstream of the world. That property is worth keeping: if a
+   * number in here ever starts changing a balance measurement, something has
+   * fed the view back into the simulation.
    *
    * The lookahead is derived here rather than taken as a parameter so that the
    * caller does not have to hold a previous position on the camera's behalf.
@@ -168,6 +173,18 @@ export class Camera {
       this.lastTargetX = px;
       this.lastTargetY = py;
       this.following = true;
+      /*
+       * And snap the VIEW too, or every run opens with a swoop.
+       *
+       * `reset()` puts the view at the origin and `World.start()` puts the ship
+       * in the middle of the arena, which used to be the same point and is now
+       * 1500,1500 in a 3000x3000 field. Damping from one to the other at a
+       * 0.14s halflife is about a second of the camera flying across the map
+       * before the player has pressed anything — and worse than cosmetic, since
+       * the spawn ring and the bullet cull are both derived from the view, so
+       * the first wave would arrive around a rectangle that is still moving.
+       */
+      this.centreOn(px, py);
     }
     const rawVx = (px - this.lastTargetX) / dt;
     const rawVy = (py - this.lastTargetY) / dt;
@@ -192,14 +209,27 @@ export class Camera {
 
     /*
      * Clamped to the field, which is what keeps the player from ever seeing
-     * outside the arena. With world == view the range is `[0, 0]`, so both
-     * `Math.max` guards below collapse to zero — and they are written as
-     * `Math.max(0, ...)` rather than assuming a positive range because a view
-     * WIDER than the field would otherwise give an inverted clamp and NaN out
-     * the render offset.
+     * outside the arena. `Math.max(0, ...)` rather than assuming a positive
+     * range: a view WIDER than the field gives an inverted clamp, and
+     * `clamp(v, 0, negative)` would NaN out the render offset. That is not
+     * hypothetical — it is the state this function shipped in for a whole
+     * stage, and it is the state a `PLAYFIELD_*` typo would put it back in.
      */
     this.viewX = clamp(damp(this.viewX, this.viewX + pushX, FOLLOW_HALFLIFE, dt), 0, Math.max(0, PLAYFIELD_W - VIEW_W));
     this.viewY = clamp(damp(this.viewY, this.viewY + pushY, FOLLOW_HALFLIFE, dt), 0, Math.max(0, PLAYFIELD_H - VIEW_H));
+    this.compose();
+  }
+
+  /**
+   * Put a world point in the middle of the view immediately, clamped.
+   *
+   * No damping and no deadzone: this is for discontinuities — the start of a
+   * run — where smoothing is not motion, it is the camera visibly catching up
+   * with something that teleported.
+   */
+  centreOn(px: number, py: number): void {
+    this.viewX = clamp(px - VIEW_W / 2, 0, Math.max(0, PLAYFIELD_W - VIEW_W));
+    this.viewY = clamp(py - VIEW_H / 2, 0, Math.max(0, PLAYFIELD_H - VIEW_H));
     this.compose();
   }
 
