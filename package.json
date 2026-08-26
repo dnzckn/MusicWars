@@ -159,7 +159,8 @@
     "domwiring": "node tools/domwiring.mjs",
     "inputcheck": "node --experimental-transform-types tools/inputcheck.mjs",
     "sfxcheck": "node tools/sfxcheck.mjs",
-    "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs"
+    "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs",
+    "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",

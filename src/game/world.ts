@@ -973,8 +973,14 @@ export class World {
      * musical half: this is the one moment in a run where the player is looking
      * at the arrangement instead of the bullets, so it is the one moment the
      * music gets to hold still, and a fermata that begins mid-bar is not a
-     * fermata. `openOffer` is idempotent, so calling it on every bar line while
-     * one is already open costs nothing.
+     * fermata.
+     *
+     * This used to say "`openOffer` is idempotent, so calling it on every bar
+     * line while one is already open costs nothing." That was false and it cost
+     * a real complaint: idempotent in STATE is not idempotent in EFFECTS, and
+     * re-calling it re-emitted the offer and re-fired the banner and the sting
+     * every 1.875 seconds while the player was reading their cards. The guard
+     * now lives at the top of `openOfferNow`; see the note there.
      */
     if (this.phase !== 'over' && this.transport.crossedBar()) this.openOfferNow();
     this.applyOfferInput(input);
@@ -2933,6 +2939,32 @@ export class World {
 
   /** Open a queued offer. Idempotent; safe to call on every bar line. */
   private openOfferNow(): void {
+    /*
+     * Do nothing if one is already open. Reported from play: "on the item
+     * selection screen, whenever the tempo reaches the end it repops up the
+     * selection, so it's pretty annoying."
+     *
+     * `update` calls this on EVERY bar line, and the comment there said that
+     * was free because `openOffer` is idempotent. `openOffer` is idempotent in
+     * STATE and not in EFFECTS, which is the whole bug:
+     *
+     *     if (state.offer || state.pending <= 0) return state.offer;
+     *
+     * When an offer is already open that returns `state.offer` — TRUTHY, the
+     * same object — so the `if (!offer) return` guard below never fired. Every
+     * bar line therefore re-ran `emitOffer` and re-fired the LEVEL banner, and
+     * because `main.ts` answers `level:offer` with `sfxPickup(7)`, it re-played
+     * the sting as well. At 128bpm a bar is 1.875 seconds, so the card screen
+     * re-announced itself about every two seconds for as long as the player
+     * took to read it — and the whole point of stopping the world here was to
+     * let them read it without pressure.
+     *
+     * Guarding on `isChoosing` rather than on the return value, because the
+     * defect was that a truthy return means two different things. A caller
+     * should not have to know that `openOffer` answers "here is your new offer"
+     * and "you already had one" with the same value.
+     */
+    if (prog.isChoosing(this.progression)) return;
     // Space out a burst. See `OFFER_MIN_GAP`.
     if (this.time - this.lastOfferClosed < OFFER_MIN_GAP) return;
     const offer = prog.openOffer(this.progression);

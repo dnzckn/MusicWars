@@ -37,7 +37,7 @@ const GROUPS = [
     'tune', 'clash', 'contour', 'motif', 'rhythm', 'basscheck', 'leadcheck',
     'motorcheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
   ]],
-  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck']],
+  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn']],
   ['slow', 600, [
     'brain', 'pause', 'drops', 'overdrive', 'session', 'realprobe',
     'builds', 'difficulty', 'combine', 'openers', 'churn', 'sections',
