@@ -16,6 +16,17 @@
  * paths. Everything is in flat typed arrays because this runs every frame.
  */
 
+/**
+ * The rectangle of world space a camera can see, for clipping the lattice.
+ * Omitted means "all of it", which is what the game does today.
+ */
+export interface GridView {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface GridStyle {
   /** Base line colour, as an `hsl(...)` prefix without the alpha. */
   hue: number;
@@ -183,22 +194,72 @@ export class WarpGrid {
    * Draw as two batched paths — one for all rows, one for all columns. Stroking
    * 35 separate paths costs far more than stroking one with 35 subpaths.
    */
-  draw(g: CanvasRenderingContext2D, style: GridStyle): void {
+  /**
+   * Draw the lattice, optionally clipped to the rows and columns a view can
+   * actually see.
+   *
+   * WHY THE VIEW ARGUMENT EXISTS. The grid is sized from the WORLD — `cols` and
+   * `rows` come straight from the field's width and height — so every point is
+   * integrated and stroked whether or not it is on screen. That is free while
+   * the field IS the screen, and it is the single thing standing between this
+   * game and a bigger arena.
+   *
+   * Measured, both halves, because the JavaScript half alone gives the wrong
+   * answer. `tools/gridcost.mjs` times the integration and path construction
+   * against a recording stub: 0.018 ms/frame today, 0.156 at a 3x field, which
+   * is 0.9% of a 60Hz budget and looks like the arena is free. It is not.
+   * `tools/gridraster.mjs` draws the same lattice into a real canvas in
+   * Chromium and flushes it:
+   *
+   *     900 x 1120   285 points   0.108 ms    0.7% of a frame
+   *     1800 x 1800  900 points   0.378 ms    2.3%
+   *     2700 x 3360 2420 points   4.685 ms   28.1%
+   *
+   * Cost scales 43x where the point count scales 8.5x. Strokes are the
+   * expensive half of a Canvas2D frame and no recording stub can see them, so
+   * `docs/research-camera.md` §2a was right to call this the cliff and wrong
+   * about the mechanism — it is not the count of points, it is the area being
+   * painted.
+   *
+   * Clipping to whole rows and columns rather than to individual segments is
+   * deliberate: the inner loops are two flat passes over a typed array and
+   * their whole speed comes from not branching per point. Bounding the loop
+   * indices keeps that, where a per-segment visibility test would give the
+   * cost back. A cell of bleed on each side means a line entering the view
+   * still has its off-screen endpoint, so nothing pops at the edge.
+   *
+   * `view` is optional and omitting it draws everything, so this is a no-op
+   * until something has a camera to pass.
+   */
+  draw(g: CanvasRenderingContext2D, style: GridStyle, view?: GridView): void {
     const { x, y, cols, rows } = this;
     g.lineWidth = 1;
 
+    let c0 = 0;
+    let c1 = cols;
+    let r0 = 0;
+    let r1 = rows;
+    if (view) {
+      c0 = Math.max(0, Math.floor(view.x / SPACING) - 1);
+      c1 = Math.min(cols, Math.ceil((view.x + view.w) / SPACING) + 2);
+      r0 = Math.max(0, Math.floor(view.y / SPACING) - 1);
+      r1 = Math.min(rows, Math.ceil((view.y + view.h) / SPACING) + 2);
+      if (c1 <= c0 || r1 <= r0) return;
+    }
+
     g.beginPath();
-    for (let r = 0; r < rows; r++) {
+    for (let r = r0; r < r1; r++) {
       const base = r * cols;
-      g.moveTo(x[base], y[base]);
-      for (let c = 1; c < cols; c++) {
+      g.moveTo(x[base + c0], y[base + c0]);
+      for (let c = c0 + 1; c < c1; c++) {
         const i = base + c;
         g.lineTo(x[i], y[i]);
       }
     }
-    for (let c = 0; c < cols; c++) {
-      g.moveTo(x[c], y[c]);
-      for (let r = 1; r < rows; r++) {
+    for (let c = c0; c < c1; c++) {
+      const top = r0 * cols + c;
+      g.moveTo(x[top], y[top]);
+      for (let r = r0 + 1; r < r1; r++) {
         const i = r * cols + c;
         g.lineTo(x[i], y[i]);
       }

@@ -162,7 +162,9 @@
     "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs",
     "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs",
     "rulefire": "node --experimental-transform-types tools/rulefire.mjs",
-    "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs"
+    "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs",
+    "gridcost": "node --experimental-transform-types tools/gridcost.mjs",
+    "gridraster": "node tools/gridraster.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",
