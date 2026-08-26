@@ -92,7 +92,42 @@ Neither fix changes any game or audio behaviour. Both are pure tooling.
 | **S** | Not snappy | **The gun missed.** `fireSeek` fanned bolts as `i/(n-1) − 0.5`, which never takes 0 on an even count, and the starting weapon is `count: 2` — so both bolts straddled the target and nothing was ever fired along the aim. Plus a 0.32px kill shake, a silent XP pickup, and edge inputs spent 2–4× per press | **LANDED** |
 | **I** | Item mechanics | Two problems. 13 levels to a fusion, and `catalystHintLevel` silently unreachable. And 27 instruments over **7** verbs with `aura` a quarter of them, 12 passives that were all multipliers, and `Modifiers` with no trigger surface at all | **LANDED** |
 | **A** | Arena too small | `PLAYFIELD_W/H = 900×1120` fixed, single screen, **no follow camera**. Blocked on the renderer, which was then unblocked (§2.1) | **LANDED** — 3000×3000 with a follow camera, see §9 |
-| **M** | Music is not great | Composed blind — never auditioned in the project's whole history. Bass was spectrally inverted; mix is 13 dB quiet with 66% of its energy in one octave | bass fixed / **rest stashed**, see §2.2 |
+| **M** | Music is not great | Composed blind — never auditioned in the project's whole history. Four faults, measured: bass spectrally inverted, mix 8 dB quiet, nothing above 2 kHz, and no musical unit longer than 80 s | **3 of 4 fixed**, the fourth is WIP — see §2.3 |
+
+### 2.3 Track M: three faults closed, one open, none heard
+
+Measured off `tools/capture.mjs`, which renders the real superdough chain. Every
+comparison below is same-day and paired against a worktree, never against a
+remembered number.
+
+| fault | before | after | state |
+|---|---|---|---|
+| bass spectrally inverted | 99.7% of its energy in the 125 Hz band | +33 / +47 / +52 dB at 250 / 500 / 1k | **fixed** |
+| 13 dB too quiet | −27.12 LUFS, peak −13.4 dBFS | **−18.84 LUFS**, crest intact at 17.7 dB | **fixed** |
+| no air above 2 kHz | 2.5% | **4.3%**, +2.38 dB vs a 1.3 dB noise floor | **fixed, narrowly** |
+| kick below audibility | `c1` = 32.7 Hz, 87.9% under the 44.5 Hz band | `g1` = 49 Hz, 63 Hz band **+12.7 dB at zero level change** | **fixed** |
+| no unit longer than 80 s | key 80 s / theme 36 s / groove 18 s | four-act arc, three progression shapes | **WIP, unverified** |
+
+**Two diagnoses in `research-music.md` were refuted along the way** and the
+document should be read as a lead rather than as fact. Its "~19 simultaneous
+pitched voices per bar" is wrong — 675,840 sampled instants give a mean of 10.4
+and a maximum of 15; the 41 it was reaching for is note *events* per bar. And the
+mix is not eleven lanes crowded into an octave: reconstructed from soloed stems,
+**bass 41.5% + chords 29.2% + lead 25.3% is 96% of all energy**, with six lanes
+20–40 dB below the floor.
+
+**The midrange is still congested and that is left open deliberately.** 60.9% →
+57.2% is real and small. The honest finding underneath is that the 250 and 500 Hz
+bands *are* the pad's and the tune's fundamentals, so cutting the loudest lane
+makes the ratio **worse** — measured on the reconstruction, bass at −6 dB gives
+65.4%, because the bass owns the 125 band too. The only lever that reaches the
+target is moving the bass down an octave, and that is a musical decision that
+should not be made by anyone who cannot hear the result.
+
+**Nothing has been heard.** `renders/F-all-32.wav` and `renders/B0-all-32.wav`
+are on disk, 61 seconds each, before and after. Every figure above is a rendered
+spectrum or arithmetic over one. That has been this project's defining weakness
+since before this turnaround started and none of the above closes it.
 
 ### Track S and Track I: what actually shipped
 
@@ -717,3 +752,65 @@ pre-ladder number that the game already overshot before this change and still
 overshoots (`1m L4.7 3m L21.0 5m L31.3 8m L41.7`), so that table does not hold
 and did not hold before. Fusions per run are **5.67 unchanged on both policies**,
 which is the metric the item workstream exists to protect.
+
+---
+
+## 10. Where this stands, and what is left
+
+Twenty-eight commits. Three of the four launch complaints are closed and the
+fourth is three-quarters closed.
+
+**Snappy — closed.** The gun straddled its target on every even bolt count and
+the starting weapon is `count: 2`, so nothing was ever fired along the aim; four
+enemy archetypes went from unkillable-in-twelve-seconds to dead in about one. A
+kill shook the screen by 0.32 pixels. The most frequent reward in the game — 92
+to 108 shard pickups every two minutes — made no sound at all. One keypress spent
+two wells at 60 Hz and four at 30 Hz.
+
+**Items — closed.** 3 + 3 ladder with power at max preserved exactly across 439
+stat fields. Fusions per run for a naive player **0.33 → 5.67**, and building is
+worth **5.7×** refusing against 3.2× before. Fourteen verbs over twenty-seven
+instruments where there were seven, largest verb down from 26% to 19%. Six of
+twelve passives install a rule rather than scale a number.
+
+**Arena — closed.** 3000×3000 square with a follow camera, eleven times the area,
+and encirclement *identical* at p90 0.32 because the spawn ring is the view.
+
+**Music — 3 of 4.** See §2.3.
+
+### The three things worth doing next, in order
+
+1. **Play the two WAVs.** `renders/B0-all-32.wav` and `renders/F-all-32.wav`.
+   Every audio decision in this turnaround was taken on a rendered spectrum, and
+   the one remaining lever on the midrange — dropping the bass an octave —
+   cannot honestly be pulled by anyone who has not heard it.
+2. **Finish the long-form arc, or revert it.** The code is committed and
+   unverified. The test is specified: render 96–128 bars and analyse over *time*,
+   not as one aggregate. If a long render still reads flat, the form is in the
+   source and not in the sound, and it should be said plainly and the commit
+   reverted rather than left as a claim.
+3. **Fix the five gates that were red before this turnaround started** and have
+   stayed red throughout: `attackfloor`, `wellcheck`, `registercheck`,
+   `counterpoint`, `subcheck`, plus `leadfreeze`'s stale golden baseline,
+   `touchcheck`, and four `levelshot` roster assertions. Every one was verified
+   pre-existing rather than assumed, and none was ever a licence to ignore them.
+
+### The rule that came out of this, and it is the transferable part
+
+**One agent at a time in any overlapping file set.** Two workflows running
+concurrently produced agents that clobbered each other — one ran `git checkout`
+and destroyed a sibling's finished level-ladder change, which had to be rebuilt
+from scratch. Every agent brief since carries an explicit prohibition on git
+commands that discard working-tree changes, and the instruction to undo a
+fail-test with another edit instead. Nothing has been lost since.
+
+**And the other one: measure the thing, not a proxy for it.** This turnaround
+found the same failure five separate times — a `combine` control that was
+accidentally valid until fusion cards became common; a `LOCKED` figure that
+over-counted 2.5× because it never asked whether the card would have been dealt;
+a `gridcost` reading that cleared the arena's blocker because a recording context
+counts strokes without paying for them; a `deadhunt-ranges` row that reported
+`mods.homing` live at 14.98% while every level steered identically; and a
+`levelup` assertion that a note is "described and non-empty" passing on four
+notes the card physically could not draw. In each case the proxy was reasonable
+when written and stopped being reasonable when something underneath moved.
