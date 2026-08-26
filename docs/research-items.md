@@ -40,8 +40,8 @@ against the same pure modules.
 | generic union pairs (fused × fused) | 103 | |
 | **distinct behaviour shapes** | **7** for 27 instruments | `InstrumentShape` |
 | distinct `Modifiers` fields any passive can move | 13 | |
-| instrument levels | 1–8 (7 steps) | `INSTRUMENT_MAX_LEVEL` |
-| passive levels | 1–5 | `RIG_MAX_LEVEL` |
+| instrument levels | ~~1–8 (7 steps)~~ **now 1–3 (2 steps)** | `INSTRUMENT_MAX_LEVEL` |
+| passive levels | ~~1–5~~ **now 1–3** | `RIG_MAX_LEVEL` |
 | fusion-result levels | seated at 3, never climbs | `FUSED_MAX_LEVEL` |
 | slots | **4 instrument + 3 rig**, fixed all run | `STAND_SLOTS` / `RIG_SLOTS` |
 | cards per offer | **4** | `OFFER_SIZE` |
@@ -55,6 +55,16 @@ PIZZICATO branch made it **15 and 27**. `discovery.ts`'s own header still says
 "twelve authored evolutions and two named unions" and "Fourteen is a number a
 player can hold in their head" — the code derives the count correctly, the prose
 does not. Same file says "157" generic combinations; it is now **169**.
+
+
+> **SUPERSEDED IN PART, 2026-08-25.** The ladder rows in the table above were
+> measured against `INSTRUMENT_MAX_LEVEL = 8` / `RIG_MAX_LEVEL = 5`. Both are now
+> 3, and `DUET_INPUT_LEVEL` is 3 and `catalystHintLevel` 2. Every offer-composition
+> figure in §1 was taken at ~23-48 offers per run against 46 picks of content;
+> the run now opens ~42 offers against 20 picks, so those percentages have all
+> moved. See `docs/TURNAROUND.md` §9, "Track I: the ladder was the reason a normal
+> run never fused", for the re-measured numbers. The §5 gap analysis is unaffected
+> — none of it turns on the ladder length.
 
 ### Offer composition, re-measured
 

@@ -87,12 +87,51 @@ Neither fix changes any game or audio behaviour. Both are pure tooling.
 
 ## 2. The four workstreams
 
-| Track | Complaint | Root cause (as far as established) | Status |
+| Track | Complaint | Root cause, as established | Status |
 |---|---|---|---|
-| **M** | Music is not great | Composed blind — never auditioned. Suspected: no long-form structure, mix too dense, bass lowpassed twice | M0 landed / diagnosis in flight |
-| **I** | Item mechanics | Zero-sum four-card offer, 12×12 rig, ~1.6 fusions per run | diagnosis in flight |
-| **A** | Arena too small | `PLAYFIELD_W/H = 900×1120` fixed, single screen, **no follow camera** | diagnosis in flight |
-| **S** | Not snappy | Unknown; feedback-channel matrix being built | diagnosis in flight |
+| **S** | Not snappy | **The gun missed.** `fireSeek` fanned bolts as `i/(n-1) − 0.5`, which never takes 0 on an even count, and the starting weapon is `count: 2` — so both bolts straddled the target and nothing was ever fired along the aim. Plus a 0.32px kill shake, a silent XP pickup, and edge inputs spent 2–4× per press | **LANDED** |
+| **I** | Item mechanics | Two problems. 13 levels to a fusion, and `catalystHintLevel` silently unreachable. And 27 instruments over **7** verbs with `aura` a quarter of them, 12 passives that were all multipliers, and `Modifiers` with no trigger surface at all | **LANDED** |
+| **A** | Arena too small | `PLAYFIELD_W/H = 900×1120` fixed, single screen, **no follow camera**. Blocked on the renderer, which is now unblocked (§2.1) | renderer cleared / camera not started |
+| **M** | Music is not great | Composed blind — never auditioned in the project's whole history. Bass was spectrally inverted; mix is 13 dB quiet with 66% of its energy in one octave | bass fixed / **rest stashed**, see §2.2 |
+
+### Track S and Track I: what actually shipped
+
+**S.** Four archetypes went from unkillable-in-12s to dead in about a second
+(`hitrate`, paired against a HEAD worktree on a second port). Kills/min 77.6 →
+93.1 at the run level. Kill shake 0.12 → 0.28 — the old value peaked at **0.32
+pixels** through `camera.ts`'s `trauma²×22`. `shard:collect` added, because the
+game's most frequent reward — 92–108 per two minutes — had no audio channel at
+all. Input edges now consume once instead of 2× at 60 Hz and 4× at 30 Hz.
+
+**I.** The ladder is 3 + 3, with power at max **preserved exactly** (439 stat
+fields, zero drift). Fusions per run for a naive player **0.33 → 5.67**, and
+`combine` puts building at **5.7×** refusing, against 3.2× before the turnaround.
+The roster is **14 verbs over 27 instruments**, one per 1.9, largest verb 19%.
+Six of twelve passives now install a *rule* rather than scale a number, against a
+`Rules` surface that fires in place in `world.ts`.
+
+### 2.1 The arena is no longer blocked by the renderer
+
+`research-camera.md` §2a called `WarpGrid` the one genuine perf cliff and nobody
+had measured it. Measured twice, because once gives the wrong answer: the
+JavaScript costs 0.156 ms at a 3× field (0.9% of a frame, looks free), while
+**rasterising** the same lattice costs **5.0 ms — 30% of a frame**, scaling 48×
+where the point count scales 8.5×. The cliff was real and the stated mechanism
+was wrong: it is painted area, not point count.
+
+`WarpGrid.draw` now takes an optional view rect. A 3× field clipped to a 1× view
+costs **0.198 ms, 1.2%** — 25× cheaper. Field size has stopped being a rendering
+question, and Stage 1 (the view/world split) is the next thing to build.
+
+### 2.2 What is deliberately parked
+
+The music overhaul was stopped mid-flight and its work is in
+`git stash` — level, register separation and long-form structure, all against
+measured targets (−27.39 LUFS, 66.6% of energy in 250–500 Hz, 3.2% above 2 kHz).
+It was stopped because running it alongside the item work produced agents that
+clobbered each other: one workflow's `git checkout` destroyed a sibling's
+completed ladder change. **One agent at a time, in any file set that overlaps**
+is the rule that came out of that, and it has held since.
 
 ### Track A: the finding that makes it tractable
 
@@ -204,6 +243,113 @@ builder, agrees — bass soloed, 8 bars, world seed 0x51ed:
 **99.7% of the lane's energy in one octave band** is the shortest statement of
 what the bug was: a bass reduced to its own fundamental, with everything that
 makes a sawtooth sound like an instrument 30 to 50 dB down.
+
+### Track I: the ladder was the reason a normal run never fused
+
+`INSTRUMENT_MAX_LEVEL` 8 -> 3, `RIG_MAX_LEVEL` 5 -> 3, `DUET_INPUT_LEVEL` 6 -> 3,
+`OFFER_TUNING.catalystHintLevel` 5 -> 2, and the XP curve re-denominated
+(`20 / 18 / 60 / 150`, tiers at 11 and 21). `FUSED_MAX_LEVEL` was already 3 and
+is untouched. Owner's brief: *"should basically be only 3 levels to each weapon,
+then they combine and can be upgraded 3 more times."*
+
+**The headline, MEASURED.** `tools/arena.mjs`, 20-minute runs, 8 seeds each,
+before and after on the same seeds:
+
+| | before | after |
+|---|---|---|
+| fusions per run, card-0 bot | **0.63** | **3.38** |
+| fusions per run, builder | 2.88 | 4.63 |
+| runs with any fusion, card-0 | 5/8 | **8/8** |
+| level reached | 55.9 | 43.1 |
+| offers opened | 54.9 | 42.1 |
+| one offer every | 22.3s | 28.7s |
+
+At three seeds — the gate's own default — the card-0 row reads 0.33 -> 3.38.
+The naive player finishing a whole run having never combined anything is gone.
+
+**The ladders were RE-AUTHORED, not truncated,** and that is checkable rather
+than assertable. A probe folded every instrument and every rig item to max level
+before and after and compared all ten stat fields: **319 fields compared, 12
+differ, and all twelve are duets.** Every one of the twelve base instruments and
+every one of the twelve rig items reaches a byte-identical stat block; the two
+surviving rungs carry exactly what the seven deleted ones did. The twelve duet
+fields moved because `synthesiseDuet` blends its parents at `DUET_INPUT_LEVEL`,
+which is now the parents' true ceiling rather than three quarters of it. The
+probe was seen red: perturbing one multiplier from 1.40 to 1.39 took it to 13.
+
+**`catalystHintLevel` would have died silently.** It was 5, against a ceiling
+that is now 3, and both of its consumers test `>= catalystHintLevel`. Left
+alone it would have disabled the 2x weight on a pursued catalyst *and* the
+full-rig swap card, in every state of every run, with every gate still green.
+Now 2. This is the fifth constant in this repository found denominated in a unit
+that moved underneath it.
+
+**The XP curve had to move with the ladder, and this was measured, not assumed.**
+A fully maxed loadout is now 20 picks. The old curve hands out 55. Over 400
+simulated runs of pure `progression.ts`, grace cards — the offer generator
+admitting it has nothing to sell — went from 0.9-1.2% of dealt cards to
+**11.7-27.9%**, and offers that were *entirely* grace from 0.0% to 1.5-14.5%.
+The steepened curve lands a 20-minute run near level 43 and puts those back to
+2.7-12.3% dealt and 0.0-2.1% *taken*.
+
+**What a player spends levels on in the late run**, measured over 400 runs at
+the new offer count: instrument levels 25-32%, rig levels 25-29%, new rig 15-23%,
+new instruments 12-15%, **fusion cards 11-12%**, grace 0.0-2.1%. Fusion cards
+were 3.5-5.1% of picks before. The late run is no longer "which of twelve owned
+things gets +1": it is spending the rig slot a fusion just handed back, and
+taking the next combination.
+
+#### Two regressions, stated plainly
+
+**`tools/combine.mjs` fails its intent gate: 3.2x -> 1.5x.** This is the number
+`AGENTS.md` §5 names as having caught two previous progression changes, so it
+gets the full treatment. **Designed fusions per run went UP on both sides** —
+splitting the count by whether the result is actually a row in `FUSIONS`, a
+committed builder went 1.63 -> 2.88 authored evolutions per run and an
+inattentive card-0 player went 0.63 -> 2.00. The ratio fell because the floor
+rose to meet the ceiling, not because the ceiling fell. That is the opposite
+mechanism from the 1.63 -> 1.13 incident, and it is a real design cost: with 20
+picks of content and 42 offers, a player who is not building at all still
+completes most of what their slots line up, so committing buys less than it did.
+The gate is left RED rather than relaxed. Fixing it means making picks scarcer
+than the level count already makes them, which is a slot-count or offer-size
+decision and not this change.
+
+Related, and worth recording because it inflates both columns: `combine.mjs`
+counts `ability:union` as designed content, but `readyDuets` emits that event for
+*any* two fused instruments, whose result is a synthesised `a+b` id and not one
+of the two authored unions. Generic unions per run, committed: 0.38 -> 1.13.
+
+**`tools/arena.mjs` fails its encirclement gate: p90 0.49 -> 0.19 against a floor
+of 0.25.** The player completes their build in a third of the time, so they are
+much stronger for most of the run — card-0 nominal dps 806 -> 2427, kills/min
+110 -> 155, enemies on field p90 28.3 -> 14.1. Max power did not change; the time
+to reach it did. Steepening the XP curve recovered most of it (0.03 at the
+ladder change alone, 0.19 after) and a further step to ~39 offers bought only
+0.21 while costing 0.38 fusions per run, so the curve is not the binding factor.
+**The remaining fix is enemy scaling in `world.ts`**, which this change was
+forbidden to touch and which is the right place for it anyway.
+
+**`tools/openers.mjs` still passes but the margin narrowed: 81% -> 74% at the
+gate's three seeds, 86% -> 79% at eight.** ECHO CHAMBER remains the binding
+opener, as the CHIME note in `weapons.ts` predicted it would be. The mechanism is
+that all three openers now reach max inside the 240s window, so the measurement
+is closer to a pure comparison of ceilings; the ceilings themselves did not move.
+The threshold was not relaxed.
+
+**`tools/builds.mjs` moved the other way, and it is the wider question.** Policy
+spread in wave reached 0.77 -> 1.30, seed spread 2.91 -> 3.51, ratio 0.27 ->
+0.37 — and the gate's own note says a ratio drop only matters if policy spread
+fell with it. It rose. Across seven pick policies the choice matters *more* than
+it did; what `combine` measures is narrower — chasing one named recipe against
+taking card zero — and that specific gap is what closed.
+
+**Fail-tests run, per assertion.** `levelup` was seen red three separate ways
+(a steps array one short: "chime has 1 steps, want 2"; a rig ladder one short:
+"rig laser has 2 levels, want 3"; a step that loses dps: "tremolo L3 is weaker
+than L2"). `mirror` was seen red by making the second copy of the duet threshold
+in `render/levelup.ts` disagree by one — 1757 of 4000 loadouts and 3070 of 12274
+workbench rows — and green again on restore, with every denominator non-zero.
 
 ### Phase review: what survived the skeptics, and what did not
 
@@ -349,3 +495,48 @@ scope. The single highest-leverage next action is not on this list: it is to
 play `renders/capture-all-16.wav`. This phase made the largest audio change in
 the project's history on spectra alone, and the artefact that would settle it
 already exists and is 31 seconds long.
+
+### The arena's blocker was measured, and one tool would have cleared it wrongly
+
+Recorded because the two-tool result is the transferable part, not the fix.
+
+`docs/research-camera.md` §2a has said since the first day of this turnaround
+that `WarpGrid` is *"the one genuine perf cliff"* between this game and a bigger
+arena, on the grounds that it materialises the whole field every frame — 285
+points now, 2420 at 3×, ~88% of them off screen. Every plan since has sequenced
+the arena behind it. Nobody measured it.
+
+**`tools/gridcost.mjs`** times the JavaScript against a recording context:
+0.018 ms/frame today, 0.156 at 3×. That is **0.9% of a 60 Hz frame**, and on that
+evidence the cliff does not exist and the arena is free.
+
+That evidence is wrong. A recording context counts `lineTo` calls; it does not
+draw them. The call count goes 536 → 4741, and strokes are the expensive half of
+a Canvas2D frame.
+
+**`tools/gridraster.mjs`** draws the same lattice into a real canvas in Chromium
+and flushes with a 1×1 `getImageData` — without which the clock measures how long
+it took to *queue* the work:
+
+| field | points | ms/frame | of 60 Hz |
+|---|---|---|---|
+| 900×1120 | 285 | 0.104 | 0.6% |
+| 1800×1800 | 900 | 0.443 | 2.7% |
+| 2700×3360 | 2420 | **5.002** | **30.0%** |
+| 3× field, **1× view** | 2420 | **0.198** | **1.2%** |
+
+Cost scales 48× where points scale 8.5×. **So the cliff was real and the stated
+mechanism was wrong** — it is the area being painted, not the number of points,
+and a fix aimed at point count would have missed it entirely.
+
+The lesson generalises and is why both tools are kept rather than the winner: a
+stub that counts calls measures the half of a renderer that is usually cheap. It
+is the same shape as the `attackfloor` note in `AGENTS.md` §6 — knowing what a
+column actually contains — and the same shape as `combine`'s control, which was
+accidentally valid until the thing making it valid moved.
+
+Culling is by whole rows and columns rather than per segment, because the two
+inner loops are flat passes over a typed array and their speed is in not
+branching per point. The view argument is optional, so this is a numeric no-op
+until something has a camera to pass; `gridcheck`, `flicker`, `framecheck` and
+`effectsdraw` passing is the evidence for that.
