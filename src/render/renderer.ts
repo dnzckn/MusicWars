@@ -22,6 +22,7 @@ import { INVULN_ON_HIT } from '../game/player';
 import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
 import { SHARD_HUES } from '../game/world';
+import { PLAYFIELD_H, PLAYFIELD_W } from '../game/field';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
 import { enemyBulletSprites, playerBulletSprites, ROTATIONS, softDot } from './sprites';
@@ -434,6 +435,8 @@ export class Renderer {
       glow: this.legacyStrobe ? this.pulse : tension * 0.4,
     }, this.viewRect());
 
+    this.drawBounds(g);
+
     // Under everything: a well is ground the player is standing on, so it must
     // not sit over the shapes and pickups the player is reading.
     this.drawWells(g);
@@ -475,6 +478,71 @@ export class Renderer {
    * -shakeY, 900, 1120)` — a rectangle that always covers the whole field, so
    * every consumer sees exactly what it saw before the camera existed.
    */
+  /**
+   * The edge of the world, drawn only when it is in shot.
+   *
+   * WHY THIS EXISTS. Until the field grew, the edge of the arena was the edge of
+   * the canvas and the player could not miss it. At 3000x3000 behind a 900x1120
+   * window the boundary is somewhere off screen almost all of the time, and when
+   * you finally reach it NOTHING tells you: the lattice runs to the canvas edge
+   * exactly as it does mid-field, and the only feedback is that you stop moving.
+   * Driving the camera into the clamped corner and finding no wall was the most
+   * obvious remaining gap after the arena landed, and it was reported honestly
+   * rather than shipped quietly.
+   *
+   * A wall the player runs into with no warning is worse than no wall, so this
+   * is a GRADIENT and not a line: the glow strengthens over the last 260px of
+   * approach, which is roughly half a second at PLAYER_SPEED, so it arrives as
+   * "you are running out of room" before it becomes "you have stopped".
+   *
+   * Only the edges within the view are drawn, and the whole thing is skipped
+   * when none are. Mid-field that is four cheap comparisons and no path at all,
+   * which matters because this sits inside the per-frame camera transform.
+   *
+   * Deliberately drawn AFTER the lattice and BEFORE anything alive: it is
+   * scenery, and it must never sit over a bullet the player is reading. It uses
+   * the same hue as the grid so it reads as the same surface ending rather than
+   * as a new object.
+   */
+  private drawBounds(g: CanvasRenderingContext2D): void {
+    const v = this.viewRect();
+    const FADE = 260;
+
+    const nearL = v.x < FADE;
+    const nearR = v.x + v.w > PLAYFIELD_W - FADE;
+    const nearT = v.y < FADE;
+    const nearB = v.y + v.h > PLAYFIELD_H - FADE;
+    if (!nearL && !nearR && !nearT && !nearB) return;
+
+    // 0 at FADE away, 1 with the edge against the view edge. Squared so the
+    // last stretch of the approach carries most of the change.
+    const lit = (gap: number) => {
+      const t = clamp01(1 - gap / FADE);
+      return t * t;
+    };
+
+    const band = (x0: number, y0: number, x1: number, y1: number, a: number, hx: number, hy: number) => {
+      if (a <= 0.01) return;
+      const grad = g.createLinearGradient(x0, y0, x0 + hx, y0 + hy);
+      grad.addColorStop(0, `hsla(${this.hue}, 90%, 66%, ${0.5 * a})`);
+      grad.addColorStop(1, `hsla(${this.hue}, 90%, 66%, 0)`);
+      g.fillStyle = grad;
+      g.fillRect(Math.min(x0, x1 + hx), Math.min(y0, y1 + hy), Math.abs(x1 - x0) + Math.abs(hx), Math.abs(y1 - y0) + Math.abs(hy));
+      g.strokeStyle = `hsla(${this.hue}, 95%, 78%, ${0.85 * a})`;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(x0, y0);
+      g.lineTo(x1, y1);
+      g.stroke();
+    };
+
+    const D = 150;
+    if (nearL) band(0, v.y, 0, v.y + v.h, lit(v.x), D, 0);
+    if (nearR) band(PLAYFIELD_W, v.y, PLAYFIELD_W, v.y + v.h, lit(PLAYFIELD_W - (v.x + v.w)), -D, 0);
+    if (nearT) band(v.x, 0, v.x + v.w, 0, lit(v.y), 0, D);
+    if (nearB) band(v.x, PLAYFIELD_H, v.x + v.w, PLAYFIELD_H, lit(PLAYFIELD_H - (v.y + v.h)), 0, -D);
+  }
+
   private viewRect(): { x: number; y: number; w: number; h: number } {
     const w = this.world;
     return { x: -w.camera.x, y: -w.camera.y, w: w.viewW, h: w.viewH };
