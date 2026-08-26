@@ -74,9 +74,31 @@ function committed() {
  * across runs of this tool. `builds.mjs` already shows `first` and `random`
  * land within noise of one another, so which inattentive policy stands in here
  * does not change the conclusion.
+ *
+ * IT MUST ACTUALLY DECLINE FUSIONS, and for most of this tool's life it did not.
+ * The control was `pick: () => 0` and the report calls it "a player who never
+ * chooses one". That was true while fusion cards were rare: index 0 was almost
+ * never a fusion, so taking it was indistinguishable from refusing. Once the
+ * level ladder shortened from 8 rungs to 3, fusion cards became common, index 0
+ * was frequently a fusion, and the control started FUSING 5.13 TIMES PER RUN
+ * while still being described as the player who never does. The comparison went
+ * degenerate and the tool reported "the choice does not matter" — which was a
+ * statement about its own control, not about the game.
+ *
+ * This is the failure this directory keeps finding in a new place: a proxy that
+ * was accidentally valid, and stayed in use after the thing that made it valid
+ * moved. It now skips fusion cards explicitly and falls back to index 0 only
+ * when every option is one.
  */
 function inattentive() {
-  return { seen: { base: 0, cat: 0, fusion: 0 }, target: null, pick: () => 0 };
+  return {
+    seen: { base: 0, cat: 0, fusion: 0 },
+    target: null,
+    pick: (offer) => {
+      const i = offer.options.findIndex((o) => !o.fusion);
+      return i >= 0 ? i : 0;
+    },
+  };
 }
 
 function run(seed, policy) {

@@ -27,7 +27,30 @@ const { World } = await import(`${R}game/world.ts`);
 
 const DT = 1 / 120;
 /** Offers to answer before holding one, so the field has armed shooters on it. */
-const SKIP_OFFERS = 12;
+/*
+ * 20, raised from 12.
+ *
+ * This is how many offers to answer before the hold is tested, and it exists so
+ * the run has reached a state with ARMED enemies on the field — the whole point
+ * of the no-dump check is that a stopped world does not let a volley accumulate
+ * and then release it on resume, and a field with nothing armed cannot show
+ * that either way.
+ *
+ * 12 stopped being enough when the level ladder went from 8 rungs to 3. Offers
+ * now arrive roughly every 18 seconds instead of every 27, so twelve of them is
+ * a much earlier point in the run, and the tool was reaching its hold before any
+ * enemy was armed. It said so rather than passing — "the no-dump check measured
+ * nothing; raise SKIP_OFFERS" — which is the behaviour this directory wants and
+ * the reason this was a two-minute fix instead of a silent hole.
+ *
+ * Not raised further: at 30 the tool reports bullets appearing during a hold
+ * whose world time is +0.0000s, and an enemy drift of NaN. That is either a real
+ * defect in something that spawns outside the simulation-time gate, or the drift
+ * comparison breaking when the enemy set changes under it. It is not diagnosed
+ * and it is not this change; it is recorded here so the next person to raise
+ * this constant knows what they will walk into.
+ */
+const SKIP_OFFERS = 20;
 const inputs = () => ({ x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false });
 
 /** Run until an offer opens, holding it `holdSecs`, then answer and watch. */
