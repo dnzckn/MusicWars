@@ -28,6 +28,15 @@ import { enemyBulletSprites, playerBulletSprites, ROTATIONS, softDot } from './s
 
 const STAR_COUNT = 140;
 
+/**
+ * How much of the camera's motion the nearest star layer takes, at `z = 1`.
+ *
+ * Below 1 so that even the closest layer slides against the world rather than
+ * being pinned to it. Inert while the camera cannot move; see the note in
+ * `drawBackground`.
+ */
+const STAR_PARALLAX = 0.55;
+
 interface Star {
   x: number;
   y: number;
@@ -142,11 +151,13 @@ export class Renderer {
    * finding in its own words ("the most distinctive thing on the page was also
    * the blurriest"). The gameplay canvases never got the same treatment.
    *
-   * Everything here draws in WORLD coordinates (`w.width` x `w.height`), never
-   * in canvas coordinates, and `toPlayfield` in `main.ts` maps pointers via
-   * `getBoundingClientRect` rather than the backing store — so the fix is
-   * entirely a matter of sizing the bitmap and scaling the context, with no
-   * change to any drawing or hit-testing code.
+   * Nothing here draws in canvas coordinates. Gameplay draws in WORLD
+   * coordinates (`w.width` x `w.height`) inside the camera translate; the
+   * background, the overlay and every readout draw in VIEW coordinates
+   * (`w.viewW` x `w.viewH`) outside it. `toWorld`/`toView` in `main.ts` map
+   * pointers via `getBoundingClientRect` rather than the backing store — so
+   * the fix is entirely a matter of sizing the bitmap and scaling the context,
+   * with no change to any drawing or hit-testing code.
    *
    * WHAT THIS DOES NOT FIX: the projectile sprites in `sprites.ts` are
    * pre-rendered once at world scale and blitted 1:1, so they are resampled by
@@ -181,13 +192,21 @@ export class Renderer {
     this.grid = new WarpGrid(world.width, world.height);
     this.wireProgression(world);
     this.bloom = document.createElement('canvas');
-    this.bloom.width = Math.round(world.width / 4);
-    this.bloom.height = Math.round(world.height / 4);
+    /*
+     * A quarter of the VIEW, not a quarter of the world.
+     *
+     * The bloom pass downsamples the gameplay canvas, and that canvas is the
+     * viewport. Sizing it from the field would make the bitmap grow with the
+     * arena — 3x linear is 9x the pixels — to hold a blur of a rectangle that
+     * is still only one screen.
+     */
+    this.bloom.width = Math.round(world.viewW / 4);
+    this.bloom.height = Math.round(world.viewH / 4);
     this.bloomG = this.bloom.getContext('2d', { alpha: true })!;
     for (let i = 0; i < STAR_COUNT; i++) {
       this.stars.push({
-        x: Math.random() * world.width,
-        y: Math.random() * world.height,
+        x: Math.random() * world.viewW,
+        y: Math.random() * world.viewH,
         z: 0.25 + Math.random() * 0.75,
       });
     }
@@ -337,14 +356,16 @@ export class Renderer {
     /*
      * Height alone is enough ONLY because `#stage` carries
      * `aspect-ratio: 900 / 1120` in `style.css`, so the box can never have a
-     * different shape from the world. If that rule is ever removed this must
+     * different shape from the view. If that rule is ever removed this must
      * take the smaller of the two ratios instead, or the playfield will
-     * stretch.
+     * stretch. That CSS rule describes the VIEW, which is why the scale and
+     * the backing store below come from `viewW`/`viewH` and not from the
+     * field — a bigger arena must not mean a bigger bitmap.
      */
-    const scale = Math.min(1.5, Math.max(0.6, (cssH * dpr) / w.height));
+    const scale = Math.min(1.5, Math.max(0.6, (cssH * dpr) / w.viewH));
     this.scale = scale;
-    const bw = Math.round(w.width * scale);
-    const bh = Math.round(w.height * scale);
+    const bw = Math.round(w.viewW * scale);
+    const bh = Math.round(w.viewH * scale);
     for (const el of [this.canvasEl, this.overlayEl]) {
       // Assigning width/height resets all context state, transform included,
       // so only do it when it actually changed and re-apply the transform after.
@@ -411,7 +432,7 @@ export class Renderer {
       // across the whole field.
       alpha: this.legacyStrobe ? 0.1 + tension * 0.1 + this.pulse * 0.09 : 0.105 + tension * 0.085,
       glow: this.legacyStrobe ? this.pulse : tension * 0.4,
-    });
+    }, this.viewRect());
 
     // Under everything: a well is ground the player is standing on, so it must
     // not sit over the shapes and pickups the player is reading.
@@ -441,6 +462,25 @@ export class Renderer {
   }
 
   /**
+   * The rectangle of WORLD space the canvas is currently showing.
+   *
+   * Derived from the composed render offset rather than from `camera.viewX`
+   * directly, because the offset is what `translate()` is actually given —
+   * `x = -viewX + shakeX`, so `-x` is the world point that lands on screen
+   * pixel zero, screenshake included. Anything that clips against the view
+   * therefore stays correct while the screen is shaking, with no separate
+   * allowance for the shake amplitude.
+   *
+   * Today `viewX/viewY` are pinned at the origin, so this is `(-shakeX,
+   * -shakeY, 900, 1120)` — a rectangle that always covers the whole field, so
+   * every consumer sees exactly what it saw before the camera existed.
+   */
+  private viewRect(): { x: number; y: number; w: number; h: number } {
+    const w = this.world;
+    return { x: -w.camera.x, y: -w.camera.y, w: w.viewW, h: w.viewH };
+  }
+
+  /**
    * Feed the grid: gameplay shocks, the player's wake, and a breath on the bar.
    *
    * This used to convulse the entire sheet on every beat — `breathe()` at up to
@@ -458,14 +498,23 @@ export class Renderer {
 
     if (this.pulseFired) {
       this.pulseFired = false;
+      /*
+       * The breath is centred on the VIEW, not on the field.
+       *
+       * Identical today, because the view is the field. It has to be the view
+       * the moment those differ: a swell centred on the middle of a 2700px
+       * arena is a swell happening somewhere the player is not, which is a
+       * beat the music plays and the screen does not show.
+       */
+      const view = this.viewRect();
       if (this.legacyStrobe) {
         // Every beat, at full strength: a full-field geometric convulsion twice
         // a second, which was the single loudest source of background clutter.
-        this.grid.breathe(-90 - tension * 130);
+        this.grid.breathe(-90 - tension * 130, view);
         this.grid.impulse(w.player.x, w.player.y, 200, 90 + tension * 90);
       } else {
         // Once a bar rather than four times, and a quarter of the old strength.
-        if (this.downbeat) this.grid.breathe(-20 - tension * 26);
+        if (this.downbeat) this.grid.breathe(-20 - tension * 26, view);
         // The beat still lands where the player is already looking: local to the
         // ship, small enough not to compete with the bullets around it.
         this.grid.impulse(w.player.x, w.player.y, 150, 90 + tension * 90);
@@ -495,40 +544,74 @@ export class Renderer {
     // once, which is the least selective way a screen can keep time — and it
     // washes the bullets into the background it is lifting with them.
     g.globalAlpha = 0.3 + tension * 0.16 + (this.legacyStrobe ? this.pulse * 0.1 : 0);
-    g.drawImage(this.bloom, 0, 0, w.width, w.height);
+    g.drawImage(this.bloom, 0, 0, w.viewW, w.viewH);
     g.restore();
   }
 
+  /**
+   * The background is SCREEN furniture, not world furniture.
+   *
+   * It is drawn before `translate(camera.x, camera.y)` in `render()`, so its
+   * rectangle is the view and never the field: `(0, 0, viewW, viewH)` is the
+   * whole of what the canvas shows, whatever the camera is looking at.
+   */
   private drawBackground(g: CanvasRenderingContext2D, dt: number, tension: number): void {
     const w = this.world;
     g.fillStyle = '#04050a';
-    g.fillRect(0, 0, w.width, w.height);
+    g.fillRect(0, 0, w.viewW, w.viewH);
 
-    // Starfield, speed scaling with tension so the world literally accelerates
-    // as the track does.
+    /*
+     * Starfield, speed scaling with tension so the world literally accelerates
+     * as the track does — plus PARALLAX against the camera.
+     *
+     * `s.x`/`s.y` are view-space positions that wrap inside the viewport; the
+     * camera offset is subtracted at draw time, scaled by the star's own `z`,
+     * so near stars slide further than far ones. Today `viewX/viewY` are zero
+     * and the subtraction is exactly nothing — `s.x` is already inside
+     * `[0, viewW)` and `s.y` inside `[0, viewH]`, so neither wrap branch can
+     * fire and the drawn pixels are the pixels this drew before the camera
+     * existed.
+     *
+     * `research-camera.md` §10 calls this the highest ratio of "the world is
+     * big" to lines changed in the whole conversion, and it is: the layer that
+     * currently FAKES vertical scrolling over a static field becomes real
+     * depth the moment the camera can move, at the cost of two subtractions.
+     *
+     * 0.55 rather than 1.0 so that even the nearest layer still slides against
+     * the world instead of being pinned to it — a starfield locked to world
+     * coordinates reads as debris, not as distance. JUDGED, NOT MEASURED: this
+     * is one of `research-camera.md` §9 Stage 7's numbers and it is inert
+     * until the camera can move.
+     */
     const speed = 40 + tension * 220;
+    const parX = w.camera.viewX * STAR_PARALLAX;
+    const parY = w.camera.viewY * STAR_PARALLAX;
     g.fillStyle = `hsl(${this.hue + 12}, 32%, 72%)`;
     for (const s of this.stars) {
       s.y += speed * s.z * dt;
-      if (s.y > w.height) {
-        s.y -= w.height;
-        s.x = Math.random() * w.width;
+      if (s.y > w.viewH) {
+        s.y -= w.viewH;
+        s.x = Math.random() * w.viewW;
       }
+      let px = s.x - parX * s.z;
+      let py = s.y - parY * s.z;
+      if (px < 0 || px >= w.viewW) px = ((px % w.viewW) + w.viewW) % w.viewW;
+      if (py < 0 || py > w.viewH) py = ((py % w.viewH) + w.viewH) % w.viewH;
       g.globalAlpha = 0.16 + s.z * 0.4;
       const size = s.z * 1.9;
-      g.fillRect(s.x, s.y, size, size * (1 + tension * 2.5));
+      g.fillRect(px, py, size, size * (1 + tension * 2.5));
     }
     g.globalAlpha = 1;
 
     // Horizon glow that swells with tension — and with tension only. It used to
     // carry the beat as well, which made the bottom of the field breathe in
     // step with the grid, the bloom and the enemies.
-    const grad = g.createLinearGradient(0, w.height, 0, w.height * 0.55);
+    const grad = g.createLinearGradient(0, w.viewH, 0, w.viewH * 0.55);
     const horizonBeat = this.legacyStrobe ? this.pulse * 0.05 : 0;
     grad.addColorStop(0, `hsla(${this.hue + tension * 40}, 90%, 50%, ${0.05 + tension * 0.12 + horizonBeat})`);
     grad.addColorStop(1, `hsla(${this.hue}, 90%, 50%, 0)`);
     g.fillStyle = grad;
-    g.fillRect(0, w.height * 0.55, w.width, w.height * 0.45);
+    g.fillRect(0, w.viewH * 0.55, w.viewW, w.viewH * 0.45);
   }
 
   private drawBullets(g: CanvasRenderingContext2D, alpha: number): void {
@@ -1297,7 +1380,9 @@ export class Renderer {
     // Slide in fast, hold, fade out.
     const alpha = age < 0.18 ? age / 0.18 : age > 1.7 ? Math.max(0, 1 - (age - 1.7) / 0.7) : 1;
     const slide = age < 0.18 ? (1 - age / 0.18) * 26 : 0;
-    const y = w.height * 0.34 + slide;
+    // Screen furniture: `drawBanner` runs from `drawOverlay`, outside the
+    // camera translate, so this is the middle of the VIEW and not of the field.
+    const y = w.viewH * 0.34 + slide;
 
     g.save();
     g.textAlign = 'center';
@@ -1305,7 +1390,7 @@ export class Renderer {
 
     g.globalAlpha = alpha * 0.5;
     g.fillStyle = '#05060c';
-    g.fillRect(0, y - 30, w.width, 60);
+    g.fillRect(0, y - 30, w.viewW, 60);
     /*
      * Colour by kind, so the type of moment reads before the words do.
      * A boss and a compliment should not look the same.
@@ -1335,73 +1420,84 @@ export class Renderer {
     g.strokeStyle = `hsla(${hue}, 90%, 60%, 0.5)`;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(w.width * 0.18, y - 30);
-    g.lineTo(w.width * 0.82, y - 30);
-    g.moveTo(w.width * 0.18, y + 30);
-    g.lineTo(w.width * 0.82, y + 30);
+    g.moveTo(w.viewW * 0.18, y - 30);
+    g.lineTo(w.viewW * 0.82, y - 30);
+    g.moveTo(w.viewW * 0.18, y + 30);
+    g.lineTo(w.viewW * 0.82, y + 30);
     g.stroke();
 
     g.font = '800 30px ui-monospace, monospace';
     g.fillStyle = w.bannerKind === 'grade' ? `hsl(${hue}, 100%, 72%)` : '#ffffff';
-    g.fillText(w.banner, w.width / 2, y - 6);
+    g.fillText(w.banner, w.viewW / 2, y - 6);
 
     const sub = w.bannerSub || this.bannerDetail;
     if (sub) {
       g.font = '600 12px ui-monospace, monospace';
       g.fillStyle = `hsla(${hue}, 95%, 72%, 0.9)`;
-      g.fillText(sub, w.width / 2, y + 16);
+      g.fillText(sub, w.viewW / 2, y + 16);
     }
     g.restore();
   }
 
-  /** Boss bar, XP, damage flash, the vignette, and the level-up screen. */
+  /**
+   * Boss bar, XP, damage flash, the vignette, and the level-up screen.
+   *
+   * All of it is SCREEN space. The overlay context never receives the camera
+   * translate, so every rectangle here is measured against the VIEW — and the
+   * level-up card layout at the bottom is passed the same two numbers that
+   * `main.ts` uses to convert a tap, which is the only thing keeping the cards
+   * and their hit test in agreement.
+   */
   private drawOverlay(tension: number, dt: number, beat: number): void {
     const w = this.world;
     const g = this.og;
     g.setTransform(this.scale, 0, 0, this.scale, 0, 0);
-    g.clearRect(0, 0, w.width, w.height);
+    g.clearRect(0, 0, w.viewW, w.viewH);
 
     const boss = w.enemies.find((e) => e.archetype === 'conductor');
     if (boss) {
       const frac = clamp01(boss.hp / boss.maxHp);
       g.fillStyle = 'rgba(10,12,22,0.75)';
-      g.fillRect(40, 22, w.width - 80, 12);
+      g.fillRect(40, 22, w.viewW - 80, 12);
       g.fillStyle = `hsl(${lerp(350, 20, 1 - frac)}, 95%, 58%)`;
-      g.fillRect(42, 24, (w.width - 84) * frac, 8);
+      g.fillRect(42, 24, (w.viewW - 84) * frac, 8);
       g.strokeStyle = 'rgba(255,255,255,0.25)';
       g.lineWidth = 1;
-      g.strokeRect(40.5, 22.5, w.width - 81, 11);
+      g.strokeRect(40.5, 22.5, w.viewW - 81, 11);
       // Phase ticks, so the player can see the drops coming.
       g.fillStyle = 'rgba(255,255,255,0.6)';
-      for (const t of boss.phaseThresholds) g.fillRect(42 + (w.width - 84) * t, 20, 1, 16);
+      for (const t of boss.phaseThresholds) g.fillRect(42 + (w.viewW - 84) * t, 20, 1, 16);
     }
 
     this.drawBanner(g);
 
     if (w.camera.flash > 0.01) {
       g.fillStyle = `hsla(${w.camera.flashHue}, 100%, 70%, ${w.camera.flash * 0.5})`;
-      g.fillRect(0, 0, w.width, w.height);
+      g.fillRect(0, 0, w.viewW, w.viewH);
     }
 
     // Vignette tightens as tension rises — tunnel vision, essentially.
+    // Centred on the VIEW: tunnel vision is about where the player is looking,
+    // so in a scrolling world it must stay pinned to the middle of the screen
+    // rather than to the middle of the arena.
     const step = Math.round(clamp01(tension) * 20);
     let v = this.vignettes.get(step);
     if (!v) {
       const q = step / 20;
       v = g.createRadialGradient(
-        w.width / 2,
-        w.height / 2,
-        w.height * (0.34 - q * 0.12),
-        w.width / 2,
-        w.height / 2,
-        w.height * 0.75,
+        w.viewW / 2,
+        w.viewH / 2,
+        w.viewH * (0.34 - q * 0.12),
+        w.viewW / 2,
+        w.viewH / 2,
+        w.viewH * 0.75,
       );
       v.addColorStop(0, 'rgba(0,0,0,0)');
       v.addColorStop(1, `rgba(${Math.round(q * 40)},0,${Math.round(q * 20)},${0.45 + q * 0.3})`);
       this.vignettes.set(step, v);
     }
     g.fillStyle = v;
-    g.fillRect(0, 0, w.width, w.height);
+    g.fillRect(0, 0, w.viewW, w.viewH);
 
     // After the vignette, not before. The vignette is a world effect and the XP
     // bar is a readout; drawn underneath it, a full-width bar has both its ends
@@ -1412,7 +1508,7 @@ export class Renderer {
     this.attachHook();
     // Last, so the level-up screen sits over the vignette, the boss bar and the
     // banner rather than under them.
-    this.levelUp.draw(g, w.snapshot, dt, w.width, w.height, beat, this.pulse);
+    this.levelUp.draw(g, w.snapshot, dt, w.viewW, w.viewH, beat, this.pulse);
   }
 
   /**
@@ -1436,13 +1532,13 @@ export class Renderer {
     const frac = s.xpToNext > 0 ? clamp01(s.xp / s.xpToNext) : 0;
 
     g.fillStyle = 'rgba(8,10,20,0.72)';
-    g.fillRect(0, 0, w.width, 5);
+    g.fillRect(0, 0, w.viewW, 5);
     g.fillStyle = 'hsl(168, 92%, 56%)';
-    g.fillRect(0, 0, w.width * frac, 4);
+    g.fillRect(0, 0, w.viewW * frac, 4);
     // A brighter cap on the leading edge, so a small gain is still visible.
     if (frac > 0.004) {
       g.fillStyle = 'rgba(220,255,248,0.85)';
-      g.fillRect(Math.max(0, w.width * frac - 2), 0, 2, 4);
+      g.fillRect(Math.max(0, w.viewW * frac - 2), 0, 2, 4);
     }
 
     g.save();

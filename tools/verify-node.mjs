@@ -50,7 +50,16 @@ const GROUPS = [
     'tune', 'clash', 'contour', 'motif', 'rhythm', 'basscheck', 'leadcheck',
     'motorcheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
   ]],
-  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn', 'gridcost']],
+  /*
+   * `gridview` is in `rules` next to `gridcost` because it costs about the
+   * same and asks the adjacent question: `gridcost` measures what the lattice
+   * costs, `gridview` asserts that the cost is bounded by the VIEWPORT rather
+   * than by the field. The argument that makes that true is an OPTIONAL
+   * parameter on `WarpGrid.draw`, so dropping it silently reverts the arena to
+   * painting the whole world with every other gate still green — which is
+   * precisely the sort of thing this list exists to catch.
+   */
+  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn', 'gridcost', 'gridview']],
   ['slow', 600, [
     'brain', 'pause', 'drops', 'overdrive', 'session', 'realprobe',
     /*

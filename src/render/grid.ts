@@ -88,8 +88,39 @@ export class WarpGrid {
   private readonly width: number;
   private readonly height: number;
 
-  /* Explicit fields, not parameter properties — see the note on `Latch` in
-   * `core/math.ts`; `erasableSyntaxOnly` in tsconfig enforces it. */
+  /*
+   * THE LATTICE IS ALLOCATED FROM THE WORLD, ON PURPOSE, and the draw clip is
+   * what makes the field size free rather than a smaller allocation.
+   *
+   * `research-camera.md` §9 Stage 3 proposed the other option: allocate at
+   * VIEW plus a cell of bleed and scroll the home positions with the camera,
+   * snapped to `SPACING`. It is not done, and the reasons are measurements
+   * rather than taste.
+   *
+   * The cliff that made this a blocker was RASTERISATION, not allocation.
+   * `tools/gridraster.mjs` put a 3x field at 5.0 ms/frame — 30% of a 60Hz
+   * budget — where `tools/gridcost.mjs` put the JavaScript at 0.156 ms, 0.9%.
+   * Clipping the draw to the view takes the raster cost to 0.198 ms, 25x
+   * cheaper, and that is the whole cliff gone. A view-sized allocation would
+   * additionally save the integration pass: 0.9% of a frame, at a field size
+   * this game does not yet have.
+   *
+   * Against that 0.9% it costs three things. `impulse()` maps a world pixel
+   * straight to a cell index (`floor(px / SPACING)`), which stops being true
+   * the moment home positions scroll, so every shock, every wake and every
+   * breath would need translating. Deformation OUTSIDE the view would be
+   * discarded rather than remembered, so scrolling back to where a bomb went
+   * off would show an undisturbed sheet. And snapping the scroll to `SPACING`
+   * to stop the points popping is a feel problem that needs a browser and a
+   * person, which is `research-camera.md`'s own Stage 7.
+   *
+   * So: world-sized allocation, view-clipped draw. If the integration pass
+   * ever shows up in a real frame budget, `gridcost` is the tool that will say
+   * so and this decision can be revisited with a number attached.
+   *
+   * Explicit fields, not parameter properties — see the note on `Latch` in
+   * `core/math.ts`; `erasableSyntaxOnly` in tsconfig enforces it.
+   */
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
@@ -153,11 +184,20 @@ export class WarpGrid {
     }
   }
 
-  /** A ring of outward pressure centred on the field, used for beat breathing. */
-  breathe(strength: number): void {
-    const cx = this.width * 0.5;
-    const cy = this.height * 0.5;
-    this.impulse(cx, cy, Math.max(this.width, this.height), strength);
+  /**
+   * A ring of outward pressure, used for beat breathing.
+   *
+   * Centred on `view` when one is given, and on the field when one is not.
+   * With the view equal to the field the two are the same point and the same
+   * radius, which is why passing one changes nothing today — but a breath is a
+   * thing the player is supposed to SEE, so in a scrolling world it belongs
+   * where they are looking rather than at the middle of the arena.
+   */
+  breathe(strength: number, view?: GridView): void {
+    const cx = view ? view.x + view.w * 0.5 : this.width * 0.5;
+    const cy = view ? view.y + view.h * 0.5 : this.height * 0.5;
+    const radius = view ? Math.max(view.w, view.h) : Math.max(this.width, this.height);
+    this.impulse(cx, cy, radius, strength);
   }
 
   update(dt: number): void {
@@ -267,14 +307,22 @@ export class WarpGrid {
     g.strokeStyle = `hsla(${style.hue}, 90%, ${52 + style.glow * 26}%, ${style.alpha})`;
     g.stroke();
 
-    // A second, brighter pass only where the sheet is actually deformed. This is
-    // what makes an explosion look like it tore the grid rather than nudged it.
+    /*
+     * A second, brighter pass only where the sheet is actually deformed. This is
+     * what makes an explosion look like it tore the grid rather than nudged it.
+     *
+     * Bounded by the SAME window as the pass above, and it has to be: this is
+     * the pass a bomb lights up, and an unclipped version would stroke torn
+     * edges across the whole arena — the expensive half of the frame, spent
+     * entirely off screen. With the view covering the field the bounds are the
+     * full range, so the two versions draw the same segments.
+     */
     const stressMin = this.legacy ? STRESS_MIN_LEGACY : STRESS_MIN;
     g.beginPath();
     let any = false;
-    for (let r = 0; r < rows; r++) {
+    for (let r = r0; r < r1; r++) {
       const base = r * cols;
-      for (let c = 1; c < cols; c++) {
+      for (let c = Math.max(1, c0 + 1); c < c1; c++) {
         const i = base + c;
         const j = i - 1;
         if (this.stress(i) + this.stress(j) < stressMin) continue;
@@ -283,8 +331,8 @@ export class WarpGrid {
         any = true;
       }
     }
-    for (let c = 0; c < cols; c++) {
-      for (let r = 1; r < rows; r++) {
+    for (let c = c0; c < c1; c++) {
+      for (let r = Math.max(1, r0 + 1); r < r1; r++) {
         const i = r * cols + c;
         const j = i - cols;
         if (this.stress(i) + this.stress(j) < stressMin) continue;

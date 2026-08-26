@@ -128,13 +128,49 @@ const input = new Input();
 const touchControls = document.getElementById('touch-controls')!;
 const stage = document.getElementById('stage')!;
 
-/** Convert a pointer position into playfield coordinates. */
-function toPlayfield(e: PointerEvent): { x: number; y: number } {
+/*
+ * ONE POINTER, TWO COORDINATE SYSTEMS.
+ *
+ * These were a single `toPlayfield` because today `VIEW_W/H` and
+ * `PLAYFIELD_W/H` are the same numbers, so a tap has the same coordinates in
+ * both. They are separated now, before a camera makes them differ, because the
+ * two callers want genuinely different things and the failure mode of getting
+ * it wrong is invisible — see `routeOfferPointer` below.
+ *
+ *   toView  — where on the SCREEN the finger landed. The level-up cards, the
+ *             reroll and skip controls and everything else on the overlay are
+ *             laid out against `viewW`/`viewH` (`renderer.ts` passes exactly
+ *             those into `levelUp.draw`), so a hit test must use the same pair.
+ *   toWorld — which point in the SIMULATION the finger is pointing at. This is
+ *             a steering target and is compared against the ship's own
+ *             position in `input.ts`, which is world space.
+ */
+
+/** Where on the screen the pointer landed, in view coordinates. */
+function toView(e: PointerEvent): { x: number; y: number } {
   const r = playfield.getBoundingClientRect();
   return {
-    x: ((e.clientX - r.left) / r.width) * world.width,
-    y: ((e.clientY - r.top) / r.height) * world.height,
+    x: ((e.clientX - r.left) / r.width) * world.viewW,
+    y: ((e.clientY - r.top) / r.height) * world.viewH,
   };
+}
+
+/**
+ * Which point in the world the pointer is over, in simulation coordinates.
+ *
+ * Screen -> view -> plus the camera's top-left -> world. The camera is at the
+ * origin today so the last step adds zero, and it is written out anyway
+ * because the alternative is a function that looks like a pointless alias of
+ * `toView` and gets deleted by the next reader.
+ *
+ * `viewX`/`viewY` rather than the composed `camera.x`/`camera.y`: the composed
+ * offset carries screenshake, and a steering target that jitters with every
+ * explosion would make the ship twitch at exactly the moment the player most
+ * needs it to go where they pointed.
+ */
+function toWorld(e: PointerEvent): { x: number; y: number } {
+  const v = toView(e);
+  return { x: v.x + world.camera.viewX, y: v.y + world.camera.viewY };
 }
 
 /**
@@ -152,7 +188,7 @@ function toPlayfield(e: PointerEvent): { x: number; y: number } {
  */
 function routeOfferPointer(e: PointerEvent): boolean {
   if (!world.choosing) return false;
-  const pt = toPlayfield(e);
+  const pt = toView(e);
   const control = renderer.levelUp.hitTestControl(pt.x, pt.y);
   if (control === 'reroll') {
     input.pointerReroll = true;
@@ -181,7 +217,7 @@ stage.addEventListener('pointerdown', (e) => {
   }
   if (e.pointerType === 'mouse') return;
   touchControls.classList.remove('hidden');
-  const pt = toPlayfield(e);
+  const pt = toWorld(e);
   input.setPointerTarget(pt.x, pt.y);
   try {
     stage.setPointerCapture(e.pointerId);
@@ -200,7 +236,7 @@ stage.addEventListener('pointermove', (e) => {
   // the ship actually crept across the arena while they read; it still matters,
   // because the input is live even while the simulation is not.)
   if (world.choosing) return;
-  const pt = toPlayfield(e);
+  const pt = toWorld(e);
   input.setPointerTarget(pt.x, pt.y);
   e.preventDefault();
 });

@@ -27,6 +27,20 @@
  */
 import './lib/ts.mjs';
 
+/*
+ * The view size is IMPORTED, not copied.
+ *
+ * It was written out as `900, 1120` in four places here, and AGENTS.md's rule
+ * about that has a worked example in this very directory: `tools/contrast.mjs`
+ * kept its own field size, the field moved, every sample landed on background
+ * and it reported a total readability failure that was entirely its own.
+ *
+ * `src/game/field.ts` is a leaf module holding exactly these four numbers and
+ * importing nothing, so this costs no more than reading them off disk and the
+ * duck-typed world below stays duck-typed — none of the simulation is loaded.
+ */
+const { VIEW_W, VIEW_H, PLAYFIELD_W, PLAYFIELD_H } = await import('../src/game/field.ts');
+
 let Renderer;
 try {
   ({ Renderer } = await import('../src/render/renderer.ts'));
@@ -74,7 +88,7 @@ function recorder(sink) {
     },
   });
   const g = {
-    canvas: { width: 900, height: 1120 },
+    canvas: { width: VIEW_W, height: VIEW_H },
     save() {}, restore() {}, beginPath() {}, closePath() {}, clip() {},
     fill() { ops.push({ op: 'fill', style: String(fill) }); },
     stroke() { ops.push({ op: 'stroke', style: String(stroke) }); },
@@ -126,11 +140,12 @@ function recorder(sink) {
    * so it walked straight past the guard into
    * `Math.min(1.5, Math.max(0.6, (undefined * dpr) / height))`, which is NaN,
    * and `this.scale` was NaN for the whole run. Every frame then opened with
-   * `setTransform(NaN, ...)`. 1120 makes the scale exactly 1, so the recorded
-   * coordinates are world coordinates and the assertions below can be written
-   * in the units the world uses.
+   * `setTransform(NaN, ...)`. A `clientHeight` of exactly `VIEW_H` makes the
+   * scale exactly 1, so the recorded coordinates are world coordinates and the
+   * assertions below can be written in the units the world uses — and it stays
+   * exactly 1 if the viewport is ever retuned.
    */
-  g.canvas = { width: 900, height: 1120, clientHeight: 1120, clientWidth: 900, getContext: () => g };
+  g.canvas = { width: VIEW_W, height: VIEW_H, clientHeight: VIEW_H, clientWidth: VIEW_W, getContext: () => g };
   return { g, ops };
 }
 
@@ -175,8 +190,28 @@ const effect = (over) => ({
 /** A duck-typed world. `Renderer` imports `World` as a type only. */
 function makeWorld(effects, novas = [], wells = []) {
   return {
-    width: 900, height: 1120,
-    camera: { x: 0, y: 0, flash: 0, flashHue: 0 },
+    /*
+     * `width`/`height` are the SIMULATION extent and `viewW`/`viewH` are what
+     * the canvas shows. They are the same numbers today and the renderer reads
+     * both — the gameplay draws against the first pair, the background, the
+     * overlay and every readout against the second. Omitting `viewW`/`viewH`
+     * puts `undefined` into `fitCanvases`, `this.scale` becomes NaN, and every
+     * frame opens with `setTransform(NaN, ...)`: the exact failure the
+     * `clientHeight` note above records, one field further along.
+     */
+    width: PLAYFIELD_W, height: PLAYFIELD_H,
+    viewW: VIEW_W, viewH: VIEW_H,
+    /*
+     * THE ONLY COPY OF `Camera`'s SHAPE OUTSIDE `src`, so it has to be kept in
+     * step by hand — `research-camera.md` §7a names this exact object.
+     *
+     * `x`/`y` are the COMPOSED render offset the renderer translates by
+     * (`-viewX + shakeX`); `viewX`/`viewY` are where the top-left of the view
+     * sits in world space, which the renderer reads to clip the warp lattice.
+     * At the origin with no shake all four are zero, which is the state the
+     * game is in today.
+     */
+    camera: { x: 0, y: 0, viewX: 0, viewY: 0, flash: 0, flashHue: 0 },
     // Every field `drawPlayer` and `drawDrones` read. An absent one becomes
     // `undefined`, which reaches `translate()` as NaN — and a NaN in a colour
     // string throws inside `addColorStop` and kills the frame after the

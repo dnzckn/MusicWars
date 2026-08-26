@@ -2431,3 +2431,59 @@ spends a paragraph on. And the analyser is checked against a known answer
 rather than trusted: `--selftest` pushes a 1 kHz -20 dBFS stereo sine through
 it and should read -23.0 dBFS in the 1000 Hz band (a sine's mean square is 3 dB
 below its peak), 100.0% share, peak -20.0 dBFS, and -20.25 LUFS.
+
+---
+
+## gridview: the drawn lattice is a function of the VIEW, not the FIELD
+
+`WarpGrid` materialised the whole field and, for the project's whole life, also
+*drew* it. That was free while the field was one screen and it is the thing that
+blocked the arena. The number that mattered turned out not to be the one anyone
+argued about. `gridcost` times the JavaScript against a recording stub and puts
+a 3x field at **0.156 ms/frame, 0.9% of a 60Hz budget** — which reads as free.
+`gridraster` draws the same lattice into a real Chromium canvas and flushes it:
+**5.0 ms, 30% of a frame**, scaling 48x where the point count scales 8.5x. The
+cliff was painted AREA, not point count, and `docs/research-camera.md` §2a named
+the right cliff for the wrong reason.
+
+So `WarpGrid.draw` takes an optional view rectangle and bounds its loops to
+whole rows and columns. That fix has two halves and **either can rot silently**:
+
+- `grid.ts` could stop honouring the rectangle. Nothing else would notice —
+  the game looks identical either way today, because the view *is* the field,
+  and both `gridcost` and `gridraster` call `draw` with no view at all.
+- `renderer.ts` could stop *passing* one. The argument is optional, so dropping
+  it is a silent revert to painting the whole arena with every other gate green.
+
+`gridview` checks both, and the second half is why it drives the real
+`Renderer` rather than testing `WarpGrid` alone — measure the output, not the
+source text. It counts every `moveTo`/`lineTo` against a recording context, at
+fields from 1x to 6x with the view held fixed:
+
+```
+    field                               points unclipped  clipped  saved
+    900 x 1120   (1x, view == field)       285       620      620   0.0%
+    1800 x 1800  (2x area)                 900      1850      764  58.7%
+    2700 x 3360  (3x linear)              2420      4890      764  84.4%
+    5400 x 6720  (6x linear)              9592     19234      764  96.0%
+```
+
+Three things about that table are load-bearing. **The 1x row saves nothing**,
+and must: the clip keeps a cell of bleed on each side so a line entering the
+view still has its off-screen endpoint, and on a field that is exactly one view
+big there is no bleed to keep. That is why the equality assertion starts at 2x,
+and it is also the guarantee that this change is a numeric no-op today. **The
+`unclipped` column is the denominator** — "764 vertices" only means something
+next to the 19,234 it replaced. **The sheet is deformed before it is measured**,
+because the bright second pass only strokes where the grid is torn, and at rest
+it contributes nothing at all; half the draw would go unmeasured.
+
+Two negative controls, because the main assertion is satisfiable by doing
+nothing: shrinking the view must draw strictly fewer vertices (a clip to a
+hardcoded window, or a `draw` that returned early, would otherwise pass), and
+doubling the view in the renderer must add vertices (a renderer that stopped
+drawing a grid entirely would otherwise report a beautifully constant count).
+
+Every assertion has been seen red, one defect at a time: deleting the argument
+at the call site reddens part C; making `draw` ignore the rectangle reddens A
+and B; making `draw` return immediately reddens the positive control.
