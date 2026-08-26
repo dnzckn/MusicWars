@@ -194,7 +194,30 @@ const THREAT_SCALE = 520;
 const MAX_MULTIPLIER = 60;
 
 const MAX_ENEMY_BULLETS = 3000;
-const MAX_PLAYER_BULLETS = 400;
+/**
+ * 400 -> 700, because `spray` landed and 400 was already being hit.
+ *
+ * `docs/MASTER_PLAN.md` G4 records CROSS-STRUNG silently saturating this pool
+ * before any of this; `BulletPool.overflow` counts the drops and nothing was
+ * reading it. The arithmetic for the new ceiling is written out at
+ * CROSS-STRUNG's row in `weapons.ts`: 17 bolts a volley over 6.2 overlapping
+ * generations is 105 in flight from that one instrument, and a loadout can hold
+ * six instruments.
+ *
+ * IT IS NOT A SIMULATION CONSTRAINT AND THE NUMBER FOR THAT IS MEASURED.
+ * `docs/research-weapons.md` §D.0 ran the real `World.update` at the real 1/120
+ * step with zero-damage bullets injected, 4,000 measured steps x 3 repetitions
+ * x 4 conditions: +73 bullets costs +8.0 us/step, or 110 ns per bullet per
+ * step, against a 2.1 us run-to-run spread. At two steps per 60Hz frame that is
+ * 16 us per frame for 100 extra bullets — 0.1% of a 16,667 us budget. The
+ * RENDER slope is the half that was unmeasured, and it is one `drawImage` of a
+ * pre-rendered sprite per bullet (`renderer.drawBullets`); see the report for
+ * this change for the measurement.
+ *
+ * The storage cost is 17 typed arrays at the capacity, so 300 more slots is
+ * about 20 KB. That was never the constraint either.
+ */
+const MAX_PLAYER_BULLETS = 700;
 
 type Phase = 'idle' | 'spawning' | 'awaiting-boss' | 'conductor' | 'interlude' | 'over';
 
@@ -234,6 +257,31 @@ export interface Effect {
   hue: number;
   /** True while it is welded to the ship and moves with it. */
   attached: boolean;
+  /**
+   * `lance` only: re-aim from the player's own aim every frame, not just
+   * re-position.
+   *
+   * `attached` alone is not enough and the difference is the whole shape.
+   * `fireBeam` spreads `count` strokes evenly around the compass and they are
+   * attached, so they follow the ship while keeping the bearings they were
+   * born with — that is CHORALE's static star. A lance is one line that TURNS
+   * WITH THE PLAYER, which is what makes the heading the weapon. Rewriting
+   * `angle` for every attached beam would have collapsed CHORALE's six spokes
+   * onto one bearing, so the two cases have to be distinguishable and this is
+   * the flag that does it.
+   */
+  tracks: boolean;
+  /**
+   * `lance` only: lateral offset from the ship, perpendicular to the aim, in
+   * px.
+   *
+   * HARMONICS is "three parallel beams, held" and parallel is the load-bearing
+   * word — three lines at 0, 120 and 240 degrees is the shape it is evolving
+   * AWAY from. The offset cannot be recomputed in `updateEffects` because that
+   * loop walks a flat array and does not know which lance of which instrument
+   * it is holding, so it is stored per effect.
+   */
+  offset: number;
   /** Field only: inward pull on enemies, px/s at the rim. */
   pull: number;
   /** Field only: swallow enemy bullets, converting each into a shard. */
@@ -328,6 +376,16 @@ export class World {
 
   /** Seconds until each held instrument's next activation, by ability id. */
   private readonly instrumentTimers: Record<string, number> = {};
+
+  /**
+   * Where each `spray` instrument's rotating pattern currently points, in
+   * radians.
+   *
+   * Per id rather than one global phase: two sprays sharing a phase would fire
+   * on top of each other and read as one pattern at double density, which is
+   * the opposite of the point. Reset with the run, like the timers above.
+   */
+  private readonly sprayPhase: Record<string, number> = {};
 
   /** Real seconds the current offer has been open, for the safety pick. */
   private offerAge = 0;
@@ -680,6 +738,7 @@ export class World {
     this.wells.length = 0;
     this.effects.length = 0;
     for (const k of Object.keys(this.instrumentTimers)) delete this.instrumentTimers[k];
+    for (const k of Object.keys(this.sprayPhase)) delete this.sprayPhase[k];
     // In place, never reassigned: see the field's comment, and the
     // `everypowerup` entry in tools/README.md for the bug that taught us.
     prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter);
@@ -1506,6 +1565,28 @@ export class World {
       if (fx.attached) {
         fx.x = this.player.x;
         fx.y = this.player.y;
+      }
+      /*
+       * A lance re-aims here, every frame, and that is the entire mechanism.
+       *
+       * `fireLance` only creates and refreshes; it runs on the instrument's
+       * interval, which for ROSIN BOW is 1.6s at level 1. Aiming there would
+       * give a laser that snaps to your heading twice a second, which is not a
+       * held beam, it is a slow turret. The line has to follow the stick at
+       * frame rate or the shape does not exist.
+       *
+       * Cost is two trig calls and an add per lance per frame, against a
+       * worst case of six instruments times three parallel lines. The
+       * collision below is unchanged — it is the same segment-versus-circle
+       * test the beam branch has always run.
+       */
+      if (fx.tracks) {
+        const aim = this.player.aim;
+        fx.angle = aim;
+        if (fx.offset !== 0) {
+          fx.x += Math.cos(aim + Math.PI / 2) * fx.offset;
+          fx.y += Math.sin(aim + Math.PI / 2) * fx.offset;
+        }
       }
       if (fx.dps <= 0) continue;
 
@@ -3417,16 +3498,32 @@ export class World {
   }
 
   // -------------------------------------------------------------------------
-  // firing: six shapes, one per InstrumentShape
+  // firing: ten shapes, one per InstrumentShape
   // -------------------------------------------------------------------------
 
   /**
    * Run every held instrument's clock and dispatch the ones that came due.
    *
-   * Six routines and not twenty-six: every instrument in `weapons.ts` is one of
-   * six shapes, which is the entire reason that field exists. A table of
-   * twenty-six bespoke weapons is a table nobody can balance and a dispatch
+   * Ten routines and not twenty-seven: every instrument in `weapons.ts` is one
+   * of ten shapes, which is the entire reason that field exists. A table of
+   * twenty-seven bespoke weapons is a table nobody can balance and a dispatch
    * nobody can read.
+   *
+   * IT WAS SIX, THEN SEVEN, AND SEVEN WAS TOO FEW — which is the opposite
+   * problem and it was measured rather than felt.
+   * `docs/research-weapons.md` classified this roster and two reference games
+   * by mechanical verb and got one verb per 3.9 instruments here against 1.2
+   * for launch-era Vampire Survivors, with `aura` alone holding 26% of the
+   * table. `lance`, `cone` and `spray` are the first three of that document's
+   * nine and they take it to 2.7. Every one of them RE-POINTS instruments that
+   * already exist: no id was added, so `AGENTS.md` §5's zero-sum four-card
+   * offer is untouched.
+   *
+   * The cap that matters is on CONTAINERS, not on shapes. All three reuse
+   * something already allocated and already drawn — `lance` is
+   * `Effect{kind:'beam'}`, `cone` and `spray` are `BulletPool` — so none of
+   * them adds a render contract. `docs/MASTER_PLAN.md` G5's "2-3 new shapes,
+   * not 20" is respected in the letter and the reason.
    */
   private fireInstruments(dt: number): void {
     const held = prog.activeInstruments(this.progression);
@@ -3523,6 +3620,15 @@ export class World {
         case 'beam':
           this.fireBeam(id, s);
           break;
+        case 'lance':
+          this.fireLance(id, s);
+          break;
+        case 'cone':
+          this.fireCone(s);
+          break;
+        case 'spray':
+          this.fireSpray(id, s);
+          break;
         case 'orbit':
           this.firePods(s);
           break;
@@ -3548,7 +3654,58 @@ export class World {
     // Nothing holds an orbit instrument: retire the pods rather than leaving
     // the last set circling forever after a fusion consumed DRONE PODS.
     if (!held.some(({ id }) => instrumentDef(id)?.shape === 'orbit')) this.player.podCount = 0;
-    if (fired) this.bus.emit('player:shoot', { id: firedId ?? undefined });
+    /*
+     * And the same for lances, for the same reason and with sharper teeth.
+     *
+     * A lance is refreshed rather than re-pushed, so it outlives its own
+     * instrument by `interval + linger` — and `applyFusion` DELETES the base
+     * when a recipe lands, so ROSIN BOW evolving into HARMONICS would otherwise
+     * leave the bow's line hanging in the arena, still tracking the aim and
+     * still dealing damage, for a second and a half. It would expire on its
+     * own; it should not have to. `firePods` retires its pods on the same
+     * argument two lines above.
+     *
+     * Guarded on there being one at all, so the ordinary case — no lance in
+     * the loadout — costs one boolean and not a scan of the effects array.
+     */
+    if (this.effects.length > 0) {
+      for (const fx of this.effects) {
+        if (!fx.tracks) continue;
+        if (held.some(({ id }) => id === fx.id)) continue;
+        fx.life = 0;
+        fx.age = 0;
+      }
+    }
+    /*
+     * `voice` is the instrument's character FAMILY, and until now it was never
+     * sent.
+     *
+     * `src/audio/sfx.ts` builds a per-family voice table precisely so that
+     * every instrument sounds like itself without anyone remembering to add a
+     * row, and `src/core/events.ts` declares this field with nine lines
+     * explaining that it travels on the event because `src/audio/` must not
+     * import `src/game/`. This emit did not set it, so `SHOT_FAMILIES` was
+     * unreachable: `docs/research-weapons.md` §0.2 measured 6,185 shots in a
+     * real ten-minute run and 0 of them carried a voice, which meant the 19 of
+     * 27 instruments with no bespoke `SHOT_VOICES` row all fired with
+     * PIZZICATO's pluck. Every fusion in the game sounded like the starting
+     * weapon.
+     *
+     * The three shapes added in this change would have inherited that, which
+     * is why it is fixed here rather than filed: a lance, a cone and a spray
+     * that all sound like a plucked string are three shapes the player cannot
+     * hear apart. All 27 `character` strings already begin with a family word
+     * — that was measured in the same probe — so this one expression covers
+     * the whole roster, duets included, since `synthesiseDuet` builds its
+     * `character` as "familyA + familyB — ..." and the first word is still a
+     * family.
+     */
+    if (fired) {
+      const family = firedId
+        ? instrumentDef(firedId)?.character.split('—')[0].trim().split(/\s+/)[0]
+        : undefined;
+      this.bus.emit('player:shoot', { id: firedId ?? undefined, voice: family || undefined });
+    }
   }
 
   private hueOf(id: string): number {
@@ -3766,6 +3923,8 @@ export class World {
         age: 0,
         hue: this.hueOf(id),
         attached: true,
+        tracks: false,
+        offset: 0,
         pull: 0,
         swallows: false,
       });
@@ -3796,10 +3955,277 @@ export class World {
         age: 0,
         hue: this.hueOf(id),
         attached: true,
+        // A `beam` follows the ship but keeps the bearing it was born with;
+        // only a `lance` re-aims. See `Effect.tracks`.
+        tracks: false,
+        offset: 0,
         pull: 0,
         swallows: false,
       });
     }
+  }
+
+  /**
+   * A LANCE: one continuous line welded to the ship, tracking the aim, never
+   * re-fired.
+   *
+   * THE OWNER ASKED FOR A LASER BY NAME and ROSIN BOW's card has promised one
+   * the whole time — "One held beam along your facing. It does not stop."
+   * `fireBeam` re-fired it every interval and, from `count: 2` upward, threw
+   * half of it out of the back of the ship. This routine is the sentence.
+   *
+   * IT CREATES AND REFRESHES; IT NEVER PUSHES A SECOND SET. The instrument's
+   * clock still runs — that is what emits `player:shoot`, so the lane still
+   * gets voiced on the instrument's own cadence — but when it comes due the
+   * lines that already exist have their stats rewritten and their `age` reset
+   * rather than being replaced. Pushing per activation would stack effects
+   * without bound, since nothing expires them.
+   *
+   * `life` is `interval + linger`, and both halves are load-bearing.
+   * `interval` is what makes the refresh land before the expiry, so the line
+   * genuinely never gaps; `linger` is what makes FERMATA and the rig's
+   * `linger` multiplier mean something on this shape, and it is what makes the
+   * line fade out by itself a moment after the instrument stops being held
+   * rather than hanging in the arena forever. The renderer's fade is
+   * `age / life`, so a longer `linger` also reads as a STEADIER line — the
+   * brightness dips less between refreshes — which is exactly what "held much
+   * steadier" on ROSIN BOW's first step now buys.
+   *
+   * WHAT IT READS: `interval` (the refresh clock and the damage divisor),
+   * `count` (parallel lines), `damage`, `area` (half-width), `range` (length)
+   * and `linger`. `speed`, `pierce`, `bounces` and `arc` are deliberately
+   * unread: a held line has no travel speed, no wall to come off, no angular
+   * width beyond its own thickness, and nothing to pass through because it
+   * damages everything it crosses already.
+   *
+   * POWER IS NEUTRAL BY CONSTRUCTION. `fireBeam` sets `dps = damage / life`
+   * and overlaps `life / interval` generations, so a target inside one stroke
+   * takes `damage / interval` per second. This sets `dps` to that value
+   * directly. Neither ROSIN BOW's nor HARMONICS' stat block moved.
+   *
+   * BUDGET: `count` Effect objects, permanently, and zero `BulletPool`
+   * entries. The cheapest shape in `docs/research-weapons.md`'s catalogue.
+   */
+  private fireLance(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const lines = Math.max(1, Math.round(s.count));
+    const half = Math.max(4, s.area);
+    const life = Math.max(0.2, s.interval) + Math.max(0, s.linger);
+    // A held line spends `damage` once per interval on whatever is in it,
+    // which is what a re-fired beam already delivered. See above.
+    const dps = s.damage / Math.max(0.05, s.interval);
+    const hue = this.hueOf(id);
+
+    let seen = 0;
+    for (const fx of this.effects) {
+      if (!fx.tracks || fx.id !== id) continue;
+      seen++;
+      if (seen > lines) {
+        // The ladder can only ever ADD lines, but a duet or a fusion can hand
+        // this id a smaller `count`, so shrink rather than leave orphans that
+        // nothing will ever refresh.
+        fx.life = 0;
+        fx.age = 0;
+        continue;
+      }
+      fx.radius = half;
+      fx.length = Math.max(120, s.range);
+      fx.dps = dps;
+      fx.life = life;
+      fx.age = 0;
+      fx.offset = this.lanceOffset(seen - 1, lines, half);
+    }
+    for (let i = seen; i < lines; i++) {
+      this.effects.push({
+        kind: 'beam',
+        id,
+        x: p.x,
+        y: p.y,
+        angle: p.aim,
+        radius: half,
+        length: Math.max(120, s.range),
+        arc: 0,
+        dps,
+        life,
+        age: 0,
+        hue,
+        attached: true,
+        tracks: true,
+        offset: this.lanceOffset(i, lines, half),
+        pull: 0,
+        swallows: false,
+      });
+    }
+  }
+
+  /**
+   * Where the i-th of `n` parallel lances sits, perpendicular to the aim.
+   *
+   * Spaced at 2.4 half-widths so the lines read as separate strings with a gap
+   * rather than as one thick beam — HARMONICS is "three parallel beams" and a
+   * player has to be able to count them — and centred, so an odd count still
+   * puts one line exactly on the aim. That last part is the bug `fireSeek`'s
+   * comment records at length: an even fan that never fires along the bearing
+   * it computed. Here it costs nothing to get right.
+   */
+  private lanceOffset(i: number, n: number, half: number): number {
+    if (n <= 1) return 0;
+    return (i - (n - 1) / 2) * half * 2.4;
+  }
+
+  /**
+   * A CONE: a dense, short, wide burst of pellets along the facing.
+   *
+   * THE OTHER THING THE OWNER ASKED FOR BY NAME, and the only weapon in the
+   * game that asks the player to CLOSE. Everything else is safe-at-range or
+   * omnidirectional, so the arena's risk model was "stay away and let the
+   * auto-aim work"; a cone inverts it, and it cannot be camped with, which
+   * lines up with the idle-pressure system rather than fighting it.
+   *
+   * It is `fireSeek`'s spawn loop with the convergence taken out — no target
+   * selection at all, which is the point — plus a short `range` and `arc` used
+   * as the spread. That finally gives `arc` a consumer outside `fireArc`.
+   *
+   * THE PELLETS ARE JITTERED, in angle and in speed, and both matter. A
+   * perfectly even fan is `fireArc`'s travelling branch, which already exists
+   * and is a different weapon; the jitter is what makes this read as a burst.
+   * Varying the speed is what turns a line of pellets into a cloud with depth
+   * rather than an expanding arc of dots.
+   *
+   * `this.rng` and not `Math.random`, so a headless run is still reproducible.
+   *
+   * THE LIFETIME IS UNIFORM AND THE SPEED IS NOT, WHICH IS THE ONE PLACE THIS
+   * ROUTINE TRADES SOMETHING AWAY. The obvious version derives each pellet's
+   * `ttl` from its own speed so every one of them dies at exactly `range`; that
+   * was written first, and `tools/_shapecount.mjs` measured WALL OF SOUND at 37
+   * live bullets against the 16 `docs/research-weapons.md` §D.4 budgeted,
+   * because a pellet at the bottom of the speed spread outlives the interval
+   * and three quarters of every volley was still in the air when the next one
+   * left. Deriving the lifetime from the NOMINAL speed instead puts the whole
+   * volley on one clock: the fastest pellets define the edge at `range`, the
+   * slowest fall about 15% short of it, and the burst puffs out all at once
+   * instead of trailing stragglers. Range still bounds the shape; it bounds it
+   * with a soft back edge.
+   *
+   * WHAT IT READS: `interval`, `count`, `damage`, `arc`, `speed`, `range`,
+   * `pierce` and `bounces`. `area` and `linger` are unread: a cone is pellets,
+   * not a field, and both are deleted from the two rows that own this shape
+   * rather than left set and dead.
+   *
+   * BUDGET, MEASURED WITH `tools/_shapecount.mjs` AT THE RIG CEILING: WALL OF
+   * SOUND 19 live bullets, FEEDBACK 30. Both are about one volley — 19 and 15
+   * respectively, `count` plus SPREAD's 3 — and the difference between them is
+   * that a volley's life (`range / speed x 1.05`) lands just under the floored
+   * interval for one and just over it for the other, so FEEDBACK carries two
+   * volleys for a single step at the changeover. Rounding a lifetime and an
+   * interval to the 1/120 grid is enough to decide which side of that line an
+   * instrument falls on, so do not read 19 as a property of the shape; read it
+   * off the probe after changing either stat.
+   */
+  private fireCone(s: InstrumentStats): void {
+    const p = this.player;
+    const n = Math.max(1, Math.round(s.count));
+    const spread = s.arc > 0 ? s.arc : 0.8;
+    const reach = s.range > 0 ? s.range : 200;
+    const speed = Math.max(200, s.speed);
+    const damage = s.damage * (p.focused ? 1.35 : 1);
+    // One clock for the whole volley; see the note above on why this is not
+    // per pellet. The fastest pellet is the one that reaches `range`.
+    const ttl = (reach / speed) * 1.05;
+    for (let i = 0; i < n; i++) {
+      const t = n === 1 ? 0 : i / (n - 1) - 0.5;
+      const angle = p.aim + t * spread + this.rng.range(-0.05, 0.05);
+      this.playerBullets.spawn({
+        x: p.x + Math.cos(angle) * 16,
+        y: p.y + Math.sin(angle) * 16,
+        angle,
+        speed: speed * this.rng.range(0.85, 1),
+        radius: s.pierce > 1 ? 7 : 4.5,
+        ttl,
+        damage,
+        type: s.pierce > 1 ? 1 : 0,
+        bounces: s.bounces,
+        flags: BulletFlag.DespawnOffscreen,
+      });
+    }
+  }
+
+  /**
+   * A SPRAY: a rotating, unaimed pattern of bolts thrown around the ship and
+   * bouncing off the walls.
+   *
+   * "MORE FUN WITH PROJECTILES", which was the third thing the owner asked
+   * for, and the reason this game did not feel like a projectile game is
+   * measurable: its highest-`count` shapes were `aura` and `beam`, which are
+   * not objects at all — they are rings and rectangles that appear and fade.
+   * A spray puts the player's own output on screen as a field they can watch
+   * move.
+   *
+   * THE PRECESSION IS THE SHAPE. `fireArc`'s travelling branch lays `count`
+   * bolts across `arc` centred on the aim and then does it again, identically;
+   * at CROSS-STRUNG's `arc: 6.28` that is the same twenty spokes redrawn in the
+   * same twenty places forever, which is why "swept continuously" was never
+   * true. Here the volley's base angle advances by half a gap —
+   * `arc / (2 x count)` — every activation, so consecutive volleys interleave
+   * and the pattern turns. At CROSS-STRUNG's numbers that is a shade over nine
+   * degrees a volley, about 30 degrees a second, which is a rotation the player
+   * can see and time against without it reading as a strobe.
+   *
+   * The phase is kept PER INSTRUMENT, so two sprays in one loadout are two
+   * independent patterns rather than one pattern at double density.
+   *
+   * `bounces` is forwarded and that is what makes it a field rather than a
+   * volley: the reflection is already implemented in angle space in
+   * `BulletPool.update`, already composes with `turn`, and is already counted
+   * by `BulletPool.bounced` so it can be seen from a headless harness.
+   *
+   * WHAT IT READS: `interval`, `count`, `damage`, `speed`, `range`, `bounces`,
+   * and `arc` for both the span and the precession step. `area` and `linger`
+   * are unread because a bolt is a point. `pierce` is unread ON PURPOSE and it
+   * is the one deliberate omission in this file that costs something: a bolt
+   * consumed on contact is what bounds the live count, and this is the only
+   * shape in the catalogue whose budget is real. CROSS-STRUNG's `pierce: 2` was
+   * deleted rather than left set and dead; see its row in `weapons.ts`.
+   *
+   * NO `turn`. `docs/research-weapons.md` §D.7 suggests curving the bolts as
+   * well, and the pool already integrates `turn`. There is no stat that could
+   * express a turn rate, so the constant would have been invented by hand and
+   * unobservable by `deadhunt-ranges` — which is the objection `firePods`'
+   * `Math.max(200, s.speed)` floor is annotated with, and it applies here.
+   *
+   * BUDGET: measured at 105 bullets in flight from one instrument with the
+   * whole rig at max, against 93 by arithmetic — the arithmetic understates it
+   * by about an eighth and CROSS-STRUNG's stat block was tuned against the
+   * measurement, not the sum. `tools/_shapecount.mjs` is the probe.
+   * `MAX_PLAYER_BULLETS` moved 400 -> 700 for this shape.
+   */
+  private fireSpray(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const n = Math.max(1, Math.round(s.count));
+    const spread = s.arc > 0 ? s.arc : TAU;
+    const speed = Math.max(120, s.speed);
+    const ttl = s.range > 0 ? (s.range / speed) * 1.05 : 1.4;
+    const phase = this.sprayPhase[id] ?? 0;
+    for (let i = 0; i < n; i++) {
+      const angle = phase + (i / n) * spread;
+      this.playerBullets.spawn({
+        x: p.x + Math.cos(angle) * 14,
+        y: p.y + Math.sin(angle) * 14,
+        angle,
+        speed,
+        radius: 4.5,
+        ttl,
+        damage: s.damage,
+        // Always the small note glyph: `pierce` is not read by this shape, so
+        // reading it here to pick a sprite would advertise a behaviour the
+        // collision does not implement.
+        type: 0,
+        bounces: s.bounces,
+        flags: BulletFlag.DespawnOffscreen,
+      });
+    }
+    // Half a gap, so the next volley falls between this one's bolts.
+    this.sprayPhase[id] = (phase + spread / (2 * n)) % TAU;
   }
 
   /** Pods fire outward along their own orbit angle. */

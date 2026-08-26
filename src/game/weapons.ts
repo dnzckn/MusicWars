@@ -31,9 +31,12 @@
  * it is probably not a fusion, it is a stat.
  *
  * Arena shapes only. The game is a bullet hell in the round, so every
- * instrument here is an aura, an orbit, an arc, a sweep or a lingering field.
- * A weapon that only fires "up" is a weapon that is useless half the time,
- * which is precisely why Vampire Survivors' roster looks the way it does.
+ * instrument here is an aura, an orbit, an arc, a sweep, a lingering field, a
+ * held line, a burst or a rotating pattern. A weapon that only fires "up" is a
+ * weapon that is useless half the time, which is precisely why Vampire
+ * Survivors' roster looks the way it does — and note that three of those eight
+ * are AIMED, which is a direction this roster deliberately moved in. See
+ * `InstrumentShape` for why.
  */
 
 import type { AbilityId, AbilitySlot, EvolvedId, InstrumentId, RigId } from '../core/events';
@@ -185,16 +188,109 @@ export interface InstrumentStats {
 
 /**
  * How an instrument occupies space, and therefore which routine draws and
- * collides it. These are the six arena archetypes; everything in the roster is
+ * collides it. These are the arena archetypes; everything in the roster is
  * one of them, which keeps the world's dispatch honest.
+ *
+ * ---------------------------------------------------------------------------
+ * SEVEN BECAME TEN, AND THE COUNT WAS THE DIAGNOSIS.
+ *
+ * `docs/research-weapons.md` classified this roster against Vampire Survivors
+ * and Ball x Pit by MECHANICAL VERB — "where the hitbox appears and how it
+ * behaves", not theme and not stat — and measured one verb per 3.9 instruments
+ * here against 1.2 for launch-era Vampire Survivors and 3.0 for Ball x Pit,
+ * whose ratio is bought with a second orthogonal trigger axis this game does
+ * not have at all. A quarter of the roster was `aura`, a ring centred on the
+ * player, and three of those seven auras described themselves as "a very large
+ * ring".
+ *
+ * `lance`, `cone` and `spray` are the first three of that document's nine, and
+ * they were chosen because the owner named two of them ("like laser",
+ * "something short range") and because the third answers "more fun with
+ * projectiles". All three RE-POINT existing instruments: no id is added, no
+ * `ENSEMBLE_MIX` lane is touched, and `AGENTS.md` §5's zero-sum offer is
+ * untouched because a `shape` field is not a card.
+ *
+ * The remaining six — `trail`, `chain`, `mortar`, `boomerang`, `tether`,
+ * `spawn` — are specified in the same document and are NOT implemented. Do not
+ * infer from the three below that the other six are cheap; two of them
+ * (`boomerang`, `tether`) have no instrument free to own them, which is the
+ * whole content of that document's §F.2.
  */
 export type InstrumentShape =
   /** Bolts toward the nearest target inside range. */
   | 'seek'
   /** A sweep through an arc centred on the ship's facing. */
   | 'arc'
-  /** A held beam along the facing. */
+  /**
+   * A beam re-drawn along the facing on the interval and left to fade.
+   *
+   * NOT the held laser — that is `lance`. What distinguishes them is that this
+   * one spreads `count` beams evenly around the WHOLE COMPASS and re-fires,
+   * which is CHORALE's "the pods stop circling and hold station, sustaining
+   * beams between them": a static star of strokes, not a line you point.
+   */
   | 'beam'
+  /**
+   * ONE CONTINUOUS BEAM, ANCHORED TO THE SHIP, TRACKING THE AIM IN REAL TIME.
+   *
+   * The owner asked for a laser by name and ROSIN BOW's blurb has promised one
+   * since the row was written — "One held beam along your facing. **It does not
+   * stop.**" It stopped: `fireBeam` re-fired every `interval` and spread
+   * `count` copies around the compass, so the one instrument in the table whose
+   * text says it holds was the one that flickered.
+   *
+   * `lance` is the verb no shape in this game had: your HEADING is the weapon.
+   * `seek` picks targets for you, `aura` is omnidirectional, `strike` is
+   * explicitly unaimable and `arc` sprays. A lance rewards strafing sideways to
+   * keep the line on a boss and rotating through a pack like a scythe, and it
+   * punishes standing still with the line off-target. That is a different left
+   * hand, not a different damage number.
+   *
+   * `count` is PARALLEL lances, which is HARMONICS' "Three parallel beams,
+   * held" taken literally. `linger` is how far past the next activation the
+   * line is drawn for, so a longer hold is a steadier line rather than a
+   * brighter one — `fireLance` refreshes it every interval and it therefore
+   * never gaps, but it does fade out on its own once the instrument stops being
+   * held. `speed`, `pierce`, `bounces` and `arc` are deliberately unread: a
+   * held line has no travel speed, nothing to pass through, no wall to come off
+   * and no angular width beyond its own half-thickness.
+   */
+  | 'lance'
+  /**
+   * A DENSE, SHORT, WIDE BURST OF PELLETS ALONG THE FACING THAT DIES AT ARM'S
+   * LENGTH.
+   *
+   * The other thing the owner asked for by name. Nothing in this game rewarded
+   * closing: every shape is safe-at-range or omnidirectional, and the arena's
+   * whole risk model was "stay away and let the auto-aim work". A cone inverts
+   * it — you dive into the group, dump, and leave — and you cannot camp with
+   * one, which lines up with the camp-pressure system rather than fighting it.
+   *
+   * It is `fireSeek`'s spawn loop with the convergence removed, a short
+   * `range`, and `arc` finally used as a spread by something other than
+   * `fireArc`. `area` and `linger` are unread: a cone is pellets, not a field.
+   */
+  | 'cone'
+  /**
+   * A CONTINUOUS, UNAIMED, HIGH-RATE STREAM THROWN IN A ROTATING PATTERN AROUND
+   * THE SHIP, BOUNCING OFF THE WALLS.
+   *
+   * The reason this game does not FEEL like a projectile game is that its
+   * highest-`count` shapes are auras and beams, which are not objects — they
+   * are rings and rectangles that appear and fade. A spray puts the player's
+   * own output on screen as a physical field they can watch move. You stop
+   * pointing and start timing: the pattern precesses whether you like it or
+   * not, so you position against its phase, and the walls mean your own shots
+   * come back through where you were standing.
+   *
+   * `arc` is the volley's angular span AND, divided by `count`, the amount the
+   * pattern precesses each volley — so consecutive volleys interleave rather
+   * than retracing. `bounces` is forwarded, which is what makes it a field
+   * rather than a volley. `pierce` and `linger` are unread, and `pierce`
+   * deliberately so: a bolt consumed on contact is what keeps the live count
+   * bounded, and this is the one shape in the catalogue whose budget is real.
+   */
+  | 'spray'
   /** Satellites circling the ship. */
   | 'orbit'
   /** A ring or field centred on the ship. */
@@ -407,18 +503,62 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'bow',
     label: 'ROSIN BOW',
-    shape: 'beam',
+    /*
+     * THE THIRD SHAPE RE-POINT, AND THE ONLY ONE WHERE THE BLURB WAS ALREADY
+     * RIGHT AND THE SIMULATION WAS WRONG.
+     *
+     * "One held beam along your facing. **It does not stop.**" has been the
+     * text on this card since the row was written, and `fireBeam` re-fired it
+     * every `interval`, spread `count` copies evenly around the compass, and
+     * let each one fade. Nothing about it was held and nothing about it was
+     * along your facing once `count` reached two. `lance` is that sentence,
+     * implemented.
+     *
+     * NOT ONE NUMBER IN THIS BLOCK MOVED, and that is a property of the routine
+     * rather than a coincidence. `fireBeam` spends `damage` over a life of
+     * `linger` and overlaps `linger / interval` generations, so a target
+     * standing in one stroke takes `damage / interval` per second.
+     * `fireLance` sets its `dps` to exactly `damage / interval`. Single-target
+     * throughput is therefore identical at every level and under every rig
+     * loadout, which is the same power-neutrality argument CHORALE's re-point
+     * made and it is checkable by reading two lines of `world.ts`.
+     *
+     * WHAT DOES CHANGE is coverage, in both directions. The pair used to point
+     * at `aim` and `aim + PI`, so half the output faced backwards at all times;
+     * it now runs as two parallel lines both pointing where you are pointing.
+     * That is a straight upgrade when you are aiming and a straight downgrade
+     * when you are not, which is the entire design of the shape.
+     *
+     * `pierce: 99` stays and stays DEAD. `deadhunt-ranges` reported it under
+     * `beam` and reports it under `lance`; nothing has regressed and nothing
+     * has been repaired. It is not deleted because `synthesiseDuet` takes
+     * `Math.max` of each parent's `pierce`, so removing it would quietly turn
+     * every bow-parented duet from a piercing weapon into a non-piercing one —
+     * a real balance change disguised as a tidy-up. Fixing it properly means
+     * giving `pierce` a meaning for a line that damages everything it crosses,
+     * and there is not one.
+     */
+    shape: 'lance',
     blurb: 'One held beam along your facing. It does not stop.',
     character: 'mournful — long bowed sostenuto',
     weight: 0.85,
     base: stats({ interval: 1.6, count: 1, damage: 7, area: 9, speed: 0, pierce: 99, linger: 0.5, range: 520 }),
     steps: [
       {
-        note: 'a far thicker stroke, held much longer, reaching right across the arena',
+        note: 'a far thicker stroke, held much steadier, reaching right across the arena',
         mul: { linger: 1.6, area: 1.4, range: 1.5 },
       },
       {
-        note: 'a second beam draws opposite the first, both bite, and they are redrawn so often the pair is all but continuous',
+        /*
+         * The note changed because the behaviour did. It used to read "a second
+         * beam draws OPPOSITE the first ... redrawn so often the pair is all
+         * but continuous", which described `fireBeam`'s compass spread and its
+         * re-fire. Neither survives the re-point: the second line is parallel
+         * and the pair is genuinely continuous rather than nearly so.
+         * `AGENTS.md` §3 asks that a note say what the player will SEE, and
+         * this one now does.
+         */
+        note: 'a second line runs alongside the first, both cutting half again as hard, and the pair holds without a flicker',
         add: { count: 1 },
         mul: { linger: 1.7, interval: 0.465, damage: 1.6 },
       },
@@ -578,19 +718,81 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'feedback',
     label: 'FEEDBACK',
-    shape: 'aura',
-    blurb: 'A hum around the hull that burns whatever comes close.',
+    /*
+     * THE FOURTH SHAPE RE-POINT, AND THE ONE THAT COSTS THE MOST TO ARGUE.
+     *
+     * `aura` held SEVEN of twenty-seven instruments — 26%, the largest share in
+     * the table by a wide margin, and three of the seven (CATHEDRAL, REQUIEM,
+     * TUTTI) describe themselves as "a very large ring". The `FUSIONS` preamble
+     * below already refuses a fourth on exactly that ground. FEEDBACK is the
+     * cheapest one to move because it is already a short-range weapon — "burns
+     * whatever comes close" — so it gains a facing rather than a range.
+     *
+     * THE STAT BLOCK IS RE-AUTHORED, WHICH THE OTHER RE-POINTS DID NOT NEED,
+     * and this is the honest part. `cone` reads `arc`, `speed`, `range` and
+     * `pierce` and ignores `area` and `linger`; the aura block set `area` and
+     * nothing else. Carrying it over verbatim would have produced a cone with
+     * no spread, no muzzle velocity and no reach, and `deadhunt-ranges` would
+     * have printed `feedback.area 74->166 (the ladder moves it)` — the exact
+     * defect class this table's history is made of. So `area` is DELETED rather
+     * than carried, the way VIBRATO's `speed` was.
+     *
+     * POWER, TRACKED RUNG BY RUNG on `damage x count / interval`, which is the
+     * convention CHORALE and VIBRATO were both argued on:
+     *
+     *     L1  was 10.0   now 11.7        L2  was 22.7   now 26.3
+     *     L3  was 61.4   now 61.3
+     *
+     * The ceiling lands within a fifth of a per cent of where it was, and the
+     * two rungs beneath it are within 16%. Nominal is generous to a cone and
+     * stingy to an aura in
+     * opposite directions and both are worth saying: an aura's ring hits
+     * EVERYTHING inside its radius for full damage, so nominal understates it
+     * badly in a crowd; a cone's pellets are counted as if every one of the
+     * twelve connects, which at 250px of reach they will not. The real delivery
+     * is therefore lower than these numbers on both sides of the change, and
+     * `tools/arena.mjs`, `tools/builds.mjs` and `tools/openers.mjs` are where
+     * that gets decided rather than here. FEEDBACK is not a starter, so
+     * `openers` measures it only through the offer pool.
+     *
+     * AND IT COSTS A DEFENCE NOBODY WROTE DOWN, WHICH IS THE PART THAT MOVED
+     * THE NUMBERS. `fireAura` pushes its rings into `novas` with
+     * `clears: true`, and `updateNova` DELETES ENEMY BULLETS in the expanding
+     * annulus — so every aura in this table is quietly also a bullet-cancel,
+     * and neither FEEDBACK's blurb nor WALL OF SOUND's ever mentioned it. A
+     * cone spawns bullets and clears nothing. Measured over `tools/builds.mjs`
+     * at 900s x 8 seeds x 7 policies, hits taken across the policies went from
+     * 12-32 to 24-67 while the mean wave reached barely moved (26.4 -> 25.5 for
+     * the `first` policy, 27.0 -> 26.9 for `narrow`), and `tools/arena.mjs`
+     * agrees: encirclement p90 0.27 -> 0.33 against a 0.25 bar, so the player is
+     * more exposed rather than slower. Both gates still pass and the direction
+     * is the one the INSTRUMENT_MAX_LEVEL note above says the curve needs, but
+     * it is a real change and it is not in the nominal-power arithmetic. If a
+     * later pass wants the defence back, give it to the shape rather than to
+     * these two rows — a bullet-clearing cone is a design decision, and putting
+     * FEEDBACK back on `aura` to get it would undo the census fix.
+     *
+     * THE BLURB CHANGED. "A hum around the hull" is an omnidirectional
+     * sentence and this is no longer an omnidirectional weapon; leaving it
+     * would have been a fourth entry on the "prose the simulation does not
+     * deliver" list two paragraphs of this file already complain about. The
+     * `character` phrase is untouched, so the audio side sees no change at all.
+     */
+    shape: 'cone',
+    blurb: 'A blast of feedback out of the front of the hull. Murderous up close, nothing at range.',
     character: 'aggressive — saturated amp hum, no attack at all',
     weight: 0.85,
-    base: stats({ interval: 0.5, count: 1, damage: 5, area: 74 }),
+    base: stats({ interval: 0.6, count: 5, damage: 1.4, arc: 0.8, speed: 880, range: 190 }),
     steps: [
       {
-        note: 'the field reaches half again as far and burns continuously instead of ticking',
-        mul: { area: 1.6, interval: 0.44 },
+        note: 'four more pellets in the burst, thrown a fifth wider and a little further, and it comes round sooner',
+        add: { count: 4 },
+        mul: { arc: 1.15, range: 1.15, interval: 0.8 },
       },
       {
-        note: 'the hum doubles and swallows half the arena, biting nearly three times as hard and never letting up',
-        mul: { area: 1.4, damage: 2.7 },
+        note: 'twelve pellets now, leaving a fifth faster and biting two fifths harder, in a blast wide enough to catch a whole rush',
+        add: { count: 3 },
+        mul: { interval: 0.8, damage: 1.4, arc: 1.35, speed: 1.2, range: 1.15 },
       },
     ],
   },
@@ -742,7 +944,24 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'harmonics',
     label: 'HARMONICS',
-    shape: 'beam',
+    /*
+     * ROSIN BOW's ending, and it moves with it. `bow + laser -> harmonics` has
+     * LASER as its literal catalyst and "Three parallel beams, held" as its
+     * literal blurb, so this is the one row in the table where the recipe, the
+     * catalyst and the text all named the same shape and the field disagreed
+     * with all three.
+     *
+     * Stat block untouched, for the reason given at ROSIN BOW: `fireLance`
+     * delivers `damage / interval` to a target in the line, which is exactly
+     * what `fireBeam`'s overlapping generations delivered. `count: 3` stops
+     * being three strokes at 0, 120 and 240 degrees and becomes the three
+     * parallel lines the blurb has always claimed.
+     *
+     * `harmonics + crossstrung -> stringsection` still changes the verb —
+     * `lance -> arc` where it used to be `beam -> arc` — so the one union that
+     * was already earning its shape change keeps earning it.
+     */
+    shape: 'lance',
     fused: true,
     weight: 0,
     blurb: 'Three parallel beams, held. Nothing crosses them twice.',
@@ -764,12 +983,68 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'crossstrung',
     label: 'CROSS-STRUNG',
-    shape: 'arc',
+    /*
+     * THE FIFTH SHAPE RE-POINT, AND IT IS A REPAIR RATHER THAN A NEW IDEA.
+     *
+     * "A full circle of strings, swept continuously" already described a
+     * rotating pattern, and `fireArc`'s travelling branch could not produce
+     * one: it lays `count` bolts across `arc` centred on the aim and does it
+     * again, identically, every interval. At `arc: 6.28` that is the same
+     * twenty spokes redrawn in the same twenty places forever. Nothing swept.
+     *
+     * `spray` precesses the volley by `arc / count` each activation, so
+     * consecutive volleys interleave and the field turns — and it forwards
+     * `bounces`, so the pattern comes back off the walls through where you were
+     * standing. That is the "more fun with projectiles" the owner asked for and
+     * it is the only shape in the table that gives the player a PATTERN rather
+     * than a volley.
+     *
+     * `pierce: 2` IS DELETED, AND IT IS A NERF. `spray` deliberately does not
+     * read `pierce`, because a bolt consumed on contact is what keeps the live
+     * count bounded and this is the one shape in the catalogue whose budget is
+     * real — `docs/MASTER_PLAN.md` G4 already records this instrument silently
+     * hitting `MAX_PLAYER_BULLETS`. Keeping the stat and not reading it would
+     * have printed `crossstrung.pierce=2 (set, static)` in `deadhunt-ranges`;
+     * keeping the stat and reading it would have made every one of ~90 live
+     * bolts immortal. So it goes, the way VIBRATO's `speed` went, and the loss
+     * is real: these bolts now stop at the first thing they hit.
+     *
+     * POWER, on the same nominal `damage x count / interval` the other
+     * re-points were argued on: 10 x 20 / 0.34 = 588 before, 14.28 x 14 / 0.34
+     * = 588 after. Exactly neutral on that metric and a genuine reduction in
+     * play, because the pierce is gone. That is deliberate — it is the price of
+     * a bounded budget — and `tools/arena.mjs` and `tools/builds.mjs` are where
+     * it should be read rather than here.
+     *
+     * BUDGET, WHICH IS THE WHOLE REASON THIS ROW IS ANNOTATED AT LENGTH, AND
+     * IT WAS TUNED AGAINST A MEASUREMENT RATHER THAN AGAINST THE ARITHMETIC.
+     *
+     * `count` 14 plus SPREAD's 3 is 17 bolts per volley; `range / speed` is
+     * invariant under CAPO, because `applyModifiers` scales `range` by the same
+     * multiplier it scales `speed` by, so the life is a fixed 1.15s; the floor
+     * interval is 0.34 x RAPID's 0.62 = 0.211s. That says 5.5 overlapping
+     * generations and 93 bolts in flight.
+     *
+     * The arithmetic UNDERSTATES it by about 13% and the first cut of this row
+     * was written against the arithmetic. At `interval: 0.3` the live count
+     * measured 119 — over the 90-107 `docs/research-weapons.md` §D.7 budgeted —
+     * so the interval went back to CROSS-STRUNG's original 0.34 and `damage`
+     * was re-derived to hold nominal at 588. `tools/_shapecount.mjs` runs the
+     * real `World.update` with this instrument alone at max and the whole rig
+     * at max, which is the number to trust; do not re-tune this row off the
+     * paragraph above without re-running it.
+     *
+     * `MAX_PLAYER_BULLETS` moved 400 -> 700 in the same change, and that was
+     * not precautionary: `deadhunt-ranges` recorded the 400 cap saturating in a
+     * full-loadout run before this change and 473 live bullets with 0 overflow
+     * after it.
+     */
+    shape: 'spray',
     fused: true,
     weight: 0,
-    blurb: 'A full circle of strings, swept continuously.',
+    blurb: 'A full circle of strings, swept continuously, ringing off every wall.',
     character: 'shimmering — a full 360-degree cascade',
-    base: stats({ interval: 0.34, count: 20, damage: 10, arc: 6.28, speed: 900, pierce: 2, range: 700 }),
+    base: stats({ interval: 0.34, count: 14, damage: 14.28, arc: 6.28, speed: 820, bounces: 3, range: 900 }),
     steps: [],
   },
   {
@@ -867,12 +1142,40 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'wallofsound',
     label: 'WALL OF SOUND',
-    shape: 'aura',
+    /*
+     * FEEDBACK's ending, and it moves with it. Two of the seven auras leave in
+     * one recipe, which is why this pair was picked over any other.
+     *
+     * POWER-NEUTRAL EXACTLY. `damage x count / interval` was 16 x 1 / 0.1 =
+     * 160; it is 4 x 16 / 0.4 = 160. `area: 190` and `linger: 0.8` are deleted
+     * for the reason given at FEEDBACK — `cone` reads neither, and a stat left
+     * set on a shape that cannot read it is this repository's signature defect.
+     *
+     * THE BLURB IS REWRITTEN AND THIS IS A RETREAT, SAID PLAINLY. "The field
+     * grows with your speed" is on the `FUSIONS` preamble's list of prose the
+     * simulation does not deliver, and `docs/research-weapons.md` §D.4 argues
+     * that a cone "finally has an axis to grow along". It does — and it is not
+     * implemented here. No `InstrumentStats` field expresses player speed and
+     * no routine reads it, so scaling the cone by how fast the ship is moving
+     * would be a hidden multiplier with no dial and no dead-stat audit row,
+     * which is worse than an unkept promise. The text now says what the
+     * simulation does. Whoever implements the speed term should put the
+     * sentence back.
+     *
+     * BUDGET. `count` 16 plus SPREAD's 3 is 19 pellets, alive for
+     * `range / speed x 1.05` = 0.24s, against a floor interval of 0.4 x RAPID's
+     * 0.62 = 0.248s — so under one generation. `tools/_shapecount.mjs` runs
+     * this instrument alone at max with the whole rig at max and measures
+     * exactly 19, against the 16 `docs/research-weapons.md` §D.4 budgeted.
+     * FEEDBACK's ceiling lands a frame the other side of the same line and
+     * measures 30; see `fireCone` for why.
+     */
+    shape: 'cone',
     fused: true,
     weight: 0,
-    blurb: 'The field grows with your speed and scorches everything you pass.',
+    blurb: 'A wall of blast out of the front. Nothing survives being driven into.',
     character: 'aggressive — total, saturated, everything at once',
-    base: stats({ interval: 0.1, count: 1, damage: 16, area: 190, linger: 0.8 }),
+    base: stats({ interval: 0.4, count: 16, damage: 4, arc: 1.7, speed: 1000, range: 230 }),
     steps: [],
   },
   {
@@ -1219,13 +1522,25 @@ export const RIG: readonly RigDef[] = [
  *              0 of 2 unions)
  *     after    11 of 15                                 (11 of 13 evolutions,
  *              0 of 2 unions)
+ *     now      10 of 15                                 (10 of 13 evolutions,
+ *              0 of 2 unions)
  *
- * Two moved: `drones -> chorale` orbit -> beam, and `tremolo -> vibrato`
- * field -> strike. Both are argued at their rows in `INSTRUMENTS`. The test
- * they had to pass was not "is a different shape imaginable" — it always is —
- * but **does the re-point make more of the row's own declared stats live?**
- * `tools/deadhunt-ranges.mjs` prints that per shape, so it is a number rather
- * than an opinion, and both re-points remove a DEAD row it was reporting.
+ * Three moved: `drones -> chorale` orbit -> beam, `tremolo -> vibrato`
+ * field -> strike, and `harp -> crossstrung` arc -> spray. All three are
+ * argued at their rows in `INSTRUMENTS`. The test they had to pass was not "is
+ * a different shape imaginable" — it always is — but **does the re-point make
+ * more of the row's own declared stats live?** `tools/deadhunt-ranges.mjs`
+ * prints that per shape, so it is a number rather than an opinion.
+ *
+ * TWO MORE RECIPES MOVED BOTH ENDS AT ONCE and so do NOT show up in that
+ * count, which is worth saying because the count understates the change.
+ * `bow + laser -> harmonics` went beam -> beam and is now lance -> lance, and
+ * `feedback + tempo -> wallofsound` went aura -> aura and is now cone -> cone.
+ * Neither is a verb change WITHIN the recipe and neither is claimed as one;
+ * what they are is four instruments leaving the two most crowded shapes in the
+ * table. `harmonics + crossstrung -> stringsection` still changes the verb, at
+ * lance -> arc rather than beam -> arc, so the one union that was earning its
+ * shape change keeps earning it.
  *
  * THE OTHER ELEVEN WERE EXAMINED AND LEFT. Recording why, because
  * `docs/research-items.md` §5 Gap 1 proposes six re-points and four of them are
@@ -1241,10 +1556,13 @@ export const RIG: readonly RigDef[] = [
  *     `bounces: 8` and `range: 2600`; `fireField` reads neither. `bounces` is
  *     the flagship dead-stat repair in this repo (see `InstrumentStats.bounces`)
  *     and this would re-kill it on the one instrument built around it.
- *   - `bow + laser -> harmonics`, beam -> arc. **Rejected.** It would collapse
- *     STRING SECTION — one of only two recipes that changes shape at all — from
- *     beam -> arc to arc -> arc, so the count would not improve. It also puts a
- *     `speed: 0` arc into SNARE's sweep branch, or a travelling fan into HARP's.
+ *   - `bow + laser -> harmonics`, beam -> arc. **Rejected, and then routed
+ *     around.** As an `arc` it would collapse STRING SECTION — one of only two
+ *     recipes that changes shape at all — from beam -> arc to arc -> arc, so
+ *     the count would not improve, and it puts a `speed: 0` arc into SNARE's
+ *     sweep branch or a travelling fan into HARP's. That objection stands and
+ *     was never overturned. Both rows are now `lance` instead, which preserves
+ *     STRING SECTION's shape change and takes them off `arc` entirely.
  *   - `snare + rapid -> blastbeat`, arc -> orbit. **Blocked, concretely.**
  *     `World` writes `player.podCount` once per orbit instrument inside the
  *     firing loop, last write wins. Today at most one orbit instrument can ever
@@ -1254,7 +1572,7 @@ export const RIG: readonly RigDef[] = [
  *     "the roll never lands" is already satisfied inside `arc` — the sweep's
  *     life is 0.16s and the interval is 0.16s, so there is literally no gap.
  *   - `chime + resonance -> carillon`, strike -> aura. **Rejected on the
- *     census.** `aura` is already 4 of the 15 results (CATHEDRAL, WALL OF
+ *     census.** `aura` was 4 of the 15 results (CATHEDRAL, WALL OF
  *     SOUND, TUTTI, REQUIEM) against `beam` 1 and `strike` 1; three of those
  *     four are "a very large ring". A fifth would be the same-verb-bigger-number
  *     problem reproduced at roster level. And `strike` was split out of `seek`
@@ -1271,12 +1589,19 @@ export const RIG: readonly RigDef[] = [
  * because no existing shape implements them and inventing one is a `world.ts`
  * feature, not a data edit: TUTTI's "everything is pulled to the centre first"
  * (no shape has a pull except a swallowing field, and that list is hardcoded),
- * WALL OF SOUND's "the field grows with your speed" (no shape reads player
- * speed), CANON's "every bounce spawns a delayed copy" (the pool reflects, it
+ * CANON's "every bounce spawns a delayed copy" (the pool reflects, it
  * does not spawn), CARILLON's "every strike chains to two more" (`fireStrike`
  * picks random targets; it does not chain), and STRING SECTION's "all of them
  * held" on an `arc`, which is why `deadhunt-ranges` reports its `linger: 1.2`
- * as dead.
+ * as dead. `docs/research-weapons.md` §D.3 and §D.5 specify `chain` and
+ * `mortar`, which would deliver the first two; neither is implemented.
+ *
+ * TWO CAME OFF THIS LIST. ROSIN BOW's "it does not stop" is delivered by
+ * `lance`, and WALL OF SOUND's "the field grows with your speed" is GONE
+ * rather than delivered — the blurb was rewritten to describe what the cone
+ * actually does, because no stat expresses player speed and a hidden
+ * multiplier with no dial is worse than an unkept promise. Say which of those
+ * two happened when quoting this paragraph.
  * ------------------------------------------------------------------------ */
 
 export interface FusionDef {

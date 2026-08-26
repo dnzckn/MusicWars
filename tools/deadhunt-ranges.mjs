@@ -283,6 +283,8 @@ const abilityLevelsSeen = new Map();
 const archetypesSeen = new Set();
 const gradesSeen = new Map();
 const movementsSeen = new Set();
+const shotVoicesSeen = new Set();
+const shotIdsSeen = new Set();
 
 /**
  * `immortal` keeps a run going past the point the bot would die, because the
@@ -293,6 +295,30 @@ const movementsSeen = new Set();
  */
 function runOnce(seed, minutes, immortal, opts = {}) {
   const w = new World(seed);
+  /*
+   * DOES A SHOT CARRY THE VOICE IT IS SUPPOSED TO?
+   *
+   * `src/core/events.ts` declares `player:shoot { id?, voice? }` with nine
+   * lines explaining that the character FAMILY travels on the event because
+   * `src/audio/` must not import `src/game/`, and `src/audio/sfx.ts` builds
+   * `SHOT_FAMILIES` off it so every instrument sounds like itself without
+   * anyone remembering to add a row. `fireInstruments` never set the field, so
+   * that table was unreachable and the 19 of 27 instruments with no bespoke
+   * `SHOT_VOICES` row all fired with PIZZICATO's pluck —
+   * `docs/research-weapons.md` §0.2 measured 0 of 6,185 shots carrying one.
+   *
+   * NOTHING IN `tools/` COULD SEE THAT. `sfxcheck` calls `sfxShoot` directly
+   * with hand-written arguments, so it tests the synth and not the wiring; the
+   * probe that found it was written for the document and thrown away. This row
+   * is here because a defect that survived because nobody could observe it is
+   * the exact thing this file exists for, and because three new shapes were
+   * added on top of it.
+   */
+  w.bus.on('player:shoot', (e) => {
+    count('player:shoot carries a character family').add(!!e.voice);
+    if (e.voice) shotVoicesSeen.add(e.voice);
+    if (e.id) shotIdsSeen.add(e.id);
+  });
   w.bus.on('enemy:spawn', (e) => archetypesSeen.add(e.archetype));
   w.bus.on('wave:clear', (e) => gradesSeen.set(e.grade, (gradesSeen.get(e.grade) ?? 0) + 1));
   w.bus.on('powerup:pickup', (e) => powerupKindsSeen.add(e.kind));
@@ -406,6 +432,19 @@ function runOnce(seed, minutes, immortal, opts = {}) {
      * the feature is falsifiable without a screen.
      */
     range('playerBullets.bounced (cumulative)').add(w.playerBullets.bounced);
+    /*
+     * The live player-bullet count, which had no row here at all.
+     *
+     * `spray` is the first shape whose design document states a projectile
+     * BUDGET (90-107 from one instrument) and `MAX_PLAYER_BULLETS` moved
+     * 400 -> 700 to hold it. A budget nothing measures is a budget nobody can
+     * be wrong about, so the population and the drop counter both get printed:
+     * `overflow` is monotonic and non-zero means the cap bit and shots were
+     * silently thrown away, which is what `docs/MASTER_PLAN.md` G4 records
+     * happening before anyone noticed.
+     */
+    range('playerBullets.count').add(w.playerBullets.count);
+    range('playerBullets.overflow (cumulative)').add(w.playerBullets.overflow);
     count('playerBullets pool saturated').add(w.playerBullets.count >= w.playerBullets.capacity);
     count('secsSinceDrop >= 30 (pity timer armed)').add(w.secsSinceDrop >= 30);
     count('player.powerups.magnet held').add(!!w.player.powerups.magnet);
@@ -519,6 +558,15 @@ console.log('\nSTATIC — the per-shape floors in world.ts, against the instrume
     ['fireBeam   Math.max(4, s.area)', 'beam', 'area', 4],
     ['fireBeam   Math.max(120, s.range)', 'beam', 'range', 120],
     ['fireBeam   Math.max(0.12, s.linger)', 'beam', 'linger', 0.12],
+    ['fireLance  Math.max(4, s.area)', 'lance', 'area', 4],
+    ['fireLance  Math.max(120, s.range)', 'lance', 'range', 120],
+    ['fireLance  Math.max(0.2, s.interval)', 'lance', 'interval', 0.2],
+    ['fireCone   s.arc > 0 ? ... : 0.8', 'cone', 'arc', 0.0001],
+    ['fireCone   Math.max(200, s.speed)', 'cone', 'speed', 200],
+    ['fireCone   s.range > 0 ? ... : 200', 'cone', 'range', 0.0001],
+    ['fireSpray  s.arc > 0 ? ... : TAU', 'spray', 'arc', 0.0001],
+    ['fireSpray  Math.max(120, s.speed)', 'spray', 'speed', 120],
+    ['fireSpray  s.range > 0 ? ... : 1.4', 'spray', 'range', 0.0001],
     ['firePods   Math.max(200, s.speed)', 'orbit', 'speed', 200],
     ['fireAura   Math.max(40, s.area)', 'aura', 'area', 40],
     ['fireField  s.linger <= 0 → return', 'field', 'linger', 0.0001],
@@ -613,15 +661,36 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
     }
     return '';
   };
+  /*
+   * EVERY SHAPE IN `InstrumentShape` MUST HAVE A ROW HERE.
+   *
+   * This map is the one place in the audit that is hand-maintained, and the
+   * loop below iterates IT rather than the shapes — so a shape added to
+   * `weapons.ts` and forgotten here is not reported as broken, it is not
+   * reported at all. That is the worst failure mode a tool like this has, and
+   * `drainRenderQueues` and `stripComments` above are both records of this
+   * file measuring itself. The assertion underneath catches it.
+   */
   const ROUTINE = {
     seek: 'fireSeek',
     arc: 'fireArc',
     beam: 'fireBeam',
+    lance: 'fireLance',
+    cone: 'fireCone',
+    spray: 'fireSpray',
     orbit: 'firePods',
     aura: 'fireAura',
     strike: 'fireStrike',
     field: 'fireField',
   };
+  {
+    const shapes = [...new Set(W.INSTRUMENTS.map((d) => d.shape))].sort();
+    const missing = shapes.filter((s) => !ROUTINE[s]);
+    const bodyless = Object.entries(ROUTINE).filter(([, r]) => src.indexOf(`private ${r}(`) < 0);
+    console.log(`  ${shapes.length} shapes in the table, ${Object.keys(ROUTINE).length} routines mapped here`);
+    if (missing.length) console.log(`  <<< UNAUDITED SHAPES: ${missing.join(', ')} — add them to ROUTINE`);
+    if (bodyless.length) console.log(`  <<< NO SUCH ROUTINE: ${bodyless.map(([s, r]) => `${s}->${r}`).join(', ')}`);
+  }
   const keys = Object.keys(W.instrumentStats('pizzicato', 1));
   /*
    * `fireInstruments` is the dispatcher and reads two things itself: `interval`
@@ -803,6 +872,10 @@ console.log(`  archetypes met     ${[...archetypesSeen].join(', ')}`);
 console.log(`  wave grades        ${[...gradesSeen].map(([g, n]) => `${g}:${n}`).join(', ') || 'none'}`);
 console.log(`  movements seen     ${[...movementsSeen].join(', ') || 'none'}`);
 console.log(`  powerup kinds held ${[...powerupKindsSeen].join(', ') || 'none'}`);
+console.log(
+  `  shot voices heard  ${[...shotVoicesSeen].sort().join(', ') || 'NONE — the family fallback in audio/sfx.ts is unreachable'}` +
+    `   (from ${shotIdsSeen.size} instruments)`,
+);
 console.log(`  fusions completed  ${fusionsSeen.join(', ') || 'NONE — no run reached one'}`);
 console.log(`  abilities reached  ${[...abilityLevelsSeen].map(([id, lv]) => `${id}:${lv}`).join(', ')}`);
 console.log(
