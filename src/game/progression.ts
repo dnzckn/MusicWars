@@ -122,11 +122,33 @@ import {
  */
 
 /** Cost of level 1 -> 2. */
-export const XP_BASE = 10;
+/*
+ * XP costs raised ~1.7x with the 3-level ladder (base 10 -> 17, and the three
+ * step tiers 9/24/55 -> 15/41/94).
+ *
+ * A level-up now buys about 2.7x what it used to, because an instrument reaches
+ * its ceiling in 3 rungs rather than 8. Leaving the XP curve alone meant the
+ * same flood of levels each carrying far more power, which is how the arena
+ * gate ended up red at 0.02 encirclement. Slowing the clock restores the
+ * relationship `scaleForEnsemble` explicitly depends on — its comment calls
+ * wave index "the honest proxy" for player power "because levels arrive on a
+ * clock the pacing table already fixes", and that clock is this.
+ *
+ * 1.7x rather than the full 2.7x, and the difference is deliberate. Swept at
+ * 1.8x and 2.6x on its own: encirclement reached only 0.12 either way, and the
+ * heavier slowdown cost fusions 5.00 -> 3.33 — undoing the thing the ladder
+ * change existed to deliver. The pacing problem is not solved here; it is
+ * solved by enemy lifetime in `scaleForEnsemble`. This only stops the level
+ * torrent making that job impossible, and is kept light for that reason.
+ *
+ * Measured after, with all three changes in: level 66 in a twenty-minute run
+ * against 57 before the ladder change, one offer every 18.5s, fusions 5.67.
+ */
+export const XP_BASE = 17;
 /** How much each further level costs, per tier. Vampire Survivors' 10/13/16. */
-const XP_STEP_EARLY = 9;
-const XP_STEP_MID = 24;
-const XP_STEP_LATE = 55;
+const XP_STEP_EARLY = 15;
+const XP_STEP_MID = 41;
+const XP_STEP_LATE = 94;
 const XP_TIER_MID = 14;
 const XP_TIER_LATE = 23;
 

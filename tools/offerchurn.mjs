@@ -61,11 +61,27 @@ for (const seed of SEEDS) {
   w.start();
 
   let emits = 0;
-  /** Distinct offer identities seen, by level — a re-emit reuses the level. */
   let openEmits = 0;
   let offerOpen = false;
   let heldFor = 0;
   let offersThisSeed = 0;
+
+  /*
+   * Count a NEW offer by OBJECT IDENTITY, not by watching `offer` go null.
+   *
+   * The first version of this check inferred "a new offer opened" from a
+   * null -> non-null transition, and reported 56 emits for 55 offers. That was
+   * the CHECK being wrong, not the game: a level-up queued behind another one
+   * opens on the same step the previous closes, so `offer` never passes through
+   * null and two genuine offers are counted as one. It only showed up once the
+   * level ladder shortened and offers started arriving every ~18 seconds.
+   *
+   * Identity is the honest test. `openOffer` assigns a fresh object per offer,
+   * so a repeat announcement is the SAME object seen twice and a chained offer
+   * is a different one — which is exactly the distinction the tool exists to
+   * make, and the null-transition proxy could not make it at all.
+   */
+  let lastSeen = null;
 
   w.bus.on('level:offer', () => {
     emits++;
@@ -74,9 +90,11 @@ for (const seed of SEEDS) {
 
   const steps = Math.round(RUN_SECONDS / FIXED_DT);
   for (let i = 0; i < steps; i++) {
-    const choosing = w.progression.offer !== null;
+    const current = w.progression.offer;
+    const choosing = current !== null;
 
-    if (choosing && !offerOpen) {
+    if (choosing && current !== lastSeen) {
+      lastSeen = current;
       offerOpen = true;
       heldFor = 0;
       offersThisSeed++;
@@ -95,6 +113,18 @@ for (const seed of SEEDS) {
     }
     w.update(FIXED_DT, input);
   }
+
+  /*
+   * Observe once more after the loop.
+   *
+   * The loop reads `w.progression.offer` BEFORE calling `w.update()`, so an
+   * offer opened during the very last step is emitted and never seen — which
+   * showed up as 56 emits for 55 offers, a phantom off-by-one that is the
+   * TOOL's blind spot and not a repeat announcement. Closing the window is the
+   * honest fix; widening the assertion to "within one" would have been a
+   * tolerance for the exact defect this exists to catch.
+   */
+  if (w.progression.offer !== null && w.progression.offer !== lastSeen) offersThisSeed++;
 
   totalOffers += offersThisSeed;
   totalEmits += emits;

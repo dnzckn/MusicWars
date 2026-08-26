@@ -2013,7 +2013,50 @@ export class World {
      * had stopped. Raised to 10 (binds around wave 88) rather than removed
      * outright, so a session long enough to matter still has a ceiling.
      */
-    const scale = 1 + this.plan.difficulty * 2.6 + Math.min(10, this.plan.escalation) * 1.4;
+    /*
+     * 40.0, up from 2.6, and the size of that jump needs its own justification.
+     *
+     * THE PREMISE THIS FUNCTION RESTS ON MOVED. The comment above says wave
+     * index is "the honest proxy" for player power "because levels arrive on a
+     * clock the pacing table already fixes". True when written. The level
+     * ladder then went from 8 rungs to 3, so the same number of level-ups now
+     * buys roughly 2.7x the power, and wave index stopped being a proxy for
+     * anything. Measured: nominal dps 942 -> 3768 at the same wave, enemies on
+     * field p50 7.3 -> 2.0, and encirclement p90 0.53 -> 0.02 against a 0.25
+     * bar. The arena gate went red and it was right to.
+     *
+     * WHY TOUGHNESS AND NOT SOMETHING ELSE. Four levers were swept and three of
+     * them do not work, which is worth recording so nobody re-tries them:
+     *
+     *   - Group count and group size alone: enemies p50 2.0 -> 3.0, and
+     *     kills/min simply rose 167 -> 231. More bodies arriving at a player
+     *     who deletes them on contact is more kills, not more pressure.
+     *   - `targetOnScreen` alone, raised from 9 to 24 and then 36: p50 moved
+     *     3.7 -> 4.0 and stopped. The floor pulls scheduled groups FORWARD and
+     *     cannot manufacture enemies a wave does not contain, exactly as its
+     *     own comment warns.
+     *   - The XP curve alone, slowed 1.8x and 2.6x: encirclement reached only
+     *     0.12, and it cost fusions 5.00 -> 3.33, which is the thing the ladder
+     *     change existed to deliver.
+     *
+     * The arithmetic says why. On-screen population is spawn rate times
+     * LIFETIME, and lifetime is hp/dps. Quadrupling dps cut lifetime to a
+     * quarter; at ~3768 dps against 70-210hp an enemy lived about 0.05s. No
+     * sane spawn rate fills a field at that lifetime. Only hp moves the term
+     * that actually broke.
+     *
+     * At difficulty 1 this is 41x base rather than 3.6x, which sounds enormous
+     * and is roughly the 4x dps rise compounded with the ~3x longer lifetime
+     * needed to hold a ring. It is not a difficulty increase in the felt sense:
+     * measured after, the run still survives 1200s on both policies, kills/min
+     * is 188 against 101 before the ladder change, and fusions are 5.67 against
+     * 0.33. The player is far stronger AND the field is now populated, which is
+     * the combination the whole item brief was aiming at.
+     *
+     * Swept rather than guessed: 5.0 gives encirclement 0.11, 12.0 gives 0.12,
+     * 22.0 gives 0.20, 32.0 gives 0.24, 40.0 gives 0.27 and clears the bar.
+     */
+    const scale = 1 + this.plan.difficulty * 40.0 + Math.min(10, this.plan.escalation) * 4.5;
     e.hp = e.maxHp = Math.max(1, Math.round(e.maxHp * scale));
     /*
      * Past the cap the run gets more AGGRESSIVE, not just more crowded.
@@ -2080,7 +2123,19 @@ export class World {
     if (this.plan.isBoss) return 0;
     // Same 2.5 -> 10 fix as `scaleForEnsemble` (this one's old bound was 2, an
     // even earlier wall — wave 30).
-    return Math.round(4 + this.plan.difficulty * 5 + Math.min(10, this.plan.escalation) * 1.5);
+    /*
+     * Raised with the rest of the post-3-level-ladder rebalance: 4 + d*5 became
+     * 10 + d*16, so the mid-game floor is 26 rather than 9.
+     *
+     * On its own this does almost nothing — swept at 24 and 36, on-screen p50
+     * moved 3.7 to 4.0 and stopped — because the floor pulls scheduled groups
+     * FORWARD and cannot manufacture enemies a wave does not contain, which the
+     * comment above already says. It earns its place only alongside the hp rise
+     * in `scaleForEnsemble`: once enemies survive long enough to accumulate, a
+     * low floor becomes the thing capping the crowd instead of the thing
+     * creating it. Raised together, measured together.
+     */
+    return Math.round(10 + this.plan.difficulty * 16 + Math.min(10, this.plan.escalation) * 2.5);
   }
 
   /**

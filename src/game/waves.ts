@@ -261,7 +261,25 @@ export function planWave(index: number): WavePlan {
    * but the answer is less visual weight PER enemy in the renderer, where
    * legibility costs no gameplay, not fewer of them here.
    */
-  const groups = 2 + Math.floor(index / 2.0) + Math.floor(escalation * 1.5);
+  /*
+   * index / 1.35 and escalation * 2.2, up from / 2.0 and * 1.5.
+   *
+   * Part of the rebalance that followed the level ladder going from 8 rungs to
+   * 3. The player's power now arrives about 2.7x sooner in wall-clock terms, so
+   * the schedule that fed the old curve leaves the field empty — measured,
+   * enemies on screen p50 fell 7.3 to 2.0 and the arena "does the player get
+   * surrounded" gate went red at 0.02 against a 0.25 bar.
+   *
+   * MORE BODIES IS NOT THE MAIN LEVER and is deliberately the smaller half of
+   * the change. Raising group count and size ALONE moved p50 only 2.0 -> 3.0
+   * and pushed kills/min 167 -> 231: bodies arriving at a player who deletes
+   * them on contact are more kills, not more pressure. The term that actually
+   * broke is enemy LIFETIME, and that is fixed in `scaleForEnsemble`. This
+   * exists so there is something for the population floor to pull forward once
+   * enemies live long enough to accumulate — the file's own warning that group
+   * count and group size compound is why it is 1.35 and not 1.0.
+   */
+  const groups = 2 + Math.floor(index / 1.35) + Math.floor(escalation * 2.2);
   const entries: SpawnEntry[] = [];
 
   let beat = 0;
@@ -308,7 +326,11 @@ export function planWave(index: number): WavePlan {
      * The early game is deliberately raised least in relative terms: wave 1
      * goes from about two to about four, which is still a group you can read.
      */
-    const scale = 0.9 + difficulty * 1.5;
+    // 1.05 + d*1.9, up from 0.9 + d*1.5, for the reason on `groups` above: the
+    // supply side of the post-3-level-ladder rebalance, deliberately modest,
+    // because this file's own history is two difficulty passes that overshot by
+    // tightening several hands at once.
+    const scale = 1.05 + difficulty * 1.9;
     const count = Math.max(
       1,
       Math.round(
