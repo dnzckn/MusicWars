@@ -93,7 +93,37 @@ export function clap(rhythm: Patternable, bright = 0.5): Pattern {
       .hpf(1600)
       .lpf(6800 + bright * 2600)
       .hpq(1.4)
-      .gain(0.42),
+      /*
+       * 0.42 -> 0.62, and this is where the mix's air actually comes from.
+       *
+       * The comment above opened the CEILING on this burst and left its level
+       * alone, which was half the job. Measured since, with every stem
+       * rendered soloed through the real chain and the mix reconstructed from
+       * them (`tools/capture.mjs`, 32 bars, world seed 0x51ed):
+       *
+       *   - This lane is **85% of its own energy above 2 kHz** (2k 26.6%,
+       *     4k 26.5%, 8k 31.0%, 16k 1.3%) — the only lane in the score of
+       *     which that is remotely true. The three lanes that ARE the mix are
+       *     97%, 99% and 92% BELOW 2 kHz.
+       *   - It owns **72% of the mix's 8 kHz band and 49% of its 16 kHz band**.
+       *   - And it sits at **-48.6 dBFS in-mix, 22 dB under the bass**. A
+       *     backbeat 22 dB under the bass is not a backbeat.
+       *
+       * So the one source of air in the score was turned down 22 dB below the
+       * loudest lane, and "there is almost nothing above 2 kHz" is mostly that
+       * sentence. Gain is squared by `setGainCurve`, so 0.42 -> 0.80 is
+       * +11.2 dB of energy, not +5.6.
+       *
+       * 0.62 was tried first and measured, which is the only reason 0.80 is
+       * here: soloed, the 4k/8k/16k bands moved +5.3/+5.5/+5.4 dB, and in the
+       * FULL MIX the 8 kHz band went 0.1% -> 0.2% while "above 2 kHz" went
+       * 2.7% -> 3.5%. Right direction and too small, because the 2 kHz band is
+       * 86% of "the air" and this lane owns 2% of THAT band — the rest of the
+       * gain has to come from a pitched source, and does (see `decor` in
+       * `buildLead`). 0.80 puts this lane near -38 dBFS in-mix against the
+       * bass's -26: a backbeat 12 dB under the bass.
+       */
+      .gain(0.8),
     // The body: a short tuned thud so the backbeat has pitch as well as noise.
     // Without it a snare is a hiss, and a hiss does not carry a groove.
     note('e3')

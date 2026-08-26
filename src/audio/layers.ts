@@ -194,7 +194,33 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * arrangement travels" was an estimate; the measured span is 0.20 to 0.851,
    * with 54% of the run inside 0.60-0.72.
    */
-  sub: { in: 0.44, full: 0.8, ceiling: 0.2, floor: 0.1 },
+  /*
+   * THE CEILING GOES 0.2 -> 0.52, AND THE MEASUREMENT IS THE WHOLE ARGUMENT.
+   *
+   * The comment above is about `full` and it is still right. This is about
+   * `ceiling`, which was never measured in situ — only reasoned about, as "an
+   * accent for the loudest 1% of moments".
+   *
+   * Measured: `tools/capture.mjs`, 32 bars, world seed 0x51ed, every stem
+   * rendered soloed and the mix reconstructed from them (the reconstruction
+   * reproduces the full-mix RMS to 0.2 dB, so it is not a guess). At the live
+   * fader of 0.08 this lane contributes **0.0% of every octave band**, and its
+   * in-mix RMS is **-62.7 dBFS against the bass's -26.1** — 36 dB down. The
+   * "floor of the whole mix" (`kit.ts`) was 36 dB under the thing it is meant
+   * to be the floor of.
+   *
+   * The arithmetic that hid this: `postgain` is squared by
+   * `setGainCurve(x => x*x)`, so a stem fader moves ENERGY by 40*log10, not
+   * 20. A ceiling of 0.2 against `chords`' 0.9 is not a 13 dB difference, it
+   * is a 26 dB one, and half the table's apparent range does not exist.
+   *
+   * 0.52 puts it at about -42 dBFS in-mix: still 16 dB under the bass, still
+   * gated to `in: 0.44` so it is still an accent and not a bed, and now
+   * actually present in the 63 Hz octave — which measured 0.2% of the whole
+   * mix, the emptiest band in the score. See `KICK_NOTE` for the other half of
+   * that hole.
+   */
+  sub: { in: 0.44, full: 0.8, ceiling: 0.52, floor: 0.26 },
   /*
    * The kick reaches full at 0.68, not 0.52 — because it was a switch.
    *
@@ -699,14 +725,45 @@ export const FEEL_LABELS: Record<Feel, string> = {
 // ---------------------------------------------------------------------------
 
 /** Kick rhythm as a function of intensity and feel, in mini-notation over one bar. */
+/*
+ * THE KICK'S PITCH, and it is one constant because it used to be sixteen.
+ *
+ * It was `c1` — MIDI 24, 32.7 Hz — in every branch below. Measured through the
+ * real chain (`tools/capture.mjs`, 32 bars, world seed 0x51ed, the kick
+ * soloed): **87.9% of this lane's energy sat in the 31.5 Hz octave band**, and
+ * that band is 3.8% of the whole mix. Reconstructing the mix from the soloed
+ * stems, the kick is **100% of the 31.5 Hz band and 84% of the 63 Hz band**,
+ * and the 63 Hz band is **0.2% of the mix**.
+ *
+ * So the mix had a hole exactly one octave wide, from 45 Hz to 89 Hz, with the
+ * kick's whole fundamental sitting an octave BELOW it. 32.7 Hz is not a kick
+ * drum, it is a sub-drop: a laptop speaker, a phone and most headphones
+ * reproduce nothing there, so on the hardware this game is played on the kick
+ * was audible only as the click of its own pitch envelope. That is the second
+ * half of "no low end" — the first half is that `buildSub`, the only other
+ * source below 125 Hz, sits at a fader of 0.08 (in-mix -62.7 dBFS, 0.0% of
+ * every band).
+ *
+ * `g1` is MIDI 31, 49 Hz — the middle of the 63 Hz octave and the tuning a
+ * kick drum actually has. Nothing else about the lane changes: same rhythms,
+ * same envelope, same `penv` sweep from 20-30 semitones above, same gain. The
+ * energy moves from a band nobody can hear into the band directly under the
+ * bass, which is where the weight of a mix comes from.
+ *
+ * Below `buildSub`'s lowest note (MIDI 33 = 55 Hz) on purpose, so the two low
+ * sources are not on the same pitch.
+ */
+const KICK_NOTE = 'g1';
+
 export function kickRhythm(intensity: number, fill: boolean, feel: Feel = 'boomchick'): string {
+  const k = KICK_NOTE;
   if (fill) {
-    if (feel === 'chase') return 'c1 ~ [c1 c1] [c1 c1 c1]';
+    if (feel === 'chase') return `${k} ~ [${k} ${k}] [${k} ${k} ${k}]`;
     // Dubstep's fill is a stutter, not a roll: the last beat triplets in place
     // rather than accelerating, which is the gesture that says "here it comes"
     // in this genre specifically.
-    if (feel === 'halftime') return 'c1 ~ [~ c1] [c1 c1 c1]';
-    return 'c1 c1 c1 [c1 c1 c1]';
+    if (feel === 'halftime') return `${k} ~ [~ ${k}] [${k} ${k} ${k}]`;
+    return `${k} ${k} ${k} [${k} ${k} ${k}]`;
   }
 
   if (feel === 'halftime') {
@@ -719,25 +776,25 @@ export function kickRhythm(intensity: number, fill: boolean, feel: Feel = 'boomc
      * measuring — and in half-time it matters more than anywhere else, because
      * there are so few hits that replacing one is replacing the bar.
      */
-    if (intensity < 0.38) return 'c1 ~ ~ ~';
-    if (intensity < 0.72) return 'c1 ~ [~ c1] ~';
-    return 'c1 ~ [~ c1] [c1 ~ ~ c1]';
+    if (intensity < 0.38) return `${k} ~ ~ ~`;
+    if (intensity < 0.72) return `${k} ~ [~ ${k}] ~`;
+    return `${k} ~ [~ ${k}] [${k} ~ ~ ${k}]`;
   }
   if (feel === 'chase') {
     // Half-time: the kick leaves room, and the space is the sound.
-    if (intensity < 0.4) return 'c1 ~ ~ ~';
-    if (intensity < 0.75) return 'c1 ~ ~ [~ c1]';
-    return 'c1 ~ [~ c1] [c1 ~]';
+    if (intensity < 0.4) return `${k} ~ ~ ~`;
+    if (intensity < 0.75) return `${k} ~ ~ [~ ${k}]`;
+    return `${k} ~ [~ ${k}] [${k} ~]`;
   }
   if (feel === 'gallop') {
     // da  da-da  da  da-da
-    if (intensity < 0.35) return 'c1 ~ c1 ~';
-    if (intensity < 0.7) return 'c1 [~ c1 c1] c1 ~';
-    return 'c1 [~ c1 c1] c1 [~ c1 c1]';
+    if (intensity < 0.35) return `${k} ~ ${k} ~`;
+    if (intensity < 0.7) return `${k} [~ ${k} ${k}] ${k} ~`;
+    return `${k} [~ ${k} ${k}] ${k} [~ ${k} ${k}]`;
   }
   if (feel === 'shuffle') {
-    if (intensity < 0.4) return 'c1 ~ c1 ~';
-    return '[c1@2 ~] c1 [c1@2 ~] c1';
+    if (intensity < 0.4) return `${k} ~ ${k} ~`;
+    return `[${k}@2 ~] ${k} [${k}@2 ~] ${k}`;
   }
 
   /*
@@ -757,11 +814,11 @@ export function kickRhythm(intensity: number, fill: boolean, feel: Feel = 'boomc
    * is the whole trade, and it is why this change is cheap here and would have
    * been impossible before.
    */
-  if (intensity < 0.14) return 'c1 ~ ~ ~';
-  if (intensity < 0.34) return 'c1 ~ c1 ~';
-  if (intensity < 0.62) return 'c1 ~ [~ c1] ~';
-  if (intensity < 0.82) return 'c1 ~ [~ c1] c1';
-  return 'c1 ~ [~ c1] [~ c1]';
+  if (intensity < 0.14) return `${k} ~ ~ ~`;
+  if (intensity < 0.34) return `${k} ~ ${k} ~`;
+  if (intensity < 0.62) return `${k} ~ [~ ${k}] ~`;
+  if (intensity < 0.82) return `${k} ~ [~ ${k}] ${k}`;
+  return `${k} ~ [~ ${k}] [~ ${k}]`;
 }
 
 export function clapRhythm(intensity: number, fill: boolean, feel: Feel = 'boomchick', bar = 0): string {
@@ -1335,9 +1392,38 @@ export function buildMotor(m: MusicalState): Pattern {
    * is built on. The floor is wrong for this lane and should not be applied to
    * it; see the plan's note on retiring it.
    */
+  /*
+   * 0.22 -> 0.42, because the clock could not be heard.
+   *
+   * The comment on `STEM_CURVES.hats` argues this lane should be quiet
+   * "precisely BECAUSE it never stops", and that argument is about the FADER
+   * (0.40 against the old hats' 0.52). Nothing had ever measured what the
+   * written gain did on top of it.
+   *
+   * Measured: `tools/capture.mjs`, 32 bars, world seed 0x51ed, this stem
+   * soloed, and the mix reconstructed from all nine soloed stems (the
+   * reconstruction reproduces the full-mix RMS to 0.2 dB). Soloed at unity
+   * this lane reads **-53.3 dBFS**, the second quietest in the score; at its
+   * live fader of 0.34 it reads **-63.6 dBFS in-mix, 37 dB under the bass**,
+   * and it contributes **0.0% of every one of the ten octave bands**.
+   *
+   * That is not a quiet clock, it is an absent one — and this is the lane the
+   * entire pulse-inversion rests on, the one whose tombstone says "`buildMotor`
+   * is what took its place... the same clock, moved into an inner voice". The
+   * hi-hat was deleted in favour of a lane 37 dB below the bass.
+   *
+   * The reason it hid: `setGainCurve(x => x*x)` squares gain, so 0.22 against
+   * the pad's 0.42 is 11.2 dB apart and not 5.6, and the fader squares again
+   * on top of that. Half of every level difference in this file is larger than
+   * it looks.
+   *
+   * 0.42 is +11.2 dB and puts it at about -52 dBFS in-mix. Still 26 dB under
+   * the bass; still, on the octave-band table, worth **0.0%** — this change
+   * cannot flatter the mud or air numbers and is not made for them.
+   */
   const base = voice(
     line,
-    0.22,
+    0.42,
     1,
     m.sig.openness.range(0.22, 0.36),
     m.sig.openness.range(0.09, 0.16),
@@ -1349,6 +1435,9 @@ export function buildMotor(m: MusicalState): Pattern {
     // into a motor. Rides `sig.fill`, so pressure drives it rather than a
     // threshold rewriting the part. Stays a pluck — see the note on the two
     // articulations above.
+    // Kept at a third of the beat layer, as it was: 0.14/0.42 against the old
+    // 0.14/0.22, so the two articulations are further apart than before rather
+    // than closer. One voice sings, the other ticks.
     voice(`[~ ${third}]*4`, m.sig.fill.range(drive * 0.14, 0.14), 0.5, 0, 0),
   );
 }
@@ -2091,6 +2180,33 @@ export function buildChords(m: MusicalState): Pattern {
      * stops competing with the melody for the top of the spectrum, which is
      * also where it belongs musically: this is the bed, not a voice.
      */
+    /*
+     * A NEGATIVE RESULT, recorded so it is not re-derived. Opening this
+     * ceiling is NOT where the mix's missing air comes from.
+     *
+     * The reasoning that says it should be is good, which is why it was tried:
+     * the argument above is about "sustained SAW harmonics", and this lane is
+     * not a saw any more — it is a 50%-duty pulse (`pw(0)`), chosen fifty lines
+     * up precisely because a square is "enormously less fatiguing". A ceiling
+     * derived for an instrument the lane no longer is, over a group that is
+     * **27% of the whole mix** by soloed-stem reconstruction, whose
+     * fundamentals are 156-294 Hz behind a cutoff that evaluates to **1230 Hz
+     * at mid openness — harmonics 1, 3, 5, 7 and nothing else**.
+     *
+     * Measured, `range(560, 1900)` against `range(760, 3200)` (1980 Hz at mid),
+     * paired, same seed, same day. Soloed, the `chords` stem moved **+1.5 dB at
+     * 2 kHz and +0.7 dB at 4 kHz** against a soloed-render noise floor of
+     * 0.00 dB, so the filter change is real. In the FULL MIX it was worth
+     * **+0.2 dB in the 2 kHz band** — this lane owns about 15% of that band —
+     * which is a sixth of `capture.mjs`'s own 1.3 dB full-mix noise floor.
+     *
+     * So: a real change to one lane, invisible in the mix, bought by putting
+     * -19 dB harmonics at 2-3 kHz under a listener continuously — which is the
+     * one thing this file has a recorded human complaint about ("too much high
+     * pitch synth always playing, its taxing on the ears"). Reverted. The air
+     * came from the clap, from the lead's decoration becoming a pulse, and
+     * from the arp's filter, all of which are sources rather than filters.
+     */
     .lpf(m.sig.openness.range(560, 1900))
     /*
      * 110 Hz, not 20 — a REGISTER BOUNDARY that exists at full health.
@@ -2233,7 +2349,19 @@ export function buildChords(m: MusicalState): Pattern {
        */
       .pan(0.5 + pan * (0.18 + wide))
       .orbit(ORBIT_HARMONY);
-  const colourGain = 0.3;
+  /*
+   * 0.3 -> 0.45. The comment above opened this group's LOWPASS to 6.5 kHz on
+   * the grounds that it is the highest sustained pitch in the arrangement and
+   * "that is also half of dull, measured". Opening a filter over a lane at
+   * gain 0.3 buys 0.3-worth of air.
+   *
+   * Measured since, off soloed renders: the `chords` stem's whole 1 kHz band
+   * is -36.1 dBFS in-mix and its 2 kHz band -45.6, and this triangle pair —
+   * fundamentals 784-1568 Hz, the only pitched group in the file whose
+   * fundamental is above 700 Hz — is what puts anything there at all.
+   * +3.5 dB of energy, on the quietest pitched group in the mix, two voices.
+   */
+  const colourGain = 0.45;
   /*
    * The colour tones are deliberately NOT register-disciplined, and TWO
    * attempts to impose it were measured and refuted.
@@ -2680,7 +2808,32 @@ export function buildArp(m: MusicalState): Pattern {
        * than as a flute, and it is deliberately the brightest lowpass in the
        * file because this is the highest-pitched repeating line in it.
        */
-      .lpf(m.sig.openness.range(900, 4600))
+      /*
+       * 900-4600 -> 1500-7000, BECAUSE THE FILTER MOVED UNDER THE NOTE.
+       *
+       * The comment above computes "the 3rd, 5th and 7th partials at
+       * -19/-28/-34 dB" from a measured range of 440-988 Hz. That range is the
+       * UNDISPLACED one. `registermap --arp-oct=-12` — the state this lane is
+       * actually in whenever the tune is playing, which is most of the game —
+       * measures MIDI 81-95, **880-1976 Hz**, and against a cutoff of 2750 Hz
+       * at mid openness that is a cutoff-to-fundamental ratio of **2.1x, and
+       * 1.4x for the top of its own range**: the lowest in the file since the
+       * colour tones were fixed for the identical mistake ("THE FILTER WAS
+       * BELOW THE NOTE"). Displacing a lane up an octave and leaving its
+       * lowpass where it was turns a bell back into a sine.
+       *
+       * Confirmed twice, independently: `registermap` prints `harm@lpf 2.1x`
+       * displaced against 4.2x undisplaced, and the soloed render puts 49.7%
+       * of this lane's energy in the 1 kHz band and 0.7% above 4 kHz.
+       *
+       * 1500-7000 is 3050 at mid... which is still only 2.2x displaced, so the
+       * range has to move by more than the note did: at 7000 the top of the
+       * openness sweep finally clears the 3rd partial of the highest displaced
+       * note. Undisplaced this reads 3.5x-7x, brighter than before on a lane
+       * whose source is a triangle (3rd partial -19 dB), which is the least
+       * fatiguing way there is to spend a filter.
+       */
+      .lpf(m.sig.openness.range(1500, 7000))
       // A boundary rather than the dead 20 Hz this used to sit at whenever the
       // player was undamaged — see the pad's highpass. 330 Hz is a fifth below
       // the lowest fundamental this lane emits (MIDI 69 = 440 Hz), so it takes
@@ -2711,12 +2864,32 @@ export function buildArp(m: MusicalState): Pattern {
     voice(core, transpose, clamp01(pan - wing), level, sync),
     voice(fill, transpose, clamp01(pan + wing), m.sig.fill.range(0, level), sync),
   ];
-  if (drones <= 0) return stack(...pod(0, 0.36, 0.4, 3 / 16));
+  /*
+   * EVERY POD LEVEL GOES UP BY HALF, and the reason is where this lane sits
+   * rather than how loud it feels.
+   *
+   * The comment above calls this lane "the sparkle" and "the highest-pitched
+   * repeating line in the file", and the upward displacement puts it at
+   * MIDI 81-95 — 1109-2489 Hz — whenever the tune is also playing, which is
+   * most of the game. Measured through the real chain (`tools/capture.mjs`,
+   * 32 bars, world seed 0x51ed, this stem soloed) it is the ONLY pitched lane
+   * whose energy peaks above 1 kHz: 500 Hz 22.2%, 1 kHz 49.7%, 2 kHz 27.3%.
+   *
+   * And it was at **-43.4 dBFS in-mix, 15 dB under the tune and 17 under the
+   * bass**, contributing 0.8% of the mix. The one lane written to occupy the
+   * register the mix has none of was inaudible in it.
+   *
+   * 0.4 -> 0.6 is +7.0 dB of energy (gain is squared), which is where the
+   * predicted "above 2 kHz" share picks up about a point on its own. The
+   * relative balance BETWEEN the pods is unchanged, so a player can still
+   * count their drones.
+   */
+  if (drones <= 0) return stack(...pod(0, 0.36, 0.6, 3 / 16));
   // One voice per orbiting pod, hard-panned and on a different delay division
   // so they audibly lag each other. You can count your drones with your ears.
-  const parts = [...pod(0, 0.14, 0.34, 3 / 16), ...pod(7, 0.86, 0.26, 1 / 8)];
-  if (drones >= 2) parts.push(...pod(12, 0.5, 0.2, 1 / 16));
-  if (drones >= 3) parts.push(...pod(-12, 0.4, 0.8, 1 / 12));
+  const parts = [...pod(0, 0.14, 0.51, 3 / 16), ...pod(7, 0.86, 0.39, 1 / 8)];
+  if (drones >= 2) parts.push(...pod(12, 0.5, 0.3, 1 / 16));
+  if (drones >= 3) parts.push(...pod(-12, 0.4, 1, 1 / 12));
   return stack(...parts);
 }
 
@@ -2827,6 +3000,14 @@ export function buildLead(m: MusicalState): Pattern {
       // See the note on `.add(note(n))` in buildArp: a bare number is dropped.
       .add(note(transpose))
       .s(osc)
+      /*
+       * superdough's worklet maps duty as `(1 - pw) / 2`, so 0.5 is a 25%
+       * pulse — the NES melody duty, and the one whose 3rd and 5th partials
+       * are strongest. Set unconditionally because `pw` is read only in the
+       * pulse branch; on a triangle or a sawtooth it is inert, and a
+       * conditional here would be a second place to keep in step with `decor`.
+       */
+      .pw(0.5)
       .attack(0.006)
       .decay(0.22)
       // Scales with level. This was `laser > 0 ? 0.4 : 0.12` — binary — so the
@@ -2929,10 +3110,62 @@ export function buildLead(m: MusicalState): Pattern {
    * a fifth of the way up as a ghost note — and the ornament fades in on top.
    * All three are the same notes at every intensity; only their balance moves.
    */
+  /*
+   * THE THREE LINES ARE THREE PLACES, not one place three times.
+   *
+   * All three used to take the trio's single `pan`, so the tune, its filigree
+   * and its ornament were summed to one point. Measured off the rendered WAV
+   * rather than off the written pans (`tools/widthcheck.mjs`, 32 bars, both
+   * channels of the real file): the whole mix carries **4.13% side energy,
+   * L/R correlation 0.918** — that is a mono file with a hint of width, and
+   * the 500 Hz band, which this lane OWNS (58.6% of it), reads 4.56%.
+   *
+   * The skeleton stays at the trio's pan, because the tune belongs where the
+   * arranger put it. The two decorative lines move a tenth of the field either
+   * side of it. Same notes, same level, same count — the only thing that
+   * changes is that three lines stop arriving from one speaker, which is the
+   * cheapest separation available and the one this mix has none of.
+   *
+   * `clamp01`, because the boss stack calls this at 0.6 and the descant at
+   * 0.62 and a pan outside 0..1 is not a wider pan.
+   */
+  /*
+   * AND THREE TIMBRES, WHICH IS WHERE THE MIX'S AIR HAS TO COME FROM.
+   *
+   * Measured, and the measurement is the whole reason: rendered through the
+   * real chain, the full mix carries **2.7% of its energy above 2 kHz** across
+   * four octave bands. Reconstructed from the soloed stems, the 2 kHz band —
+   * which is 86% of all of that — is **57% this lane**, 20% the bass and 15%
+   * the chords. So "there is no air" is very largely a statement about the
+   * melody's oscillator, and no filter can fix it: a triangle's harmonics fall
+   * as 1/k squared, so at a fundamental of 440-830 Hz the 3rd partial is 19 dB
+   * down and the 5th is 28 dB down BEFORE the lowpass is applied. Opening the
+   * ceiling was tried in the commit above (1900-5000 from 1100-4000) and the
+   * band moved 2.5% -> 2.8%. You cannot filter in what the source never made.
+   *
+   * A 25%-duty pulse falls as 1/k instead: 3rd partial -9.5 dB, 5th -14, 7th
+   * -17. And its FUNDAMENTAL is within 0.9 dB of the triangle's at the same
+   * gain ((4/pi)*sin(pi/4) = 0.900 against 8/pi^2 = 0.811), so this adds
+   * harmonics without adding anything to the 500 Hz band the tune already
+   * dominates. That is the property that makes it the right change rather than
+   * simply a louder one.
+   *
+   * The SKELETON keeps its triangle. The tune itself is not being re-voiced —
+   * it sings on the flute it always did. The filigree and the ornament are the
+   * decoration around it, and giving a decorative line its own instrument is
+   * what an arranger does with it. It is also the canon: the melody channels on
+   * an NES are the two PULSE channels, and the triangle is the bass. This score
+   * had it exactly the other way round.
+   *
+   * Only when the trio's own oscillator is the triangle — the boss stack and
+   * the octave-down body call this with `sawtooth`, and those are deliberately
+   * dark (`isBody` gives them a 500-1400 Hz lowpass).
+   */
+  const decor = (osc: string): string => (osc === 'triangle' ? 'pulse' : osc);
   const trio = (transpose: number, level: number, osc: string, pan: number): Pattern[] => [
     voice(lines.skeleton, transpose, level, osc, pan),
-    voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), osc, pan),
-    voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), osc, pan),
+    voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), decor(osc), clamp01(pan - 0.14)),
+    voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), decor(osc), clamp01(pan + 0.14)),
   ];
   // The tune sings on a triangle; the octave below is the saw that gives it
   // body. The descant is a triangle too — a sixth above the melody is the
