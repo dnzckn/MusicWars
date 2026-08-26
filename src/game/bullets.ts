@@ -58,6 +58,21 @@ export const BulletFlag = {
    * case stops being "one extra bullet per kill" and becomes the pool.
    */
   Echo: 1 << 5,
+  /**
+   * An autonomous ally — the `spawn` shape's hunter. See `World.fireSpawn`.
+   *
+   * It rides in the player pool because a summon is a thing at a position with
+   * a heading and a lifetime, which is what this pool is, and adding a
+   * fourteenth array of loose objects for twelve of them would be a container
+   * per shape — the cost model `docs/research-weapons.md` §D.10 exists to
+   * refuse. It collides and is consumed exactly as any other non-piercing bolt
+   * is; what the flag buys is the two places a summon is NOT an ordinary bolt.
+   * `World.updateSummons` drives it — steering it at the target held in
+   * `target` below rather than letting it fly straight — and `World.fireSpawn`
+   * counts the live population off it to decide how many more to send, which is
+   * what makes `count` a retinue size instead of a volley.
+   */
+  Summon: 1 << 6,
 } as const;
 
 export interface BulletSpawn {
@@ -111,6 +126,28 @@ export class BulletPool {
   readonly flags: Uint8Array;
   /** Wall reflections REMAINING. Counts down; 0 means the next wall is the end. */
   readonly bounces: Uint8Array;
+  /**
+   * `spawn` only: the index into `World.enemies` this summon is hunting, or -1.
+   *
+   * THE ONE PIECE OF NEW MACHINERY IN THE WHOLE NINE-SHAPE CATALOGUE, and
+   * `docs/research-weapons.md` §D.9 named it in advance: "one `Int16Array`
+   * target index on `BulletPool` so a summon keeps its target between frames
+   * instead of re-picking."
+   *
+   * Keeping the target is the difference between a summon and a homing bolt.
+   * `World.steerPlayerBullets` re-picks the nearest enemy every frame, which is
+   * correct for a bolt thrown a moment ago and wrong for an ally: an ally that
+   * re-picks flips between two shapes it is equidistant from and oscillates
+   * instead of committing. It commits here, and only re-picks when the thing it
+   * committed to is gone.
+   *
+   * Int16 because the enemy list is tens of entries and -1 has to be
+   * representable; a Uint8Array could hold neither the sentinel nor a boss
+   * fight's index range honestly. It is swapped by `remove` alongside every
+   * other column — a stale index surviving a swap-remove would point a summon
+   * at whatever enemy happened to inherit the slot.
+   */
+  readonly target: Int16Array;
 
   /** Bullets dropped this step because the pool was full, for the debug overlay. */
   overflow = 0;
@@ -145,6 +182,7 @@ export class BulletPool {
     this.type = new Uint8Array(capacity);
     this.flags = new Uint8Array(capacity);
     this.bounces = new Uint8Array(capacity);
+    this.target = new Int16Array(capacity);
   }
 
   clear(): void {
@@ -179,6 +217,8 @@ export class BulletPool {
     // and multipliers, and a Uint8Array would wrap a negative or an overflow
     // into a large positive count rather than failing.
     this.bounces[i] = Math.max(0, Math.min(255, Math.round(s.bounces ?? 0)));
+    // Every spawn starts unlocked; only `World.updateSummons` ever sets it.
+    this.target[i] = -1;
     return i;
   }
 
@@ -208,6 +248,7 @@ export class BulletPool {
       this.type[i] = this.type[last];
       this.flags[i] = this.flags[last];
       this.bounces[i] = this.bounces[last];
+      this.target[i] = this.target[last];
     }
   }
 

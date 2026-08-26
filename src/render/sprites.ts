@@ -225,6 +225,21 @@ const PLAYER_TYPES: { hue: number; radius: number; shape: Shape }[] = [
   // the exchange read as a duel between two players rather than gunfire.
   { hue: 190, radius: 4.2, shape: 'eighth' },
   { hue: 320, radius: 7, shape: 'beam' },
+  /*
+   * Type 2: the `spawn` shape's ally. VIBRATO's hunters and nothing else.
+   *
+   * A third entry rather than reusing type 0, because an autonomous ally is a
+   * SECOND POSITION the player is meant to be tracking and one that looked
+   * identical to a PIZZICATO bolt would be untrackable in a field of them. A
+   * sharp is the right glyph for it: bigger than a bolt, angular where the
+   * eighth note is round, and unused by anything the enemies fire.
+   *
+   * `World.fireSpawn` sets `type: 2`; `drawBullets` indexes this table modulo
+   * its own length, so an out-of-range type degrades to a visible sprite rather
+   * than to a crash — which is why the number was safe to add without touching
+   * that loop.
+   */
+  { hue: 54, radius: 9, shape: 'sharp' },
 ];
 
 function buildSet(defs: { hue: number; radius: number; shape: Shape }[]): BulletSpriteSet {

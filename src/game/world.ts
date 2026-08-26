@@ -389,6 +389,44 @@ export class World {
    */
   private readonly sprayPhase: Record<string, number> = {};
 
+  /**
+   * `mortar` shells in the air: where each will land, and when.
+   *
+   * The only new state any of the four shapes in this change needed, and it is
+   * a plain array rather than a container — nothing draws it. What the player
+   * sees is the telegraph ring `fireMortar` pushes into `novas[]` alongside
+   * each entry, which closes on the landing point as the timer runs out. This
+   * list is the authority on the damage; the ring is the authority on nothing.
+   */
+  readonly shells: {
+    x: number;
+    y: number;
+    /** Seconds until it lands. */
+    t: number;
+    damage: number;
+    radius: number;
+    hue: number;
+  }[] = [];
+
+  /**
+   * Whether any `spawn` ally is out, so the per-frame drive can be skipped.
+   *
+   * Same gate `steerPlayerBullets` gets and for the same reason its call site
+   * gives: the ordinary loadout should pay one comparison, not a walk of 700
+   * bullets looking for a flag nothing set. `fireSpawn` raises it on every
+   * activation and `updateSummons` lowers it the frame it finds none, so the
+   * flag is at worst one interval stale in the direction that costs nothing.
+   */
+  private summonsActive = false;
+  /**
+   * Live `spawn` allies, refreshed by `updateSummons`. Public because a
+   * budget nothing can measure is a budget nobody can be wrong about, and
+   * `tools/deadhunt-ranges.mjs` and `tools/_shapecount.mjs` are what measure
+   * it — the same reason `BulletPool.bounced` and `.overflow` are public
+   * counters. At most one step stale, in the direction that costs nothing.
+   */
+  summonsLive = 0;
+
   /** Real seconds the current offer has been open, for the safety pick. */
   private offerAge = 0;
   /** Game time the last offer closed, so a burst does not stack. */
@@ -718,6 +756,58 @@ export class World {
    */
   static readonly TRAIL_CEILING = 340;
   /**
+   * Hard ceiling on `novas.length`. THERE WAS NONE.
+   *
+   * `docs/research-weapons.md` §D.5 recorded this as the risk to fix alongside
+   * `mortar`: "`novas` has no cap today — the two `novas.push` sites
+   * (`fireAura` and `fireStrike`) carry no length guard, unlike `wells`' 14."
+   * There are seven push sites now (those two, COMPRESSOR's hit ring,
+   * UP-TEMPO's trail drop, `fireTrail`, and `mortar`'s telegraph and
+   * detonation) and every one of them is guarded.
+   *
+   * 420, against a MEASURED `novas.length` of mean 34 / peak 322 over three
+   * eight-minute runs BEFORE this change and mean 27 / peak 240 after it
+   * (`deadhunt-ranges`). It fell because TUTTI left `aura`, which is worth
+   * saying: the number this cap is set against moved as a side effect of the
+   * same change that added the cap, so read it off the tool rather than off
+   * this paragraph. Deliberately ABOVE the observed peak rather than under it —
+   * a cap that bites in ordinary play is a silent content change, and the job
+   * here is to stop an unbounded array, not to ration the auras. Seen red at 10
+   * (TREMOLO's trail fell 69 -> 10 in `_shapecount`), so it is not decorative.
+   * `TRAIL_CEILING` at 340 sits below it on purpose, so the
+   * rig's own trail yields to the instruments before this backstop is reached.
+   *
+   * Every ring costs a loop over the enemies in `updateNova` and four stroked
+   * arcs in `drawNovas`, so the number is a render budget as much as a
+   * simulation one. `tools/_shapecount.mjs` is where a shape's contribution to
+   * it is read off.
+   */
+  static readonly MAX_NOVAS = 420;
+  /** Pending `mortar` detonations in flight. `count` per activation, 2-5. */
+  static readonly MAX_SHELLS = 24;
+  /**
+   * px/s a pending `mortar` shell drags what is under it, at the centre of the
+   * circle and falling to nothing at the rim. See `updateShells` for why it is
+   * this gentle: a strong pull would delete the property that makes the shape
+   * interesting, which is that the enemy can walk out of the landing.
+   */
+  static readonly SHELL_PULL = 70;
+  /**
+   * Live `spawn` allies, shape-wide. `docs/research-weapons.md` §D.9 budgeted
+   * 12; see `fireSpawn` for why the count is not per instrument.
+   */
+  static readonly MAX_SUMMONS = 12;
+  /**
+   * rad/s a summon can turn. Half `steerPlayerBullets`' hardcoded 6, because an
+   * ally that turns as fast as a homing bolt sticks to its target's back and
+   * reads as glued rather than as something flying.
+   */
+  static readonly SUMMON_TURN = 3;
+  /** Seconds a `chain` hop's arc is drawn for. Long enough to read, short enough to be a flash. */
+  static readonly CHAIN_FLASH_S = 0.12;
+  /** Damage a `chain` keeps per hop. See `fireChain` for the power arithmetic. */
+  static readonly CHAIN_FALLOFF = 0.85;
+  /**
    * px/s below which the ship counts as stationary for FERMATA's charge.
    *
    * `Player.update` damps velocity rather than zeroing it, and its own comment
@@ -902,6 +992,9 @@ export class World {
     this.camera.reset();
     this.shocks.length = 0;
     this.novas.length = 0;
+    this.shells.length = 0;
+    this.summonsActive = false;
+    this.summonsLive = 0;
     this.notes.length = 0;
     this.wells.length = 0;
     this.effects.length = 0;
@@ -1486,6 +1579,10 @@ export class World {
     }
 
     this.updateWells(simDt);
+    // Before `updateNova`, so a shell that lands this step gets its blast ring
+    // advanced on the same step rather than sitting at r=0 for a frame.
+    this.updateShells(simDt);
+    if (this.summonsActive) this.updateSummons(simDt);
     this.updateNova(simDt);
     this.updateNotes(simDt);
     this.particles.update(simDt);
@@ -1741,7 +1838,18 @@ export class World {
       const well = this.wells[w];
       well.age += dt;
 
-      // Grows, holds, then collapses.
+      /*
+       * Grows, holds, then collapses.
+       *
+       * `Renderer.drawWells` REPEATS THIS LINE, which is a duplicated constant
+       * and therefore a hazard by this repo's own rules. It is duplicated on
+       * purpose: the alternative is publishing a derived radius on the well for
+       * the renderer to read, which would put a per-frame write on every well
+       * so that a drawing detail could avoid an arithmetic expression. The
+       * defence is a test rather than a comment — `tools/effectsdraw.mjs`
+       * asserts a well is drawn at three different sizes at three ages, so the
+       * two copies cannot drift into agreeing on nothing.
+       */
       const t = well.age / well.life;
       const radius = well.radius * Math.sin(Math.min(1, t) * Math.PI) + 40;
       if (well.pull > 0) this.shock(well.x, well.y, radius * 1.4, -1200 * dt * 60 * 0.016);
@@ -1858,6 +1966,145 @@ export class World {
         if (e.hp <= 0) e.alive = false;
       }
     }
+  }
+
+  /**
+   * `mortar` shells: pull for the whole telegraph, then land.
+   *
+   * The pull is the first half of TUTTI's blurb and the reason this loop runs
+   * every frame instead of being a timer that fires once. It is the same
+   * displacement `updateWells` applies for BLACK HOLE — `e.x += (dx / d) *
+   * pull`, scaled by how deep inside the circle the shape is, and skipping the
+   * conductor because a boss dragged around by a weapon is not a boss.
+   *
+   * It is deliberately GENTLE (`SHELL_PULL` px/s at the centre, nothing at the
+   * rim). A strong pull would make the landing unmissable and delete the one
+   * property that makes this shape interesting: the enemy can walk out of it.
+   * What the pull buys is that shapes drifting past the edge get folded in, so
+   * a shell that was aimed well lands on a tighter group than it was aimed at.
+   */
+  private updateShells(dt: number): void {
+    for (let i = this.shells.length - 1; i >= 0; i--) {
+      const sh = this.shells[i];
+      sh.t -= dt;
+      if (sh.t > 0) {
+        for (const e of this.enemies) {
+          if (!e.alive || e.archetype === 'conductor') continue;
+          const dx = sh.x - e.x;
+          const dy = sh.y - e.y;
+          const d = Math.hypot(dx, dy);
+          if (d > sh.radius || d < 1) continue;
+          const pull = (1 - d / sh.radius) * World.SHELL_PULL * dt;
+          e.x += (dx / d) * pull;
+          e.y += (dy / d) * pull;
+        }
+        continue;
+      }
+      this.shells.splice(i, 1);
+      // Instantaneous and area-flat, exactly as `fireStrike`'s is: a shell that
+      // lands wider hits more things rather than each thing more weakly.
+      for (const e of this.enemies) {
+        if (!e.alive || e.invuln > 0) continue;
+        const r = sh.radius + e.radius;
+        if (dist2(e.x, e.y, sh.x, sh.y) > r * r) continue;
+        e.hp -= sh.damage;
+        e.hitFlash = Math.max(e.hitFlash, 0.07);
+        if (e.hp <= 0) e.alive = false;
+      }
+      if (this.novas.length < World.MAX_NOVAS) {
+        this.novas.push({
+          x: sh.x,
+          y: sh.y,
+          r: 0,
+          alive: true,
+          maxR: sh.radius,
+          // Fast, so the detonation reads as a bang against the telegraph's
+          // slow close rather than as a second warning.
+          speed: Math.max(420, sh.radius * 6),
+          dps: 0,
+          hold: 0,
+          hue: sh.hue,
+          clears: false,
+        });
+      }
+      this.particles.emit(sh.x, sh.y, 0, -40, 0.4, 6, sh.hue, ParticleShape.Ring, 3);
+      this.shock(sh.x, sh.y, sh.radius * 1.3, 900);
+      this.camera.shake(0.09);
+    }
+  }
+
+  /**
+   * `spawn` allies: keep the target you committed to, and burn what you reach.
+   *
+   * TWO THINGS SEPARATE THIS FROM `steerPlayerBullets`, which is the loop it
+   * would otherwise be a copy of.
+   *
+   * IT COMMITS. That loop re-picks the nearest enemy every frame, which is
+   * right for a bolt thrown a moment ago and wrong for an ally: between two
+   * shapes at similar distances a re-picking ally oscillates and reaches
+   * neither. `BulletPool.target` holds the index it chose and this only picks
+   * again when that index no longer names something worth hunting. The index
+   * can be inherited by a different enemy when the list is compacted by a
+   * reap — which re-points the hunter at whatever took the slot, and a hunter
+   * switching prey when its prey dies is the behaviour anyway.
+   *
+   * IT FALLS BACK TO THE SHIP. With nothing alive to hunt the ally steers home,
+   * which is what keeps it inside the arena — the summons are spawned WITHOUT
+   * `DespawnOffscreen` precisely so that chasing something to the edge does not
+   * delete them, so something has to bring them back and this is it.
+   *
+   * IT DOES NOT DEAL DAMAGE. `collidePlayerBullets` does, exactly as it does
+   * for every other bolt: a summon is `type: 2`, which is not the piercing
+   * type, so it lands its `damage` on the thing it reaches and is consumed —
+   * and the next activation of `fireSpawn` sends a replacement.
+   *
+   * A DRAFT OF THIS APPLIED A RATE HERE AS WELL, and it was wrong twice over.
+   * It double-counted, because the bullet still went through
+   * `collidePlayerBullets` and landed its full `damage` on contact on top of
+   * the rate; and it cost an O(summons x enemies) overlap test per frame to
+   * deliver a number too small to see. The alternative — making the summon
+   * `type: 1` so it is not consumed, and letting the rate be the whole of its
+   * output — is worse still: a piercing bullet that homes sits inside the first
+   * thing it reaches and `collidePlayerBullets` applies its full `damage` on
+   * every one of the 120 steps a second. Consumed-on-contact is the only one of
+   * the three that is a weapon rather than a division by the step size.
+   */
+  private updateSummons(dt: number): void {
+    const pb = this.playerBullets;
+    let live = 0;
+    for (let i = 0; i < pb.count; i++) {
+      if (!(pb.flags[i] & BulletFlag.Summon)) continue;
+      live++;
+
+      let ti = pb.target[i];
+      let t = ti >= 0 && ti < this.enemies.length ? this.enemies[ti] : null;
+      if (t && (!t.alive || t.invuln > 0)) t = null;
+      if (!t) {
+        let bestD = Infinity;
+        for (let j = 0; j < this.enemies.length; j++) {
+          const e = this.enemies[j];
+          if (!e.alive || e.invuln > 0) continue;
+          const d = dist2(pb.x[i], pb.y[i], e.x, e.y);
+          if (d >= bestD) continue;
+          bestD = d;
+          ti = j;
+          t = e;
+        }
+        pb.target[i] = t ? ti : -1;
+      }
+
+      const gx = t ? t.x : this.player.x;
+      const gy = t ? t.y : this.player.y;
+      const want = Math.atan2(gy - pb.y[i], gx - pb.x[i]);
+      pb.angle[i] += clamp(
+        angleDelta(pb.angle[i], want),
+        -World.SUMMON_TURN * dt,
+        World.SUMMON_TURN * dt,
+      );
+
+    }
+    this.summonsLive = live;
+    this.summonsActive = live > 0;
   }
 
   /**
@@ -3313,7 +3560,7 @@ export class World {
      * does, so the number in the table is what a target standing in it takes
      * rather than a rate that scales with how far the ring travels.
      */
-    if (this.rules.hitNova > 0) {
+    if (this.rules.hitNova > 0 && this.novas.length < World.MAX_NOVAS) {
       const maxR = Math.max(40, this.rules.hitNovaRadius);
       const speed = 520;
       this.novas.push({
@@ -4123,6 +4370,18 @@ export class World {
         case 'spray':
           this.fireSpray(id, s);
           break;
+        case 'trail':
+          this.fireTrail(id, s);
+          break;
+        case 'chain':
+          this.fireChain(id, s);
+          break;
+        case 'mortar':
+          this.fireMortar(id, s);
+          break;
+        case 'spawn':
+          this.fireSpawn(s);
+          break;
         case 'orbit':
           this.firePods(s);
           break;
@@ -4792,6 +5051,12 @@ export class World {
     const p = this.player;
     const rings = Math.max(1, Math.round(s.count));
     for (let i = 0; i < rings; i++) {
+      // `World.MAX_NOVAS`, which this array did not have until `mortar` needed
+      // one. It cannot bite here at any measured density — the peak over three
+      // eight-minute runs is 240 against a cap of 420 — and it is applied to
+      // every push site rather than only to the new ones, because a cap that
+      // half the writers ignore is not a cap.
+      if (this.novas.length >= World.MAX_NOVAS) break;
       this.novas.push({
         x: p.x,
         y: p.y,
@@ -4886,22 +5151,470 @@ export class World {
         if (e.hp <= 0) e.alive = false;
       }
 
+      // See `fireAura` for why the guard is here too. This ring is a visual, so
+      // dropping it under an already-saturated array costs a picture and no
+      // damage — the hit above has already landed.
+      if (this.novas.length < World.MAX_NOVAS) {
+        this.novas.push({
+          x,
+          y,
+          r: 0,
+          alive: true,
+          maxR: radius,
+          speed: Math.max(260, radius * 5),
+          dps: 0,
+          // A visual only — no damage, so nothing to hang. See `hold`.
+          hold: 0,
+          hue,
+          clears: false,
+        });
+      }
+      this.particles.emit(x, y, 0, -30, 0.3, 4, hue, ParticleShape.Ring, 1);
+    }
+    this.camera.shake(0.04);
+  }
+
+  /**
+   * A TRAIL: hazard laid down by MOVING, and nothing at all while parked.
+   *
+   * `docs/research-weapons.md` §D.2, and the fifth blurb the file's own "PROSE
+   * THE SIMULATION DOES NOT DELIVER" heading listed. TREMOLO FIELD has said
+   * "pools left in your wake" since the row was written and `fireField` dropped
+   * them on the NEAREST ENEMY — the opposite of a wake, and the one placement
+   * that guarantees the pool is never behind you.
+   *
+   * WHY THIS IS `novas[]` AND NOT `wells[]`, WHICH IS A DELIBERATE DEPARTURE
+   * FROM THE DESIGN DOCUMENT. §D.2 specifies `wells[]` ("zero new machinery —
+   * `pushWell` verbatim"), and that spec was written before the finding
+   * recorded in `docs/plan-passives.md` §8.8: nothing in `Renderer` read
+   * `World.wells` at all. `drawNovas`, `drawEffects`, `drawNotes`, `drawDrops`,
+   * `drawPopups`, `drawBullets` and the particles were the whole draw list, so
+   * a well was a damage pool the player could not see. Shipping a trail on that
+   * container would have shipped an invisible weapon whose entire design is
+   * "your movement path is the weapon" — a path you cannot see is not a weapon,
+   * it is a rumour. UP-TEMPO's trail took `novas[]` for exactly this reason one
+   * change ago and `tools/effectsdraw.mjs` already asserts that ring is DRAWN,
+   * so this is the container with the evidence behind it.
+   *
+   * `Renderer.drawWells` lands in the same change, so `wells[]` would work now
+   * — and the two containers are still not equivalent for this shape. A well
+   * GROWS AND COLLAPSES on a sine over its life and `updateWells` floors its
+   * radius at +40px; a nova with `speed = maxR / life` opens once and fades,
+   * which is what ground catching fire behind you looks like. The trail keeps
+   * the ring, and the wells fix is for BLACK HOLE and DOWNBEAT, which have no
+   * other container to move to.
+   *
+   * WHAT IT READS: `count` drops per activation, `damage` shared between them,
+   * `area` as each drop's radius, `linger` as how long the ground stays hot,
+   * and the dispatcher's `interval` as how often a moving ship lays another.
+   * `speed`, `pierce`, `bounces`, `arc` and `range` are deliberately unread: a
+   * pool does not travel, has nothing to pass through, no wall to come off, no
+   * angular width and no reach — it is where you were.
+   *
+   * IT IS GATED ON THE SHIP'S OWN VELOCITY, not on a distance accumulator, and
+   * the difference is that the accumulator belongs to a rule and this is an
+   * instrument. UP-TEMPO drops every `trailEvery` px because a passive has no
+   * clock of its own; an instrument HAS a clock, and letting the interval set
+   * the drop rate is what makes TREMOLO's "dropped more often" step (L3,
+   * `interval` x0.7) mean something. Moving faster therefore spaces the drops
+   * further apart rather than laying more of them, which is the same trail the
+   * player draws with the stick either way.
+   *
+   * `clears: false`, like UP-TEMPO's and unlike every aura's: a wake of
+   * bullet-cancelling rings would be the strongest defensive item in the game
+   * bought by holding a direction. It burns; it does not sweep.
+   *
+   * BUDGET: `drops x life / interval` rings alive, and both halves move under
+   * the rig, so it is measured rather than asserted — `tools/_shapecount.mjs`
+   * runs this instrument alone at max with the whole rig at max.
+   * `World.MAX_NOVAS` is the backstop, and the 1..4 clamp on `drops` is
+   * `pushField`'s precedent for the reason that one gives.
+   */
+  private fireTrail(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const moving = Math.hypot(p.vx, p.vy);
+    // Standing still lays nothing. That sentence IS the shape.
+    if (moving < World.STILL_SPEED) return;
+    const drops = clamp(Math.round(s.count) || 1, 1, 4);
+    const maxR = Math.max(20, s.area);
+    const life = Math.max(0.4, s.linger);
+    const hue = this.hueOf(id);
+    // Along the reverse of the ship's own velocity, so a group of drops reads
+    // as one wake rather than as a rosette around the ship.
+    const bx = -p.vx / moving;
+    const by = -p.vy / moving;
+    for (let i = 0; i < drops; i++) {
+      if (this.novas.length >= World.MAX_NOVAS) return;
+      const back = i * maxR * 0.8;
+      this.novas.push({
+        x: clamp(p.x + bx * back, 30, this.width - 30),
+        y: clamp(p.y + by * back, 30, this.height - 30),
+        r: 0,
+        alive: true,
+        maxR,
+        // Opens over its whole life, so the fade in `drawNovas` (which runs on
+        // `1 - r / maxR`) covers the drop's whole existence rather than
+        // finishing in the first fifth of it.
+        speed: maxR / life,
+        // The same division `pushField` makes: one activation's damage is
+        // shared between the pools it places, so a wider wake is coverage and
+        // not a multiplier. Total per activation does not move with `count`.
+        dps: s.damage / drops / life,
+        hold: 0,
+        hue,
+        clears: false,
+      });
+    }
+  }
+
+  /**
+   * A CHAIN: one bolt to the nearest body, which jumps to the next.
+   *
+   * `docs/research-weapons.md` §D.3 calls this "the single highest-value
+   * re-point available" and the reason is that CARILLON's blurb is verbatim
+   * "Every strike chains to two more. The ringing does not stop" — and
+   * `fireStrike` picked its targets AT RANDOM. There was no chain. The
+   * instrument named a mechanic the simulation had no routine for, which
+   * `weapons.ts`'s own "PROSE THE SIMULATION DOES NOT DELIVER" heading has
+   * listed the whole time.
+   *
+   * WHAT THE PLAYER DOES DIFFERENTLY. Its value depends on how TIGHT the crowd
+   * is, not on where the ship is. It is the first weapon in the game that wants
+   * the pack bunched, which is the opposite of what every other shape teaches,
+   * and against a lone boss it is the worst weapon in the game — a real,
+   * legible trade rather than a number.
+   *
+   * IMPLEMENTATION: no `BulletPool` and no new container. Damage is applied
+   * instantly here, exactly as `fireStrike` already iterates enemies and
+   * subtracts `hp`; the visible arc is one `Effect{kind:'beam'}` per hop with
+   * `dps: 0`, which `drawEffects` already draws and which `updateEffects` skips
+   * on its own `dps <= 0` guard, so the segments cost a draw and no collision.
+   * Structurally this is `fireStrike` with a nearest-next walk instead of a
+   * random pick.
+   *
+   * WHAT IT READS: `interval`, `count` as the number of hops, `damage`, `area`
+   * as the radius a hop can reach, and `range` as how far the FIRST hop can
+   * start from the ship. `speed`, `linger`, `bounces` and `arc` are unread — a
+   * chain does not travel, does not persist, has no wall and no width — and
+   * CARILLON's `pierce: 3` is DELETED rather than left set and dead, which is
+   * the call CROSS-STRUNG's `pierce: 2` got. It was already dead: `strike`
+   * ignored `pierce` too, so `deadhunt-ranges` printed
+   * `DEAD carillon.pierce=3 (set, static)` before this change and prints one
+   * fewer row after it.
+   *
+   * POWER. Nominal `damage x count / interval` is 300 both before and after,
+   * because the falloff is not in that metric. Actual output falls: five flat
+   * 30s become 30 + 25.5 + 21.7 + 18.4 + 15.7 = 111, and a strike's circle
+   * could catch two shapes at once where a hop lands on exactly one. That is
+   * deliberate — the compensation is that every hop hits a DISTINCT live body,
+   * where five random strikes can and routinely do land on the same one.
+   *
+   * BUDGET: `count` Effects for `CHAIN_FLASH_S`, against an interval that is
+   * never shorter than 0.31s under the whole rig, so one generation: 5 today,
+   * 8 with SPREAD at its ceiling. Zero bullets.
+   */
+  private fireChain(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const hops = Math.max(1, Math.round(s.count));
+    const reach = s.range > 0 ? s.range : 620;
+    const jump = Math.max(40, s.area);
+    const hue = this.hueOf(id);
+
+    // The first body: the nearest live thing inside the weapon's own reach.
+    // `bestD` starts AT the reach so the range test and the nearest test are
+    // one comparison rather than two.
+    let cur: Enemy | null = null;
+    let bestD = reach * reach;
+    for (const e of this.enemies) {
+      if (!e.alive || e.invuln > 0) continue;
+      const d = dist2(e.x, e.y, p.x, p.y);
+      if (d > bestD) continue;
+      bestD = d;
+      cur = e;
+    }
+    // Nothing in reach. A bell over an empty field is silence, the same
+    // decision `fireStrike` makes.
+    if (!cur) return;
+
+    let fromX = p.x;
+    let fromY = p.y;
+    let damage = s.damage;
+    const struck: Enemy[] = [];
+    for (let h = 0; h < hops && cur; h++) {
+      struck.push(cur);
+      cur.hp -= damage;
+      cur.hitFlash = Math.max(cur.hitFlash, 0.07);
+      if (cur.hp <= 0) cur.alive = false;
+
+      const dx = cur.x - fromX;
+      const dy = cur.y - fromY;
+      this.effects.push({
+        kind: 'beam',
+        id,
+        x: fromX,
+        y: fromY,
+        angle: Math.atan2(dy, dx),
+        // Thin: this is an arc between two bodies, not a bow stroke. The
+        // damage has already landed, so the width is purely how it reads.
+        radius: 3.5,
+        length: Math.max(1, Math.hypot(dx, dy)),
+        arc: 0,
+        // A PICTURE OF A HIT THAT ALREADY HAPPENED. `updateEffects` returns
+        // early on this, so a chain costs zero collision work; without it the
+        // segment would deal its damage a second time, over its whole life, to
+        // everything standing under the line between two bodies.
+        dps: 0,
+        life: World.CHAIN_FLASH_S,
+        age: 0,
+        hue,
+        // NOT attached: a chain hangs between the bodies it struck. An attached
+        // segment would be dragged along by the ship and would draw from
+        // wherever the ship had got to, which is the one thing a chain is not.
+        attached: false,
+        tracks: false,
+        offset: 0,
+        pull: 0,
+        swallows: false,
+      });
+      this.particles.emit(cur.x, cur.y, 0, -30, 0.25, 3, hue, ParticleShape.Ring, 1);
+
+      fromX = cur.x;
+      fromY = cur.y;
+      // The next body: nearest un-struck live thing within `area` of this one.
+      // Linear over `struck` because it is at most `count` long — a Set would
+      // cost an allocation per activation to search eight entries.
+      let next: Enemy | null = null;
+      let nd = jump * jump;
+      for (const e of this.enemies) {
+        if (!e.alive || e.invuln > 0 || struck.includes(e)) continue;
+        const d = dist2(e.x, e.y, fromX, fromY);
+        if (d > nd) continue;
+        nd = d;
+        next = e;
+      }
+      cur = next;
+      damage *= World.CHAIN_FALLOFF;
+    }
+    this.camera.shake(0.03);
+  }
+
+  /**
+   * A MORTAR: a shell aimed at where a target WILL be, that lands there.
+   *
+   * `docs/research-weapons.md` §D.5. It is the only shape that hits PAST a wall
+   * of bodies: a bolt stops on the first thing it touches, an aura has to reach
+   * outward through everything, and `strike` — the one exception — is
+   * explicitly unaimed. A mortar means the dangerous back rank is reachable, so
+   * a player stops retreating from a pack and starts hitting through it. And
+   * because the landing is telegraphed and the enemy can walk out of it, it is
+   * the first weapon in this game whose output the ENEMY can respond to.
+   *
+   * TUTTI OWNS IT AND THE BLURB IS DELIVERED IN FULL. "Everything is pulled to
+   * the centre first, and then struck" is a telegraph that pulls followed by a
+   * landing, and `weapons.ts` lists it under prose the simulation does not
+   * deliver. It does now, both halves: the pending shell drags what is under it
+   * inward for the whole telegraph and then detonates. That pull is the same
+   * `e.x += (dx / d) * pull` `updateWells` already applies for BLACK HOLE, and
+   * it skips the conductor for the reason that one does.
+   *
+   * THE TELEGRAPH IS A `novas[]` RING WITH `dps: 0`, which is `fireStrike`'s
+   * idiom exactly — that routine already pushes a damage-free ring purely as a
+   * visual — so the warning is a container that exists and is already drawn.
+   * Its `speed` is `radius / delay`, so the circle closes on the landing point
+   * precisely as the shell arrives: the player reads the timing off the
+   * geometry rather than off a colour.
+   *
+   * WHAT IT READS: `interval`, `count` shells per activation, `damage`, `area`
+   * as the blast radius, `range` as how far out a shell can be thrown, and
+   * `linger` as the telegraph delay. `speed`, `pierce`, `bounces` and `arc` are
+   * unread: a lobbed shell has no travel speed you can express as px/s (it
+   * ignores everything in between, which is the point), nothing to pass
+   * through, no wall and no angular width.
+   *
+   * BUDGET: `count` telegraph rings plus `count` detonation rings, so 4 at
+   * TUTTI's numbers and 10 at SPREAD's ceiling — exactly the 10 §D.5 budgeted.
+   * Plus `count` entries in `shells`, capped by `MAX_SHELLS`. Zero bullets.
+   * `novas` had NO CAP AT ALL before this change and §D.5 flagged that as the
+   * risk to record; `World.MAX_NOVAS` is it.
+   */
+  private fireMortar(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const rounds = Math.max(1, Math.round(s.count));
+    const reach = s.range > 0 ? s.range : 620;
+    const reachSq = reach * reach;
+    const radius = Math.max(40, s.area);
+    const delay = Math.max(0.15, s.linger);
+    const hue = this.hueOf(id);
+
+    const pool: Enemy[] = [];
+    for (const e of this.enemies) {
+      if (!e.alive || e.invuln > 0) continue;
+      if (dist2(e.x, e.y, p.x, p.y) > reachSq) continue;
+      pool.push(e);
+    }
+    // Nothing in reach: hold the shell. A mortar fired at nowhere is the "shot
+    // at the horizon" `fireStrike` refuses to fire.
+    if (pool.length === 0) return;
+
+    for (let k = 0; k < rounds; k++) {
+      if (this.shells.length >= World.MAX_SHELLS) break;
+      // Distinct targets while there are distinct targets, refilling when the
+      // pool empties — `fireStrike`'s rule, for the reason its comment gives: a
+      // `count` step that buys nothing on a thin wave is the defect this whole
+      // audit is about.
+      if (pool.length === 0) {
+        for (const e of this.enemies) if (e.alive && e.invuln <= 0) pool.push(e);
+        if (pool.length === 0) break;
+      }
+      const target = pool.splice(this.rng.int(0, pool.length), 1)[0];
+      /*
+       * LEAD THE TARGET. `Enemy.vx`/`vy` are already integrated by every move
+       * function, so this is the position it will hold when the shell lands if
+       * it does not change course — which makes walking out of the circle a
+       * real decision rather than an accident of the aiming code.
+       *
+       * Clamped inside the arena, so a shell aimed at something sliding off the
+       * edge still lands somewhere the player can see it land.
+       */
+      const x = clamp(target.x + target.vx * delay, 40, this.width - 40);
+      const y = clamp(target.y + target.vy * delay, 40, this.height - 40);
+      this.shells.push({ x, y, t: delay, damage: s.damage, radius, hue });
+      if (this.novas.length >= World.MAX_NOVAS) continue;
       this.novas.push({
         x,
         y,
         r: 0,
         alive: true,
         maxR: radius,
-        speed: Math.max(260, radius * 5),
+        // Closes exactly as the shell arrives; see above.
+        speed: radius / delay,
         dps: 0,
-        // A visual only — no damage, so nothing to hang. See `hold`.
         hold: 0,
         hue,
         clears: false,
       });
-      this.particles.emit(x, y, 0, -30, 0.3, 4, hue, ParticleShape.Ring, 1);
     }
-    this.camera.shake(0.04);
+  }
+
+  /**
+   * A SPAWN: an autonomous ally that fights somewhere the player is not.
+   *
+   * `docs/research-weapons.md` §D.9, and it is the one archetype BOTH reference
+   * games have that this one had no equivalent of at all — Gatti Amari in
+   * Vampire Survivors, Brood Mother and Mosquito King in Ball x Pit. Every
+   * hitbox in this game is welded to the ship, PODS INCLUDED: an orbit is drawn
+   * at `Player.dronePos`, so it is the ship's own geometry with a radius. A
+   * summon means a corner stays defended while you leave it, and it splits the
+   * player's attention across two positions, which is a genuinely different
+   * load rather than a bigger number.
+   *
+   * VIBRATO OWNS IT, AND THIS RE-POINTS A ROW THAT WAS ITSELF RE-POINTED ONE
+   * CHANGE AGO (`field` -> `strike`). §D.9 says to state that plainly and to
+   * argue it on `deadhunt-ranges` output rather than on taste, so: the blurb is
+   * "The pools go hunting", the catalyst is literally HOMING, and a pool that
+   * hunts is a summon. `strike` was the closest thing available when there were
+   * seven shapes; it delivered "appears where the enemies are" and not
+   * "hunting", because a strike is instantaneous and nothing persists to hunt
+   * WITH. The row also gets its `speed` back — deleted in that change with the
+   * note "no shape in the table is a pool that travels" — because this shape is
+   * exactly that, and `linger` becomes the ally's lifetime.
+   *
+   * THE ONLY NEW MACHINERY IN THE CATALOGUE IS ONE TYPED ARRAY.
+   * `BulletPool.target` is an `Int16Array` holding the enemy index each summon
+   * has committed to; see its declaration for why committing rather than
+   * re-picking is the whole difference between an ally and a homing bolt.
+   * `World.steerPlayerBullets` already ran an O(live x enemies) re-target loop
+   * every frame for `BulletFlag.Seeking`, so the cost of steering a bolt at a
+   * target was shipped and running before this; what a summon adds on top is
+   * persistence.
+   *
+   * IT IS A TOP-UP, NOT A VOLLEY, and that is what bounds it. `count` is the
+   * size of the RETINUE, not the number sent per activation: the routine counts
+   * the live summons and sends the difference, so the population is `count` and
+   * cannot drift upward however short the interval gets. `fireInstruments` uses
+   * the same idiom for `firePods` twenty lines into its loop.
+   *
+   * THE POPULATION IS COUNTED SHAPE-WIDE, NOT PER INSTRUMENT, and that is a
+   * stated limitation rather than an oversight. Nothing on a bullet says which
+   * instrument sent it, and adding a second array to say so would double this
+   * shape's cost for a case the table cannot currently produce — VIBRATO is the
+   * only `spawn` in the roster. Two spawn instruments held at once would share
+   * one retinue of the larger `count` rather than fielding two. The budget is
+   * the thing that has to hold, and a shape-wide count is the reading that
+   * holds it.
+   *
+   * WHAT IT READS: `interval` (the top-up clock), `count` (retinue size),
+   * `damage`, `speed`, `range` (how far out it will be dispatched) and `linger`
+   * (its lifetime). `area`, `arc`, `bounces` and `pierce` are unread and
+   * VIBRATO's `area: 96` is DELETED rather than left set and dead — a summon is
+   * a body, not a field. `pierce` is refused on purpose: an ally is `type: 2`,
+   * so `collidePlayerBullets` consumes it on the thing it reaches, and the next
+   * activation sends a replacement. A piercing summon would instead sit inside
+   * the first thing it reaches and apply its full `damage` on every one of the
+   * 120 steps a second, which is not a weapon, it is a division by the step
+   * size. `updateSummons` says the same thing from the other side.
+   *
+   * BUDGET: `count` bullets, hard-capped at `MAX_SUMMONS` — 4 at VIBRATO's
+   * numbers, 7 with SPREAD at its ceiling, 12 by the cap. §D.9 budgeted 12.
+   * Against `MAX_PLAYER_BULLETS` of 700 and a measured live peak of 438 that is
+   * not a cost; the re-aim is 12 x 39 = 468 distance tests per frame at the
+   * stated enemy ceiling, which is less than `steerPlayerBullets` already does
+   * whenever HOMING is held.
+   */
+  private fireSpawn(s: InstrumentStats): void {
+    const p = this.player;
+    const pb = this.playerBullets;
+    const want = clamp(Math.round(s.count) || 1, 1, World.MAX_SUMMONS);
+    // Whatever else happens below, there is a retinue to drive from here until
+    // it dies out. See `summonsActive`.
+    this.summonsActive = true;
+    let alive = 0;
+    for (let i = 0; i < pb.count; i++) if (pb.flags[i] & BulletFlag.Summon) alive++;
+    if (alive >= want) return;
+
+    const reach = s.range > 0 ? s.range : 620;
+    const reachSq = reach * reach;
+    const speed = Math.max(120, s.speed);
+    const life = Math.max(1, s.linger);
+    // Dispatched at whatever is in reach; with nothing in reach it leaves along
+    // the ship's facing and hunts from wherever it gets to, which is what makes
+    // it an ally rather than a shot the player has to line up.
+    let angle = p.aim;
+    let bestD = reachSq;
+    for (const e of this.enemies) {
+      if (!e.alive || e.invuln > 0) continue;
+      const d = dist2(e.x, e.y, p.x, p.y);
+      if (d > bestD) continue;
+      bestD = d;
+      angle = Math.atan2(e.y - p.y, e.x - p.x);
+    }
+    for (let k = alive; k < want; k++) {
+      pb.spawn({
+        x: p.x,
+        y: p.y,
+        // Fanned, so a retinue leaving together reads as several things and not
+        // as one thing at n times the brightness.
+        angle: angle + (k - (want - 1) / 2) * 0.34,
+        speed,
+        radius: 7,
+        ttl: life,
+        damage: s.damage,
+        // The third player-bullet sprite, added for this shape: an ally that
+        // looked identical to a PIZZICATO bolt would be a second position the
+        // player is supposed to be tracking and cannot pick out.
+        type: 2,
+        /*
+         * NO `DespawnOffscreen`, which is the one flag decision here.
+         *
+         * An ally culled the moment it crosses the margin would be deleted
+         * every time it chased something to the edge — and unlike a bolt it has
+         * a long life and is expected to come back. `updateSummons` steers it
+         * to the player when there is nothing to hunt, which is a leash by
+         * construction; `ttl` is what ends it.
+         */
+        flags: BulletFlag.Summon,
+      });
+    }
   }
 
   /**

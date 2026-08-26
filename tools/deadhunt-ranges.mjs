@@ -430,6 +430,22 @@ function runOnce(seed, minutes, immortal, opts = {}) {
     range('wells.length').add(w.wells.length);
     range('effects.length').add(w.effects.length);
     range('novas.length').add(w.novas.length);
+    /*
+     * THE FOUR NEW SHAPES' LIVE-OBJECT BUDGETS, sampled from a real run.
+     *
+     * `docs/research-weapons.md` Part D states a worst case per shape and this
+     * repo's rule is that a budget nothing measures is a budget nobody can be
+     * wrong about — the same sentence that put `playerBullets.count` here for
+     * `spray`. `shells` is `mortar`'s pending-detonation list and `summons` is
+     * the live `spawn` population; `novas.length` above now also carries
+     * `trail`'s drops and `mortar`'s telegraph and blast rings, and it is the
+     * array that got its first cap in this change (`World.MAX_NOVAS`).
+     */
+    range('shells.length (mortar)').add(w.shells.length);
+    range('summons live (spawn)').add(w.summonsLive);
+    count('novas.length >= MAX_NOVAS (cap hit)').add(w.novas.length >= World.MAX_NOVAS);
+    count('shells.length >= MAX_SHELLS (cap hit)').add(w.shells.length >= World.MAX_SHELLS);
+    count('summons >= MAX_SUMMONS (cap hit)').add(w.summonsLive >= World.MAX_SUMMONS);
     range('popups.length').add(w.popups.length);
     range('drops.length').add(w.drops.length);
     range('secsSinceDrop').add(w.secsSinceDrop);
@@ -509,6 +525,10 @@ function runOnce(seed, minutes, immortal, opts = {}) {
         count('fireBeam: s.range < 120 (floor bites)').add(def.shape === 'beam' && s.range < 120);
         count('fireAura: s.area < 40 (floor bites)').add(def.shape === 'aura' && s.area < 40);
         count('pushWell: s.area < 40 (floor bites)').add(def.shape === 'field' && s.area < 40);
+        count('fireTrail: s.area < 20 (floor bites)').add(def.shape === 'trail' && s.area < 20);
+        count('fireChain: s.area < 40 (floor bites)').add(def.shape === 'chain' && s.area < 40);
+        count('fireMortar: s.linger < 0.15 (floor bites)').add(def.shape === 'mortar' && s.linger < 0.15);
+        count('fireSpawn: s.speed < 120 (floor bites)').add(def.shape === 'spawn' && s.speed < 120);
       }
     }
     // Last, so the counters above see what one step actually produced.
@@ -588,6 +608,17 @@ console.log('\nSTATIC — the per-shape floors in world.ts, against the instrume
     ['fireSpray  s.arc > 0 ? ... : TAU', 'spray', 'arc', 0.0001],
     ['fireSpray  Math.max(120, s.speed)', 'spray', 'speed', 120],
     ['fireSpray  s.range > 0 ? ... : 1.4', 'spray', 'range', 0.0001],
+    ['fireTrail  Math.max(20, s.area)', 'trail', 'area', 20],
+    ['fireTrail  Math.max(0.4, s.linger)', 'trail', 'linger', 0.4],
+    ['fireTrail  clamp(count, 1, 4) upper', 'trail', 'count', 0.0001],
+    ['fireChain  s.range > 0 ? ... : 620', 'chain', 'range', 0.0001],
+    ['fireChain  Math.max(40, s.area)', 'chain', 'area', 40],
+    ['fireMortar s.range > 0 ? ... : 620', 'mortar', 'range', 0.0001],
+    ['fireMortar Math.max(40, s.area)', 'mortar', 'area', 40],
+    ['fireMortar Math.max(0.15, s.linger)', 'mortar', 'linger', 0.15],
+    ['fireSpawn  Math.max(120, s.speed)', 'spawn', 'speed', 120],
+    ['fireSpawn  Math.max(1, s.linger)', 'spawn', 'linger', 1],
+    ['fireSpawn  s.range > 0 ? ... : 620', 'spawn', 'range', 0.0001],
     ['firePods   Math.max(200, s.speed)', 'orbit', 'speed', 200],
     ['fireAura   Math.max(40, s.area)', 'aura', 'area', 40],
     ['fireField  s.linger <= 0 → return', 'field', 'linger', 0.0001],
@@ -699,6 +730,10 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
     lance: 'fireLance',
     cone: 'fireCone',
     spray: 'fireSpray',
+    trail: 'fireTrail',
+    chain: 'fireChain',
+    mortar: 'fireMortar',
+    spawn: 'fireSpawn',
     orbit: 'firePods',
     aura: 'fireAura',
     strike: 'fireStrike',

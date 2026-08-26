@@ -348,10 +348,29 @@ cannot act in.
 
 ### 8.8 Findings for whoever comes next
 
-- **`World.wells` is never rendered.** `Renderer` reads `novas`, `effects`,
-  `notes`, `popups`, `drops`, both bullet pools and the particles, and no
-  drawing code anywhere reads `wells`. BLACK HOLE and TREMOLO FIELD are
-  invisible damage pools. It is why UP-TEMPO's trail is built on `novas[]`.
+- **~~`World.wells` is never rendered.~~ FIXED — see the correction below.**
+  `Renderer` read `novas`, `effects`, `notes`, `popups`, `drops`, both bullet
+  pools and the particles, and no drawing code anywhere read `wells`. BLACK
+  HOLE and TREMOLO FIELD were invisible damage pools. It is why UP-TEMPO's
+  trail is built on `novas[]`.
+
+  **CORRECTED by the `trail`/`chain`/`mortar`/`spawn` change.**
+  `Renderer.drawWells` exists now and draws the pool at the radius
+  `updateWells` actually damages with — `radius * sin(min(1, age/life) * PI)
+  + 40`, which grows and collapses, so the drawn circle is the hitbox rather
+  than the flat stat. `tools/effectsdraw.mjs` gates it with four assertions
+  (drawn at all, its own hue, the radius tracks age 45 -> 190 -> 45 on a 150px
+  pool, and the inward march appears only for a well that pulls), all four
+  seen red by making `drawWells` return early and by making it use the flat
+  stat. TREMOLO FIELD no longer uses the container — it is a `trail` on
+  `novas[]` — so the instruments this repairs are BLACK HOLE and DOWNBEAT,
+  which cannot move: `fieldSwallows` is a hardcoded id list and DOWNBEAT is
+  the only fusion that keeps the player-thrown charge. Photographed live in
+  `renders/shots/shape-field-blackhole.png`.
+
+  The reasoning for building UP-TEMPO's trail on `novas[]` still stands and
+  the trail SHAPE kept the same container for the same reason: a well grows
+  and collapses on a sine, and a wake wants a ring that opens once and fades.
 - **A held nova is invisible while it holds.** `drawNovas` fades on
   `1 - r/maxR`, which is 0 for the whole of a ring's `hold`. Every aura's
   `linger` is therefore an invisible hang.

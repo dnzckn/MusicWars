@@ -521,6 +521,24 @@ fire routine becomes distance-triggered instead of interval-triggered: accumulat
 of ~6.** At a typical 400 px/s and 90 px spacing that is one drop every 0.22 s, so
 `life ≈ 1.4 s` gives six live. Zero bullets.
 
+> **CORRECTION, WRITTEN AFTER THIS SHIPPED. The container above is wrong and the
+> reason was not knowable when this section was written.** `docs/plan-passives.md`
+> §8.8 later measured that **nothing in `Renderer` read `World.wells`** — BLACK HOLE
+> and TREMOLO FIELD were invisible damage pools — so a trail built on `pushWell`
+> would have been a weapon whose whole design is "your movement path is the weapon"
+> and which the player could not see. The shipped `trail` uses **`novas[]`**, the
+> same container UP-TEMPO's trail rule took for the same reason, and `fireTrail` is
+> distance-gated on the ship's velocity rather than on an accumulator because an
+> instrument has an interval and a passive does not.
+>
+> `Renderer.drawWells` landed in the same change, so `wells[]` is drawn now — the
+> trail still keeps the ring, because a well grows and collapses on a sine over its
+> life and a wake wants something that opens once and fades. MEASURED, one
+> instrument at max with the whole rig at max (`tools/_shapecount.mjs`): **24 rings
+> at base rig, 69 at the rig ceiling**, against the ~6 estimated here. The estimate
+> was low because it did not fold REVERB's `area` or the rig's `linger` into `life`.
+> Zero bullets, as predicted.
+
 **Re-point.** **TREMOLO FIELD**, whose blurb already reads *"Pools left in your wake
 that keep working after you have gone."* This is a repair, not an addition.
 
@@ -1034,6 +1052,18 @@ design.
 | 9 | **`spawn`** (VIBRATO) | high | **M–L** — one new typed array | the only genuinely absent archetype both games share |
 | 10 | **`boomerang`** (+1 instrument) | medium | **M** — free machinery, costly slot | the one shape worth a new id; see §F.2 |
 | 11 | **`tether`** | medium | **M** — no free owner | overlaps `cone`; last |
+
+**WHAT HAS LANDED, and where to read it.** `lance`, `cone` and `spray` shipped
+first (items 3, 4, 6). `trail`, `chain`, `mortar` and `spawn` shipped second (items
+1, 2, 7, 9), taking the roster to **14 shapes over 27 instruments, 1 verb per 1.9,
+largest share 19%** — exactly §E.2's projection, and with **zero instrument ids
+added**. `boomerang` and `tether` (items 10, 11) are **deliberately not done**, on
+§F.2's own arithmetic: both need a thirteenth base instrument, which costs every
+existing one 7.7% of the draft, and §F.2 concludes that zero new instruments still
+delivers most of the win. Items 5 and 8 — the rider/trigger table and branching
+every instrument — are the remaining work and are untouched. Two of this section's
+budgets were wrong and are corrected in place: `trail`'s in §D.2 and `spray`'s in
+`weapons.ts` (105 measured against 93 by arithmetic).
 
 **If only one thing is done: items 1–4.** Four `shape` fields and four fire routines,
 every one of which reuses a container that already exists and already draws. They cover

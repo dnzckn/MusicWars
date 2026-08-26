@@ -210,11 +210,19 @@ export interface InstrumentStats {
  * `ENSEMBLE_MIX` lane is touched, and `AGENTS.md` §5's zero-sum offer is
  * untouched because a `shape` field is not a card.
  *
- * The remaining six — `trail`, `chain`, `mortar`, `boomerang`, `tether`,
- * `spawn` — are specified in the same document and are NOT implemented. Do not
- * infer from the three below that the other six are cheap; two of them
- * (`boomerang`, `tether`) have no instrument free to own them, which is the
- * whole content of that document's §F.2.
+ * `trail`, `chain`, `mortar` and `spawn` are the next four, and they finish
+ * the catalogue's affordable half. All four RE-POINT as well — TREMOLO FIELD,
+ * CARILLON, TUTTI and VIBRATO — and three of them deliver a blurb the file's
+ * own "PROSE THE SIMULATION DOES NOT DELIVER" heading has listed the whole
+ * time. Seven shapes became fourteen over 27 instruments, 1 verb per 1.9,
+ * largest share 19%, and not one instrument id was added.
+ *
+ * `boomerang` and `tether` ARE STILL NOT IMPLEMENTED AND SHOULD NOT BE
+ * INFERRED CHEAP. Neither has an instrument free to own it, which is the whole
+ * content of that document's §F.2: a thirteenth base instrument takes every
+ * existing one's share of the draft from 1/12 to 1/13, -7.7% each, and §F.2's
+ * own conclusion is that zero new instruments still delivers most of the win.
+ * The other two shapes are that decision, taken.
  */
 export type InstrumentShape =
   /** Bolts toward the nearest target inside range. */
@@ -291,6 +299,112 @@ export type InstrumentShape =
    * bounded, and this is the one shape in the catalogue whose budget is real.
    */
   | 'spray'
+  /**
+   * HAZARD LAID DOWN BY MOVING. STANDING STILL LAYS NOTHING.
+   *
+   * TREMOLO FIELD's card has read "Pools left in your wake" since the row was
+   * written, and `fireField` dropped its pools ON THE NEAREST ENEMY — the one
+   * placement that guarantees the pool is never behind you. The blurb was in
+   * `weapons.ts`'s own "NOT SHAPE BUGS, BUT PROSE THE SIMULATION DOES NOT
+   * DELIVER" list; this is the repair.
+   *
+   * It is the only shape whose output the player authors directly with the
+   * stick. You stop running in straight lines away from a pack and start
+   * drawing loops around it, then walking it back through your own wake — and
+   * it is the natural counterweight to the camp-pressure system in `World`,
+   * because a trail makes moving PAY where `IDLE_GRACE_S` only makes standing
+   * still cost.
+   *
+   * `count` is drops per activation, `damage` is shared between them (coverage,
+   * not a multiplier), `area` is each drop's radius, `linger` is how long the
+   * ground stays hot and `interval` is how often a moving ship lays another.
+   * `speed`, `pierce`, `bounces`, `arc` and `range` are unread: a pool does not
+   * travel, has nothing to pass through, no wall, no angular width and no
+   * reach — it is where you were.
+   */
+  | 'trail'
+  /**
+   * ARCS FROM BODY TO BODY, LOSING A FRACTION EACH HOP.
+   *
+   * CARILLON's blurb is verbatim "Every strike chains to two more. The ringing
+   * does not stop", and `fireStrike` picked its targets AT RANDOM — the same
+   * undelivered-prose list as TREMOLO's. `docs/research-weapons.md` §D.3 calls
+   * this the single highest-value re-point available, because the promise was
+   * already written and paid for and it makes `chime + resonance -> carillon` a
+   * genuine change of verb rather than a bigger bell.
+   *
+   * It is the first weapon whose value depends on enemy DENSITY rather than on
+   * where the ship is: you stop kiting a pack apart and start letting it bunch.
+   * Against a lone boss it is the worst weapon in the game, which is a real and
+   * legible trade.
+   *
+   * IT DOES NOT MOVE CHIME. `strike` keeps its founding member — the shape was
+   * split out of `seek` FOR the bell family — and the `FUSIONS` preamble's
+   * refusal to move CHIME itself stands. What moves is CHIME's evolution.
+   *
+   * `count` is hops, `area` is how far a hop can reach, `range` is how far the
+   * FIRST hop can start from the ship. `speed`, `linger`, `bounces`, `arc` and
+   * `pierce` are unread: a chain does not travel, does not persist, has no wall,
+   * no width and nothing to pass through.
+   */
+  | 'chain'
+  /**
+   * A SHELL AIMED AT WHERE A TARGET WILL BE, THAT LANDS THERE.
+   *
+   * The only shape that hits PAST a wall of bodies. A bolt stops on the first
+   * thing it touches, an aura has to reach outward through everything, and
+   * `strike` — the sole exception — is explicitly unaimed. A mortar makes the
+   * dangerous back rank reachable, so a player stops retreating from a pack and
+   * starts hitting through it.
+   *
+   * And it is the first weapon in this game whose output the ENEMY can respond
+   * to: the landing is telegraphed by a ring that closes on the spot as the
+   * shell arrives, and anything that walks out is not hit.
+   *
+   * TUTTI's "Everything is pulled to the centre first, and then struck" is the
+   * third undelivered blurb this change repairs, and both halves are delivered
+   * — the pending shell drags what is under it for the whole telegraph, then
+   * detonates. `weapons.ts` listed that sentence as prose the simulation could
+   * not produce because `Effect.pull` had no reader and `wells.pull` was
+   * reachable only through two hardcoded ids.
+   *
+   * `count` is shells, `area` the blast radius, `range` how far one can be
+   * thrown, `linger` the telegraph delay. `speed`, `pierce`, `bounces` and
+   * `arc` are unread: a lobbed shell has no expressible travel speed — it
+   * ignores what is in between, which is the point — nothing to pass through,
+   * no wall and no angular width.
+   */
+  | 'mortar'
+  /**
+   * AN AUTONOMOUS ALLY THAT FIGHTS SOMEWHERE THE PLAYER IS NOT.
+   *
+   * The one archetype BOTH reference games have that this one had no equivalent
+   * of at all — Gatti Amari in Vampire Survivors, Brood Mother and Mosquito
+   * King in Ball x Pit, and the Ball x Pit wiki attributes that game's
+   * late-game screen-fill to spawners rather than to slot count. Every hitbox
+   * in this game is welded to the ship, PODS INCLUDED: an orbit is drawn at
+   * `Player.dronePos`, so it is the ship's own geometry with a radius.
+   *
+   * A summon means a corner stays defended while you leave it, and it splits
+   * the player's attention across two positions — a different cognitive load,
+   * not a bigger number.
+   *
+   * VIBRATO owns it: "The pools go hunting", with HOMING as the literal
+   * catalyst. Stated plainly, as `docs/research-weapons.md` §D.9 asks: this
+   * re-points a row that was itself re-pointed one change ago (`field` ->
+   * `strike`), and the argument is `deadhunt-ranges` output rather than taste —
+   * `strike` was the closest thing available when there were seven shapes, and
+   * it delivered "appears where the enemies are" without delivering "hunting",
+   * because a strike is instantaneous and nothing persists to hunt with.
+   *
+   * `count` is the size of the RETINUE and not a volley — the routine tops the
+   * population up rather than adding to it, which is what bounds the shape.
+   * `linger` is each ally's lifetime, `speed` its travel, `range` how far out
+   * it is dispatched. `area`, `arc`, `bounces` and `pierce` are unread; pierce
+   * is refused on purpose, because a piercing ally sits inside the first thing
+   * it reaches and applies its damage on all 120 steps a second.
+   */
+  | 'spawn'
   /** Satellites circling the ship. */
   | 'orbit'
   /** A ring or field centred on the ship. */
@@ -1011,7 +1125,41 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'tremolo',
     label: 'TREMOLO FIELD',
-    shape: 'field',
+    /*
+     * THE SIXTH SHAPE RE-POINT, AND THE BLURB IS THE WHOLE ARGUMENT.
+     *
+     * "Pools left in your wake" is what this card has said since the row was
+     * written. `fireField` drops its pool ON THE NEAREST ENEMY — which is not
+     * merely a different placement, it is the one placement that guarantees the
+     * pool is never behind you. The `FUSIONS` preamble lists this under prose
+     * the simulation does not deliver and has done since that heading was
+     * added.
+     *
+     * `trail` lays a drop wherever the ship is, every activation, and only
+     * while the ship is moving. The stat block does not move at all: `count`,
+     * `damage`, `area`, `linger` and `interval` are all read by the new routine
+     * and they mean the same things they meant to `pushWell` — `count` pools
+     * sharing one activation's damage, `area` the radius, `linger` how long
+     * they burn. Both of the ladder's steps therefore keep doing exactly what
+     * their notes say.
+     *
+     * IT DROPS INTO `novas[]` AND NOT `wells[]`, WHICH IS A DEPARTURE FROM
+     * `docs/research-weapons.md` §D.2. That section specified `wells[]` and was
+     * written before `docs/plan-passives.md` §8.8 measured the reason not to:
+     * nothing in `Renderer` read `World.wells`, so this instrument has spent
+     * its whole life dealing invisible damage. `Renderer.drawWells` lands in
+     * this same change and fixes that for BLACK HOLE and DOWNBEAT, which have
+     * nowhere else to go — but a nova is still the better container for a wake,
+     * because it opens once and fades where a well grows and collapses on a
+     * sine. See `World.fireTrail`.
+     *
+     * POWER: unchanged by construction. `pushWell` set
+     * `dps = damage * share / linger` over a pool of radius `area`, and
+     * `fireTrail` sets `dps = damage / drops / linger` over a ring of the same
+     * radius. Same total, same window, different place — and the place is the
+     * entire point.
+     */
+    shape: 'trail',
     blurb: 'Pools left in your wake that keep working after you have gone.',
     character: 'shimmering — unsettled, wobbling, never quite still',
     weight: 0.85,
@@ -1143,12 +1291,49 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'carillon',
     label: 'CARILLON',
-    shape: 'strike',
+    /*
+     * THE SEVENTH RE-POINT, AND `docs/research-weapons.md` §D.3 CALLS IT THE
+     * HIGHEST-VALUE ONE AVAILABLE. The blurb below is verbatim "Every strike
+     * chains to two more" and `fireStrike` picked its targets AT RANDOM. There
+     * was no chain, and the `FUSIONS` preamble has said so in as many words.
+     *
+     * It also fixes what the recipe is FOR. `chime + resonance -> carillon` was
+     * `strike -> strike`: the evolution bought a bigger bell, and this file's
+     * own header rule is that a fusion must change the verb. It changes it now.
+     *
+     * CHIME DOES NOT MOVE. `strike` was split out of `seek` for the bell family
+     * and the preamble's "Rejected on the census" bullet refuses to move CHIME
+     * itself; this moves CHIME's EVOLUTION, which is a different row and the
+     * one the blurb was written on.
+     *
+     * `area: 60 -> 170` IS A RE-TUNE AND NOT THE BUFF IT LOOKS LIKE. On
+     * `strike` it was the blast radius around each landing; on `chain` it is
+     * how far a hop can REACH for the next body, which is a different unit.
+     * 60px between two enemy centres is inside contact range for a pair of 15px
+     * shapes, so a 60px hop radius would have stopped the chain at one body on
+     * every wave that was not a pile-up — the shape would have existed and
+     * never fired past its first hop. 170 is a little over a typical two-shape
+     * gap in a formation, which is what makes density the thing the weapon
+     * reads.
+     *
+     * `pierce: 3` IS DELETED, and it was already dead: `strike` did not read it
+     * either, so `deadhunt-ranges` printed `DEAD carillon.pierce=3 (set,
+     * static)` before this change. Same call CROSS-STRUNG's `pierce: 2` got —
+     * a stat kept and unread is the defect this whole audit exists to remove.
+     *
+     * POWER. Nominal `damage x count / interval` is 300 before and after. Real
+     * output falls: five flat 30s become 30 + 25.5 + 21.7 + 18.4 + 15.7 = 111
+     * at the 0.85 falloff, against five strikes that could each catch a second
+     * shape in their circle. The compensation is that every hop lands on a
+     * DISTINCT live body where five random strikes can and routinely do land on
+     * the same one — the case `fireStrike`'s own comment admits it chose.
+     */
+    shape: 'chain',
     fused: true,
     weight: 0,
     blurb: 'Every strike chains to two more. The ringing does not stop.',
     character: 'shimmering — bells chaining into each other',
-    base: stats({ interval: 0.5, count: 5, damage: 30, area: 60, pierce: 3, range: 900 }),
+    base: stats({ interval: 0.5, count: 5, damage: 30, area: 170, range: 900 }),
     steps: [],
   },
   {
@@ -1363,12 +1548,60 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'tutti',
     label: 'TUTTI',
-    shape: 'aura',
+    /*
+     * THE EIGHTH RE-POINT, AND THE THIRD BLURB IN THIS CHANGE THE SIMULATION
+     * HAS NEVER DELIVERED.
+     *
+     * "Everything is pulled to the centre first, and then struck" is a
+     * telegraph that pulls followed by a landing. As an `aura` it was neither:
+     * `fireAura` expands a ring from the SHIP outward and pulls nothing —
+     * `Effect.pull` has no reader and `wells.pull` is reachable only through
+     * two hardcoded ids, which is exactly what the preamble's undelivered-prose
+     * heading records. `mortar` delivers both halves: `World.updateShells`
+     * drags what is under the landing point for the whole telegraph and then
+     * detonates there.
+     *
+     * It also stops being the fourth of five instruments describing itself as a
+     * very large ring. `weapons.ts` already refused a fourth aura on that
+     * ground; this takes `aura` from five members to four and hands the freed
+     * identity to the only shape in the game that hits past a crowd.
+     *
+     * TIMPANI ITSELF STAYS `aura`. The recipe is `timpani + magnet -> tutti`,
+     * so this is a fusion changing the verb, which is what a fusion is for.
+     *
+     * `area: 320 -> 180` IS A NERF AND IT IS THE HONEST DIRECTION. An aura's
+     * 320 is the radius a THIN ANNULUS sweeps out to — `updateNova` damages
+     * only within ±16px of the moving edge, so an enemy standing anywhere in
+     * that circle takes the ring's dps for the ~0.07s the edge is on top of it,
+     * about 6 of the 120 on the card. A mortar's radius is a FLAT DISC and
+     * everything inside it takes the full 120. Keeping 320 would have turned "a
+     * very large ring that mostly misses" into "120 damage to a third of the
+     * arena, twice every 1.9s", which is not a re-point, it is a new weapon
+     * wearing the old one's name. 180 is still the largest single blast in the
+     * table, and REQUIEM at 520 keeps the "fills the arena" line to itself.
+     *
+     * `range: 700` IS NEW because a lobbed shell needs a reach and an aura had
+     * no use for one; `fireAura` ignored `range` entirely, which is why REQUIEM
+     * still prints a DEAD row for its own 900. 700 is long enough that the back
+     * rank of a formation is inside it, which is the verb.
+     *
+     * `linger: 0.6` KEEPS ITS NUMBER AND CHANGES ITS JOB, from the ring's hang
+     * at full radius to the telegraph delay. 0.6s is long enough to read and to
+     * walk out of at any enemy speed in the table, and short enough that the
+     * shell is not a warning the player has already forgotten.
+     *
+     * POWER, on the nominal `damage x count / interval` the other re-points
+     * were argued on: 120 x 2 / 1.9 = 126 before and after — untouched, because
+     * none of the three stats in it moved. What moved is delivery, and it moved
+     * UP: see the annulus arithmetic above. `arena` and `builds` are where that
+     * is read, not this paragraph.
+     */
+    shape: 'mortar',
     fused: true,
     weight: 0,
     blurb: 'Everything is pulled to the centre first, and then struck.',
     character: 'heavy — the whole orchestra on a single hit',
-    base: stats({ interval: 1.9, count: 2, damage: 120, area: 320, linger: 0.6 }),
+    base: stats({ interval: 1.9, count: 2, damage: 120, area: 180, linger: 0.6, range: 700 }),
     steps: [],
   },
   {
@@ -1427,12 +1660,65 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * strike kills plenty. The catalyst of this recipe finally does something
      * for the line it gates.
      */
-    shape: 'strike',
+    /*
+     * AND NOW `strike` -> `spawn`, WHICH IS THE SAME ROW MOVING TWICE. Stated
+     * up front because `docs/research-weapons.md` §D.9 asks for exactly that:
+     * "this re-points a row that was itself re-pointed one change ago, so it
+     * should be argued on `deadhunt-ranges` output the way that change was, not
+     * on taste."
+     *
+     * The argument above still holds in full and is left standing: `field` had
+     * no way to express "hunting" and `strike` was the closest of the seven
+     * shapes that existed. What it delivered was "the pool appears where the
+     * enemies are" — relocation, instantly, and then gone. What it could not
+     * deliver is the verb in the sentence: nothing persisted, so nothing hunted.
+     * A strike is an event; a hunt needs a thing that is still there next
+     * second.
+     *
+     * `spawn` is that thing, and the catalyst finally reads twice over: HOMING
+     * gates this recipe, `Rules.killEcho` already made it live at the kill, and
+     * now the result itself is four bodies that steer.
+     *
+     * WHAT MOVES IN THE STAT BLOCK, ALL THREE OF IT:
+     *
+     *   `speed: 300` COMES BACK. It was deleted in the last re-point with the
+     *   note "no shape in the table is a pool that travels", which was true
+     *   then and is the exact gap this shape fills. Not the original 190: that
+     *   number was never balanced against anything, because nothing ever read
+     *   it, and 190px/s is under the standoff speed of half the roster — an
+     *   ally that cannot close is a decoration. 300 closes on everything but a
+     *   diving shape.
+     *
+     *   `linger: 4` IS THE ALLY'S LIFETIME. Also deleted last time, for the
+     *   honest reason that a strike is instantaneous. Four seconds is long
+     *   enough to cross the arena twice and short enough that the retinue turns
+     *   over inside a wave rather than accumulating.
+     *
+     *   `area: 96` IS DELETED. `spawn` does not read it and neither did
+     *   `strike`'s replacement candidates — a summon is a body, not a field.
+     *   Left set it would have printed `DEAD vibrato.area=96 (set, static)`,
+     *   which is the same report that moved this row off `field` in the first
+     *   place, so leaving it would have been a joke at this file's expense.
+     *
+     * `count: 4` CHANGES MEANING AND NOT VALUE, from strikes per activation to
+     * the size of the standing retinue. `interval: 0.5` changes from "how often
+     * it strikes" to "how quickly a spent ally is replaced". `range: 620` is
+     * unchanged and still a reach — how far out an ally is dispatched.
+     *
+     * POWER. Nominal `damage x count / interval` is 96 before and after, and
+     * for once the nominal is close to honest: an ally is consumed by the body
+     * it reaches, so at most `count` of them can be spent and replaced per
+     * interval, which is the same throughput a strike had. It is worse in
+     * practice against anything far away — an ally has to fly there and a
+     * strike teleports — and better against a pack, because the ally that
+     * survives keeps hunting. `arena` and `builds` decide, not this paragraph.
+     */
+    shape: 'spawn',
     fused: true,
     weight: 0,
     blurb: 'The pools go hunting.',
     character: 'eerie — pitch wobbling as it hunts',
-    base: stats({ interval: 0.5, count: 4, damage: 12, area: 96, range: 620 }),
+    base: stats({ interval: 0.5, count: 4, damage: 12, speed: 300, linger: 4, range: 620 }),
     steps: [],
   },
   {
@@ -1950,23 +2236,45 @@ export const RIG: readonly RigDef[] = [
  *     plus `fireSeek` forwarding it to a reflecting pool IS that line. CAPO
  *     moves `speed`, which only seek, travelling arc and orbit read.
  *
- * NOT SHAPE BUGS, BUT PROSE THE SIMULATION DOES NOT DELIVER. Left alone here
- * because no existing shape implements them and inventing one is a `world.ts`
- * feature, not a data edit: TUTTI's "everything is pulled to the centre first"
- * (no shape has a pull except a swallowing field, and that list is hardcoded),
- * CANON's "every bounce spawns a delayed copy" (the pool reflects, it
- * does not spawn), CARILLON's "every strike chains to two more" (`fireStrike`
- * picks random targets; it does not chain), and STRING SECTION's "all of them
- * held" on an `arc`, which is why `deadhunt-ranges` reports its `linger: 1.2`
- * as dead. `docs/research-weapons.md` §D.3 and §D.5 specify `chain` and
- * `mortar`, which would deliver the first two; neither is implemented.
+ * NOT SHAPE BUGS, BUT PROSE THE SIMULATION DOES NOT DELIVER. There is ONE
+ * entry left, and it is worth saying that this list used to have five.
  *
- * TWO CAME OFF THIS LIST. ROSIN BOW's "it does not stop" is delivered by
- * `lance`, and WALL OF SOUND's "the field grows with your speed" is GONE
- * rather than delivered — the blurb was rewritten to describe what the cone
- * actually does, because no stat expresses player speed and a hidden
- * multiplier with no dial is worse than an unkept promise. Say which of those
- * two happened when quoting this paragraph.
+ *   - CANON's "every bounce spawns a delayed copy". The pool reflects; it does
+ *     not spawn. `docs/research-weapons.md` §C.4 #8 files this under
+ *     "splits or spawns sub-projectiles", which that document argues belongs on
+ *     the RIDER axis (§E.1) and not on a shape — firing on an event is a
+ *     trigger, and as a rider it would compose with all fourteen routines
+ *     instead of needing its own instrument. Left alone deliberately.
+ *
+ * FOUR CAME OFF, AND THEY CAME OFF IN THREE DIFFERENT WAYS. Say which one
+ * happened when quoting this paragraph; "the promise was kept" and "the
+ * promise was withdrawn" look identical in a census of unkept promises.
+ *
+ *   DELIVERED BY A NEW SHAPE:
+ *   - ROSIN BOW's "it does not stop" -> `lance`.
+ *   - CARILLON's "every strike chains to two more" -> `chain`, which walks
+ *     nearest-to-nearest instead of picking at random.
+ *   - TUTTI's "everything is pulled to the centre first, and then struck" ->
+ *     `mortar`, both halves: the pending shell drags what is under it for the
+ *     whole telegraph and then detonates. `Effect.pull` still has no reader,
+ *     but the sentence no longer needs one.
+ *   - TREMOLO FIELD's "pools left in your wake" -> `trail`. It was never in
+ *     this paragraph because the `FUSIONS` preamble is about fusions and
+ *     TREMOLO is a base instrument, but it was on the same list in
+ *     `docs/research-weapons.md` §C.3 and it is delivered by the same change.
+ *
+ *   WITHDRAWN RATHER THAN DELIVERED:
+ *   - WALL OF SOUND's "the field grows with your speed" is GONE. The blurb was
+ *     rewritten to describe what the cone actually does, because no stat
+ *     expresses player speed and a hidden multiplier with no dial is worse than
+ *     an unkept promise.
+ *
+ *   STILL A DEAD STAT RATHER THAN A DEAD SENTENCE:
+ *   - STRING SECTION's "all of them held" on an `arc` is why `deadhunt-ranges`
+ *     still reports its `linger: 1.2` as dead. The union is `lance + spray ->
+ *     arc` and moving it would collapse the one union that already earns its
+ *     shape change; the honest fix is to delete the stat or to give `arc` a
+ *     hold, and neither is this change.
  * ------------------------------------------------------------------------ */
 
 export interface FusionDef {

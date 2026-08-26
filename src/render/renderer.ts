@@ -413,6 +413,9 @@ export class Renderer {
       glow: this.legacyStrobe ? this.pulse : tension * 0.4,
     });
 
+    // Under everything: a well is ground the player is standing on, so it must
+    // not sit over the shapes and pickups the player is reading.
+    this.drawWells(g);
     this.drawDrops(g);
     this.drawEnemies(g, alpha);
     this.drawNotes(g);
@@ -970,9 +973,58 @@ export class Renderer {
 
       if (e.kind === 'beam') this.drawBeam(g, e, fade);
       else if (e.kind === 'sweep') this.drawSweep(g, e, fade);
-      else this.drawField(g, e, fade);
+      else this.drawField(g, e.x, e.y, e.radius, e.hue, e.pull, e.age, fade);
     }
 
+    g.restore();
+  }
+
+  /**
+   * FIELD POOLS. `World.wells` HAD NO RENDERER AT ALL.
+   *
+   * `docs/plan-passives.md` §8.8 recorded the finding and nothing acted on it:
+   * "`Renderer` reads `novas`, `effects`, `notes`, `popups`, `drops`, both
+   * bullet pools and the particles, and no drawing code anywhere reads `wells`.
+   * BLACK HOLE and TREMOLO FIELD are invisible damage pools." That is the same
+   * defect `drawEffects` two functions down was written to fix, found a second
+   * time in a second container, and it has cost the same thing twice: a weapon
+   * the player cannot see is a weapon they cannot learn, so they never invest
+   * in it, so it stays weak.
+   *
+   * TREMOLO FIELD is a `trail` now and no longer uses this container. BLACK
+   * HOLE and DOWNBEAT still do, and they cannot move — `fieldSwallows` is a
+   * hardcoded id list and DOWNBEAT is the only fused instrument that keeps the
+   * player-thrown charge, which is the single player-triggered weapon input in
+   * the game. Their pool is the thing the player is choosing a moment to throw.
+   * It should be visible at the moment they throw it.
+   *
+   * THE RADIUS IS `updateWells`' RADIUS AND NOT `well.radius`. That routine
+   * damages and pulls inside `radius * sin(min(1, age/life) * PI) + 40`, so the
+   * pool grows, holds and collapses; drawing the flat stat instead would put a
+   * circle on screen that is the wrong size for the whole of the well's life
+   * and would be a fresh instance of the bug this fixes — a drawn hitbox that
+   * is not the hitbox. The formula is duplicated here and that is a real cost;
+   * it is annotated at the site in `world.ts` too, and `tools/effectsdraw.mjs`
+   * asserts a well at three ages is drawn at three different sizes so the two
+   * cannot silently drift apart.
+   *
+   * The fade never reaches zero, unlike an `Effect`'s: a well is a hazard the
+   * player is deciding whether to stand in, and one that goes transparent
+   * before it stops dealing damage is worse than one that is never drawn,
+   * because it teaches the wrong thing.
+   */
+  private drawWells(g: CanvasRenderingContext2D): void {
+    const wells = this.world.wells;
+    if (!wells.length) return;
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (const w of wells) {
+      const t = clamp01(w.age / Math.max(0.0001, w.life));
+      const radius = w.radius * Math.sin(Math.min(1, t) * Math.PI) + 40;
+      // Bright while it is young, never below a third: see above.
+      const fade = 0.34 + (1 - t) * 0.5;
+      this.drawField(g, w.x, w.y, radius, w.hue, w.pull, w.age, fade);
+    }
     g.restore();
   }
 
@@ -1070,21 +1122,30 @@ export class Renderer {
    * The rim matters more than the fill. A field's edge is where the player
    * needs to know the boundary is, and a pure radial blur has no edge to read.
    */
-  private drawField(g: CanvasRenderingContext2D, e: Effect, fade: number): void {
-    const r = Math.max(1, e.radius);
+  private drawField(
+    g: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number,
+    hue: number,
+    pull: number,
+    age: number,
+    fade: number,
+  ): void {
+    const r = Math.max(1, radius);
     g.save();
-    g.translate(e.x, e.y);
+    g.translate(x, y);
 
     const disc = g.createRadialGradient(0, 0, 0, 0, 0, r);
-    disc.addColorStop(0, `hsla(${e.hue}, 90%, 58%, ${fade * 0.3})`);
-    disc.addColorStop(0.65, `hsla(${e.hue}, 90%, 55%, ${fade * 0.13})`);
-    disc.addColorStop(1, `hsla(${e.hue}, 95%, 60%, ${fade * 0.04})`);
+    disc.addColorStop(0, `hsla(${hue}, 90%, 58%, ${fade * 0.3})`);
+    disc.addColorStop(0.65, `hsla(${hue}, 90%, 55%, ${fade * 0.13})`);
+    disc.addColorStop(1, `hsla(${hue}, 95%, 60%, ${fade * 0.04})`);
     g.fillStyle = disc;
     g.beginPath();
     g.arc(0, 0, r, 0, TAU);
     g.fill();
 
-    g.strokeStyle = `hsla(${e.hue}, 100%, 74%, ${fade * 0.55})`;
+    g.strokeStyle = `hsla(${hue}, 100%, 74%, ${fade * 0.55})`;
     g.lineWidth = 1.4;
     g.beginPath();
     g.arc(0, 0, r, 0, TAU);
@@ -1096,13 +1157,13 @@ export class Renderer {
      * effect, not of the beat, and the playfield has one thing keeping time
      * already.
      */
-    if (e.pull > 0) {
-      const march = (e.age * 0.9) % 1;
-      g.strokeStyle = `hsla(${e.hue}, 100%, 82%, ${fade * 0.4})`;
+    if (pull > 0) {
+      const march = (age * 0.9) % 1;
+      g.strokeStyle = `hsla(${hue}, 100%, 82%, ${fade * 0.4})`;
       g.lineWidth = 1.6;
       g.beginPath();
       for (let k = 0; k < 6; k++) {
-        const a = (k / 6) * TAU + e.age * 0.35;
+        const a = (k / 6) * TAU + age * 0.35;
         const outer = r * (1 - march * 0.55);
         const inner = outer - r * 0.14;
         if (inner <= 0) continue;

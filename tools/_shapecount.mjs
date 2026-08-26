@@ -124,6 +124,8 @@ function probe(id, rig) {
   let effects = 0;
   let novas = 0;
   let wells = 0;
+  let shells = 0;
+  let summons = 0;
   let enemies = 0;
   let shots = 0;
   const voices = new Set();
@@ -153,6 +155,8 @@ function probe(id, rig) {
     if (w.effects.length > effects) effects = w.effects.length;
     if (w.novas.length > novas) novas = w.novas.length;
     if (w.wells.length > wells) wells = w.wells.length;
+    if (w.shells.length > shells) shells = w.shells.length;
+    if (w.summonsLive > summons) summons = w.summonsLive;
     if (w.enemies.length > enemies) enemies = w.enemies.length;
   }
   return {
@@ -163,6 +167,8 @@ function probe(id, rig) {
     effects,
     novas,
     wells,
+    shells,
+    summons,
     enemies,
     shots,
     overflow: w.playerBullets.overflow,
@@ -174,17 +180,34 @@ console.log(`\n_shapecount — one instrument at max, ${SECS}s at wave ${WAVE}, 
 console.log(
   `  ${'instrument'.padEnd(14)} ${'shape'.padEnd(7)} ${'rig'.padEnd(5)} ` +
     `${'bullets'.padStart(8)} ${'effects'.padStart(8)} ${'novas'.padStart(6)} ${'wells'.padStart(6)} ` +
+    `${'shells'.padStart(7)} ${'summons'.padStart(8)} ` +
     `${'enemies'.padStart(8)} ${'overflow'.padStart(9)} ${'shots'.padStart(7)}`,
 );
 const rows = [];
-for (const id of ['crossstrung', 'wallofsound', 'feedback', 'harmonics', 'bow', 'pizzicato', 'chorale']) {
+for (const id of [
+  // The `lance` / `cone` / `spray` change this file was written for.
+  'crossstrung', 'wallofsound', 'feedback', 'harmonics', 'bow', 'pizzicato', 'chorale',
+  /*
+   * The `trail` / `chain` / `mortar` / `spawn` change.
+   *
+   * `tremolo` is the one to watch: its live ring count is
+   * `drops x life / interval` and both halves move under the rig, so the
+   * arithmetic that says 4 x 17 = 68 has to be checked against a run before
+   * it is believed. The other three are bounded by construction — `chain` by
+   * a 0.12s flash against a 0.31s floor interval, `mortar` by `MAX_SHELLS`,
+   * `spawn` by a top-up against `MAX_SUMMONS` — and are here so that
+   * 'bounded by construction' is a measurement rather than a claim.
+   */
+  'tremolo', 'carillon', 'tutti', 'vibrato',
+]) {
   for (const rig of [false, true]) {
     const r = probe(id, rig);
     rows.push(r);
     console.log(
       `  ${r.id.padEnd(14)} ${r.shape.padEnd(7)} ${r.rig.padEnd(5)} ` +
         `${String(r.bullets).padStart(8)} ${String(r.effects).padStart(8)} ${String(r.novas).padStart(6)} ` +
-        `${String(r.wells).padStart(6)} ${String(r.enemies).padStart(8)} ${String(r.overflow).padStart(9)} ` +
+        `${String(r.wells).padStart(6)} ${String(r.shells).padStart(7)} ${String(r.summons).padStart(8)} ` +
+        `${String(r.enemies).padStart(8)} ${String(r.overflow).padStart(9)} ` +
         `${String(r.shots).padStart(7)}`,
     );
   }

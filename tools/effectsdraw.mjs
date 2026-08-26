@@ -173,7 +173,7 @@ const effect = (over) => ({
 });
 
 /** A duck-typed world. `Renderer` imports `World` as a type only. */
-function makeWorld(effects, novas = []) {
+function makeWorld(effects, novas = [], wells = []) {
   return {
     width: 900, height: 1120,
     camera: { x: 0, y: 0, flash: 0, flashHue: 0 },
@@ -188,7 +188,7 @@ function makeWorld(effects, novas = []) {
     },
     enemies: [], shocks: [], notes: [], particles: { count: 0 }, drops: [], popups: [],
     playerBullets: { count: 0 }, enemyBullets: { count: 0 },
-    novas, effects,
+    novas, effects, wells,
     banner: '', bannerSub: '', bannerAge: 9, bannerKind: 'wave',
     snapshot: { running: true, level: 3, xp: 2, xpToNext: 9, choosing: false, abilities: {}, instrumentSlots: 3, rigSlots: 3 },
     bus: { on() {} },
@@ -208,10 +208,10 @@ const huesIn = (ops) => {
 const transport = { beat: 4.25, bpm: 128, advance() {}, get barPhase() { return 0.0625; } };
 
 /** Render one frame with `effects` present and return the recorded ops. */
-function frame(effects, novas = []) {
+function frame(effects, novas = [], wells = []) {
   const rec = recorder(fail);
   installDom(rec);
-  const world = makeWorld(effects, novas);
+  const world = makeWorld(effects, novas, wells);
   const r = new Renderer(rec.g.canvas, rec.g.canvas, world);
   r.bloomEnabled = false;
   r.bloomAuto = false;
@@ -332,6 +332,128 @@ console.log('\nNOVA HUE AND REACH');
   else if (!huesIn(trail).has(28)) fail('the trail drop is not drawn in its own hue');
   else pass('UP-TEMPO leaves a visible mark, and COMPRESSOR\'s ring is drawn');
   if (hitRing.length - bare < 3) fail(`the on-hit ring at r=90 draws only ${hitRing.length - bare} ops`);
+}
+
+/*
+ * WELLS — the container that had no renderer at all.
+ *
+ * `docs/plan-passives.md` §8.8: "`Renderer` reads `novas`, `effects`, `notes`,
+ * `popups`, `drops`, both bullet pools and the particles, and no drawing code
+ * anywhere reads `wells`. BLACK HOLE and TREMOLO FIELD are invisible damage
+ * pools." That finding sat in a document for a whole change while the two
+ * instruments stayed invisible, which is what a finding with no gate behind it
+ * is worth. This is the gate.
+ *
+ * TREMOLO FIELD is a `trail` now and no longer uses this container; BLACK HOLE
+ * and DOWNBEAT still do and cannot move, because `fieldSwallows` is a hardcoded
+ * id list and DOWNBEAT is the only fusion that keeps the player-thrown charge.
+ *
+ * THE THREE AGES ARE THE POINT, not a decoration. `updateWells` damages inside
+ * `radius * sin(min(1, age/life) * PI) + 40` and `Renderer.drawWells` repeats
+ * that expression — two copies of one formula, which this repo's own rules call
+ * a hazard. Asserting the drawn size CHANGES with age, and in the right
+ * direction, is what stops the two copies drifting into a circle that is always
+ * the wrong size. A flat `well.radius` would pass a "is it drawn" check and
+ * fail this one.
+ */
+console.log('\nWELLS ARE DRAWN AT ALL (they never were)');
+{
+  const bare = frame([], [], []).length;
+  const well = (over) => ({
+    x: 450, y: 700, age: 0.5, life: 2, radius: 150, dps: 8,
+    pull: 90, swallows: true, hue: 268, id: 'blackhole', ...over,
+  });
+  const one = frame([], [], [well({})]);
+  const added = one.length - bare;
+  const hue = huesIn(one).has(268);
+  console.log(`    BLACK HOLE pool, r=150 at half life, hue 268: +${added} ops   hue ${hue ? 'present' : 'MISSING'}`);
+  if (added < 3) fail(`a well draws only ${added} ops over an empty frame — World.wells is still not rendered`);
+  else pass(`a well adds ${added} draw ops`);
+  if (!hue) fail("the well's own hue never reaches the canvas");
+
+  /*
+   * Radius against age. `radius * sin(min(1, age/life) * PI) + 40` on a 150px
+   * pool with a 2s life is 45 at age 0.02, 190 at 1.0 and 45 again at 1.98, so
+   * the drawn circle has to GROW AND COLLAPSE — that is the assertion that
+   * stops `drawWells`' copy of the formula drifting from `updateWells`'.
+   *
+   * Read off the recorded `arc` calls (argument 2 is the radius) and compared
+   * against an EMPTY FRAME, because the renderer draws arcs of its own and
+   * "there is a big circle on screen" is only evidence if the empty frame does
+   * not already have one.
+   */
+  const maxArc = (ops) =>
+    Math.max(0, ...ops.filter((o) => o.op === 'arc').map((o) => Math.round(o.a?.[2] ?? 0)));
+  const bareMax = maxArc(frame([], [], []));
+  const at = (age) => maxArc(frame([], [], [well({ age })]));
+  const young = at(0.02);
+  const mid = at(1.0);
+  const old = at(1.98);
+  console.log(
+    `    largest arc drawn — empty frame ${bareMax}; well at age 0.02 / 1.00 / 1.98 of 2s: ${young} / ${mid} / ${old}`,
+  );
+  if (mid <= bareMax) fail(`a well at half life draws nothing bigger than an empty frame (${mid} vs ${bareMax})`);
+  else if (!(mid > young && mid > old)) {
+    fail(`a well does not grow and collapse (${young}/${mid}/${old}) — drawWells is not using updateWells' radius`);
+  } else {
+    pass(`the drawn radius tracks the damaging radius (${young} -> ${mid} -> ${old})`);
+  }
+  const swallowless = frame([], [], [well({ pull: 0 })]);
+  if (swallowless.length >= one.length) fail('a pulling well draws no more than a still one — the march is missing');
+  else pass(`the inward march is drawn only for a well that pulls (+${one.length - swallowless.length} ops)`);
+}
+
+/*
+ * THE FOUR NEW SHAPES, AT THE CONTAINER THEY EACH LANDED IN.
+ *
+ * `chain` is the only one of the four that pushes an `Effect`, and it pushes an
+ * unusual one: `attached: false` (it hangs between two bodies rather than
+ * following the ship) and `dps: 0` (the damage already landed in the fire
+ * routine, so `updateEffects` skips it). A `dps: 0` effect is exactly the kind
+ * of thing an optimisation would decide is not worth drawing, so it is asserted
+ * here rather than assumed.
+ *
+ * `trail` and `mortar` both land in `novas[]`, which the NOVA block above
+ * already covers for hue and reach — but at sizes nothing had tested. A trail
+ * drop is 20-150px and a mortar telegraph is a 180px ring that must be visible
+ * for its WHOLE `linger`, because a telegraph nobody sees is worse than no
+ * telegraph: it teaches the player that damage arrives from nowhere.
+ *
+ * `spawn` is a `BulletPool` entry and is drawn by `drawBullets` off the sprite
+ * atlas, so what has to be true is that sprite type 2 EXISTS. That is asserted
+ * in `tools/wiring.mjs`-style fashion here by reading the atlas directly.
+ */
+console.log('\nTHE FOUR NEW SHAPES');
+{
+  const bare = frame([]).length;
+
+  const hop = effect({ kind: 'beam', hue: 77, attached: false, dps: 0, radius: 3.5, length: 210, life: 0.12, age: 0.02 });
+  const chain = frame([hop]);
+  console.log(`    chain hop (CARILLON), dps 0, unattached: +${chain.length - bare} ops   hue 77 ${huesIn(chain).has(77) ? 'present' : 'MISSING'}`);
+  if (chain.length - bare < 3) fail(`a chain hop draws only ${chain.length - bare} ops — the arcs are invisible`);
+  else if (!huesIn(chain).has(77)) fail('a chain hop is not drawn in its own hue');
+  else pass('a zero-damage unattached beam is still drawn');
+
+  const drop = frame([], [{ x: 450, y: 700, r: 30, alive: true, maxR: 96, speed: 40, dps: 3, hue: 214 }]);
+  console.log(`    trail drop (TREMOLO), r=30 of maxR=96, hue 214: +${drop.length - bare} ops`);
+  if (drop.length - bare < 3) fail(`a trail drop draws only ${drop.length - bare} ops — the wake is invisible`);
+  else pass('a TREMOLO trail drop is drawn');
+
+  // The telegraph, at three points across its 0.6s: it opens from 0 to 180 and
+  // must be visible at every one of them.
+  const tele = (r) => frame([], [{ x: 450, y: 700, r, alive: true, maxR: 180, speed: 300, dps: 0, hue: 331 }]).length - bare;
+  const t1 = tele(18);
+  const t2 = tele(90);
+  const t3 = tele(170);
+  console.log(`    mortar telegraph (TUTTI) at r=18 / 90 / 170 of maxR=180: ${t1} / ${t2} / ${t3} ops`);
+  if (t1 < 3 || t2 < 3 || t3 < 3) fail(`the mortar telegraph is invisible somewhere in its life (${t1}/${t2}/${t3})`);
+  else pass('the mortar telegraph is drawn for the whole of its close');
+
+  const { playerBulletSprites } = await import('../src/render/sprites.ts');
+  const atlas = playerBulletSprites();
+  console.log(`    player bullet sprite types: ${atlas.frames.length} (spawn uses type 2)`);
+  if (atlas.frames.length < 3) fail('there is no sprite type 2 — every summon draws as a PIZZICATO bolt');
+  else pass(`type 2 exists, ${atlas.frames[2].length} rotation frames`);
 }
 
 console.log('\nMANY AT ONCE');
