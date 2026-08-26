@@ -19,6 +19,7 @@
     "arena": "node --experimental-transform-types tools/arena.mjs",
     "wiring": "node --experimental-transform-types tools/wiring.mjs",
     "clash": "node tools/clash.mjs",
+    "arc": "node --experimental-transform-types tools/arc.mjs",
     "motif": "node tools/motif.mjs",
     "render": "node --experimental-transform-types tools/render.mjs",
     "spectrum": "node tools/spectrum.mjs",

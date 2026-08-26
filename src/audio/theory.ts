@@ -8,6 +8,12 @@
  * chord got darker".
  */
 
+// Imported rather than restated: `pivotChord` always lands on the last bar of a
+// phrase and has to take its melodic contour from the same table every other
+// bar does. AGENTS.md §3, "a tool holding its own copy of a constant will lie
+// the day it moves" — the same applies inside `src/`.
+import { BARS_PER_PHRASE } from '../core/transport';
+
 export type ModeName =
   | 'lydian'
   | 'ionian'
@@ -206,6 +212,51 @@ export type ChordSpan = readonly [degree: number, bars: number];
  * together, and keep `npm run clash` from rising." Anyone attempting it should
  * start from the themes, not from here.
  */
+/**
+ * Which of the three harmonic sentences a phrase is built from.
+ *
+ * There was ONE sentence and nine colours of it — `[[x,2],[y,2],[z,2],[w,1],
+ * [0,1]]` in eight of the nine modes, every chord a plain diatonic triad. A
+ * listener meeting three or four modes over ten minutes therefore met one
+ * eight-bar sentence, transposed. That is not a harmonic vocabulary; it is a
+ * template with a colour dial.
+ *
+ * The three shapes are chosen by WHERE IN THE RUN the phrase falls (see
+ * `ACT_SHAPE` in `arrangement.ts`), not by tension — that is the point. Tension
+ * already drives the mode ladder; adding a second tension consumer would only
+ * make the harmony a louder version of the same information.
+ *
+ *   period  the sentence that shipped. States, asks, restates, closes.
+ *   turn    the same chords, entered from somewhere else, ARRIVING home in the
+ *           middle of the phrase instead of starting there.
+ *   climb   the period's first six bars, then a DECEPTIVE cadence: the dominant
+ *           resolves anywhere but the tonic, so the phrase refuses to close and
+ *           pushes into the next one.
+ *
+ * TWO INVARIANTS, both deliberate and both checkable:
+ *
+ * 1. **No alternative shape uses a degree the period shape does not.** A great
+ *    many tools in `tools/` sweep `for (const [degree] of PROGRESSIONS[mode])`
+ *    to enumerate the chords a mode can produce — `masking`, `motorcheck`,
+ *    `leadcheck`, `basscheck`, `registermap`, `tune`, `contour`, `rhythm`,
+ *    `motion`, `instruments`. If a new shape introduced a new degree, every one
+ *    of those would silently stop being complete, which is precisely the
+ *    "unmeasured properties rot" failure AGENTS.md §3 warns about. Holding the
+ *    degree SET fixed and varying only the ORDER and the CADENCE keeps all ten
+ *    tools total without editing any of them. `clash --shapes` asserts it.
+ *
+ * 2. **`turn` is a permutation of `period`'s spans.** Every mode's turn shape
+ *    is the period shape with span 0 and span 2 exchanged (locrian exchanges
+ *    its two unequal spans). Because `clash` scores (melodic cell, chord) pairs
+ *    and the eight cells are the same eight cells in the same order, the
+ *    multiset of pairs is unchanged and the unresolved-clash count is IDENTICAL
+ *    by construction for every mode whose two swapped spans are the same
+ *    length. That is not luck; it is why the swap was chosen over an invented
+ *    progression. Lydian is the one mode where the swap is a no-op (spans 0 and
+ *    2 are both `[0,2]`), so it is authored instead and measured like any other.
+ */
+export type ProgressionShape = 'period' | 'turn' | 'climb';
+
 export const PROGRESSIONS: Record<ModeName, readonly ChordSpan[]> = {
   /*
    * I | II | I | V I : the Lydian cadence, and it is unlike every other entry
@@ -270,6 +321,187 @@ export const PROGRESSIONS: Record<ModeName, readonly ChordSpan[]> = {
    */
   harmonicMinor: [[0, 2], [5, 2], [3, 2], [4, 1], [0, 1]],
 };
+
+/**
+ * THE TURN — the same sentence entered from somewhere else.
+ *
+ * The phrase opens on a colour chord and the TONIC ARRIVES under bars 5-6, the
+ * restatement, instead of being where the music started. That is what a
+ * development section does to material a listener already knows: it does not
+ * give them a new tune, it takes the tune somewhere.
+ *
+ * EVERY ROW WAS SEARCHED, NOT WRITTEN. `node tools/clash.mjs --shapesearch`
+ * scores every permutation of a phrase's body spans and every cadence target
+ * inside the mode's own degree set, against the live themes. These are the
+ * best-scoring candidate in each mode that also ends by arriving home. Five of
+ * the nine are strictly BETTER than the period shape they sit beside and the
+ * other four are identical:
+ *
+ *     mode              period   turn
+ *     lydian                 0      0   (unchanged — see below)
+ *     ionian                 3      0
+ *     dorian                 3      3
+ *     aeolian                7      6
+ *     phrygian               9      8
+ *     phrygianDominant      14     11
+ *     locrian               16     16
+ *     octatonic              6      6
+ *     harmonicMinor          2      1
+ *
+ * LYDIAN KEEPS THE PERIOD SHAPE IN EVERY ACT, and that is a measurement rather
+ * than an oversight. Its period scores ZERO unresolved clashes — the only mode
+ * in the game that does — so nothing can beat it and everything differs from it
+ * by being worse: all nine candidates the search produced score 13 or more.
+ * A mode whose harmony is already perfect against every theme does not get a
+ * development, because there is no version of it that is not a regression.
+ * Lydian also requires energy under the measured p10 to be selected at all, so
+ * this costs a listener almost nothing.
+ */
+export const PROGRESSIONS_TURN: Record<ModeName, readonly ChordSpan[]> = {
+  lydian: [[0, 2], [1, 2], [0, 2], [4, 1], [0, 1]],
+  // vi IV I V I — the tonic arrives in the middle of its own phrase.
+  ionian: [[5, 2], [3, 2], [0, 2], [4, 1], [0, 1]],
+  dorian: [[3, 2], [6, 2], [0, 2], [4, 1], [0, 1]],
+  aeolian: [[2, 2], [5, 2], [0, 2], [4, 1], [0, 1]],
+  phrygian: [[6, 2], [3, 2], [0, 2], [1, 1], [0, 1]],
+  phrygianDominant: [[3, 2], [1, 2], [0, 2], [4, 1], [0, 1]],
+  // The pedal ARRIVES rather than opening: four bars of it under bars 3-6.
+  locrian: [[3, 2], [0, 4], [5, 1], [0, 1]],
+  octatonic: [[6, 2], [3, 2], [0, 2], [4, 1], [0, 1]],
+  harmonicMinor: [[5, 2], [3, 2], [0, 2], [4, 1], [0, 1]],
+};
+
+/**
+ * THE CLIMB — the inner pair exchanged, so the middle of the phrase turns.
+ *
+ * The period's contrasting idea and its restatement meet each other's harmony.
+ * In aeolian that takes `i VI III v i` to `i III VI v i` — the middle rises by
+ * fourths where it used to fall by thirds — and in every mode it changes which
+ * chord the phrase's high point is approached from. The tonic still opens and
+ * the cadence still closes, so it reads as the same sentence said with a
+ * different emphasis rather than as a third tune.
+ *
+ * A DECEPTIVE CADENCE WAS THE FIRST DESIGN AND IT WAS MEASURED AND REJECTED,
+ * which is the useful half of this entry. The idea was right — a run's late act
+ * should have a harmony that keeps promising an arrival and postponing it — and
+ * `V` to the submediant is the textbook way to write one. Scored with
+ * `clash.mjs`, it was worse in all nine modes and badly so:
+ *
+ *     lydian 0 -> 15    ionian 3 -> 8     dorian 3 -> 18
+ *     aeolian 7 -> 12   phrygian 9 -> 18  phrygianDominant 14 -> 24
+ *     locrian 16 -> 25  octatonic 6 -> 11 harmonicMinor 2 -> 2
+ *
+ * The cause is not subtle once the tool says it out loud: bar 8 carries the
+ * `tag` cell, which is the cadence figure, and it is written to land on the
+ * tonic. Put any other chord under it and the phrase's last note is left
+ * hanging in eight modes out of nine. This is the same lesson as the
+ * faster-harmonic-rhythm rejection above — the themes were written against a
+ * specific harmony and the melody is the constraint, not the table.
+ *
+ * IT SURVIVES IN EXACTLY ONE MODE, and the exception proves the rule.
+ * `harmonicMinor` scores 1 with `V - VI` against the period's 2, because it is
+ * the only mode here with a real leading tone: the deception lands *because*
+ * the ear was pulled hard toward a tonic that then does not come. So the one
+ * deceptive cadence in the game belongs to the boss, is measurably better than
+ * what it replaces, and is heard nowhere else.
+ *
+ * LOCRIAN AND OCTATONIC KEEP THE PERIOD SHAPE HERE. The search found exactly
+ * one candidate at or under the period score in each, and the turn shape
+ * already uses it. A third distinct sentence does not exist in those two
+ * without a rise, and inventing one anyway is what the gate exists to stop.
+ * Lydian keeps it for the reason given above.
+ */
+export const PROGRESSIONS_CLIMB: Record<ModeName, readonly ChordSpan[]> = {
+  lydian: [[0, 2], [1, 2], [0, 2], [4, 1], [0, 1]],
+  // I IV vi V I — the middle rises to the submediant instead of falling from it.
+  ionian: [[0, 2], [3, 2], [5, 2], [4, 1], [0, 1]],
+  // VII IV i v i — opens on dorian's bright major VII, which the period buries.
+  dorian: [[6, 2], [3, 2], [0, 2], [4, 1], [0, 1]],
+  aeolian: [[0, 2], [2, 2], [5, 2], [4, 1], [0, 1]],
+  phrygian: [[0, 2], [6, 2], [3, 2], [1, 1], [0, 1]],
+  phrygianDominant: [[0, 2], [1, 2], [3, 2], [4, 1], [0, 1]],
+  locrian: [[0, 4], [3, 2], [5, 1], [0, 1]],
+  octatonic: [[0, 2], [3, 2], [6, 2], [4, 1], [0, 1]],
+  // i iv VI V VI — the one deceptive cadence in the game. See above.
+  harmonicMinor: [[0, 2], [3, 2], [5, 2], [4, 1], [5, 1]],
+};
+
+const SHAPES: Record<ProgressionShape, Record<ModeName, readonly ChordSpan[]>> = {
+  period: PROGRESSIONS,
+  turn: PROGRESSIONS_TURN,
+  climb: PROGRESSIONS_CLIMB,
+};
+
+/**
+ * The progression for a mode in a given shape.
+ *
+ * Defensive in both arguments for the same reason `buildSlots` already guards
+ * the mode: an unrecognised value used to throw from deep inside a pattern
+ * build, killing the frame with a message that pointed nowhere near the cause.
+ */
+export function progressionFor(mode: ModeName, shape: ProgressionShape): readonly ChordSpan[] {
+  const table = SHAPES[shape] ?? PROGRESSIONS;
+  return table[mode] ?? PROGRESSIONS[mode] ?? PROGRESSIONS.aeolian;
+}
+
+/**
+ * THE PIVOT — the chord that makes a modulation something you hear ARRIVE.
+ *
+ * The key moved every four waves and it moved by simply being different on the
+ * next phrase. A listener does not hear that as a modulation; they hear it as
+ * the music being in a new place, which is a much weaker event and is most of
+ * why a run reads as a sequence of loops rather than as a piece going
+ * somewhere. A modulation is a JOURNEY, and a journey needs the moment where
+ * you can tell you are about to arrive.
+ *
+ * The geometry is free here and it is worth spelling out, because it is the
+ * reason this costs one function instead of a modulation planner.
+ * `onWaveStart` walks the cycle of fourths: the new tonic is always five
+ * semitones above the old one (mod 12). So
+ *
+ *     V of the new key  =  newTonic + 7  =  oldTonic + 12  ≡  oldTonic
+ *
+ * — the outgoing tonic IS the incoming dominant. Nothing has to be searched
+ * for; the pivot is the note the music is already sitting on, re-spelled. Make
+ * it major with a flat seventh and the phrase's last bar becomes a dominant
+ * seventh that resolves up a fourth onto the downbeat of the new key, which is
+ * the single most recognisable arrival in Western music.
+ *
+ * The major third is the other half of it: `oldTonic + 4 = newTonic + 11`, the
+ * new key's LEADING TONE. In every minor mode in `MODES` that note is foreign —
+ * the scale has a flat seventh — so the pivot bar is also the one moment in the
+ * run where a note from outside the mode sounds, and it sounds exactly where it
+ * belongs, pulling a semitone up onto the new tonic.
+ *
+ * Register: anchored within a tritone of the outgoing tonic so the bass does
+ * not leap an octave to play it. The upper voices are voice-led like any other
+ * chord, so the pivot joins the phrase rather than interrupting it.
+ */
+export function pivotChord(fromTonic: number, toTonic: number): Chord {
+  let root = toTonic + 7;
+  while (root > fromTonic + 6) root -= 12;
+  while (root < fromTonic - 6) root += 12;
+  return {
+    // Major triad: root, LEADING TONE of the incoming key, fifth.
+    notes: [root, root + 4, root + 7],
+    // The flat seventh, and the ninth above it. Faded by `sig.colour7/9` like
+    // every other colour tone, so the pull is strongest when the mix is open.
+    colour: [root + 10, root + 14],
+    root,
+    /*
+     * Degree 4 — a dominant, stated as one.
+     *
+     * This is read by `buildBass` and `motorVoicing` to decide how a bar
+     * behaves, and a pivot that reported degree 0 would tell the bass it was
+     * sitting on the tonic in the bar where it is most emphatically not.
+     */
+    degree: 4,
+    // The last bar of a phrase, where the tune falls into its cadence.
+    contour: contourForBar(BARS_PER_PHRASE - 1),
+    // The pad keeps its third here, and only here. See `Chord.pivot`.
+    pivot: true,
+  };
+}
 
 /**
  * Which way the TUNE moves into each bar of a phrase. Measured, not assumed.
@@ -356,6 +588,28 @@ export interface Chord {
    * director already passes.
    */
   contour: number;
+  /**
+   * True on the one bar per modulation that is the incoming key's dominant.
+   *
+   * Read by `buildChords`, and it exists because of a collision between two
+   * good rules. The pad drops the THIRD whenever the melody is sounding — the
+   * third is the tone that grinds against a tune held for a whole bar, and the
+   * motor is stating it anyway (see the open-fifths note in `buildChords`). On
+   * a pivot that rule deletes the only note that matters: the major third of
+   * the incoming dominant IS the new key's leading tone, and a dominant without
+   * its third is a suspended chord that pulls nowhere.
+   *
+   * Measured off the haps before this field existed: over four twenty-minute
+   * runs, the leading tone reached the `chords` lane on 9 of 42 modulations —
+   * exactly the ones where tension happened to sit under `STEM_CURVES.lead.in`
+   * so the open-fifths rule was not engaged. The bass and the motor carried it
+   * on the other 33, so the harmony was never wrong; the pad simply was not
+   * helping on the one bar it should have been loudest.
+   *
+   * Optional so every other construction site — `buildChord`, and the six tools
+   * that build chords by hand — is unchanged and reads `undefined`.
+   */
+  pivot?: boolean;
 }
 
 /**

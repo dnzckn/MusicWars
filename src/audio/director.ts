@@ -25,7 +25,7 @@ import { cat, ref, signal, silence, stack, type Pattern } from '@strudel/core';
 import type { AbilityId, GameEvents, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp, clamp01, damp, Latch, lerp, remap, StickyBucket } from '../core/math';
 import { BARS_PER_PHRASE, type Transport } from '../core/transport';
-import { Arranger } from './arrangement';
+import { ACT_SHAPE, Arranger, actForPhrase, type Act } from './arrangement';
 import { setTempo } from './engine';
 import { ensureMasterCeiling, masterVolume, musicTrim } from './volume';
 import {
@@ -59,7 +59,15 @@ import {
 } from './layers';
 import { allocate, arpDisplacement, ensembleLift, ensembleSize, ensembleTrim } from './orchestration';
 import { TensionModel, TERM_LABELS } from './tension';
-import { keyLabel, MODE_LADDER, PROGRESSIONS, voiceLead, type Chord, type ModeName } from './theory';
+import {
+  keyLabel,
+  MODE_LADDER,
+  pivotChord,
+  progressionFor,
+  voiceLead,
+  type Chord,
+  type ModeName,
+} from './theory';
 
 type StemBuilder = (m: MusicalState) => Pattern;
 
@@ -242,6 +250,25 @@ const AUDIBLE_FLOOR = 0.0025;
 
 export interface DirectorReadout {
   section: SectionName;
+  /*
+   * THE FORM, exposed because nothing in `tools/` could measure one.
+   *
+   * `sections` measures section share, `variety` measures mode share, `churn`
+   * and `phrasechurn` measure rebuild churn — every one of them is a
+   * DISTRIBUTION, and an arc is an ORDERING. A tool can only ask "did this rise
+   * across the run" if the run's own idea of where it is is readable, and until
+   * these four fields existed it was not. See `tools/arc.mjs`.
+   */
+  /** Which part of the run's arc this instant belongs to. */
+  act: Act;
+  /** Eight-bar phrases since the run started. The run clock. */
+  runPhrase: number;
+  /** The lane resting this phrase, or null. */
+  tacet: StemId | null;
+  /** Bars since the arrangement last rested. */
+  barsSinceQuiet: number;
+  /** Rests the form insisted on, as opposed to tension allowing. */
+  forcedRests: number;
   bpm: number;
   key: string;
   /** Human-readable groove, e.g. "half-time trap". */
@@ -292,11 +319,67 @@ export class MusicDirector {
   /** Seconds elapsed this run, for rate-limiting event-driven section forces. */
   private runSeconds = 0;
 
+  /* ---------------------------------------------------------------------
+   * THE RUN CLOCK — the term the score did not have.
+   *
+   * Before this, exactly ONE thing in the entire director read elapsed run
+   * time: `OVERDRIVE_DROP_COOLDOWN`. Everything else was a function of the
+   * wave, and the wave is a cycle — `feelForWave` is an eight-slot rota,
+   * `themeForWave` is a rondo, the tonic walks the circle of fourths and
+   * returns after forty-eight waves. So a twenty-minute run had no arc,
+   * because it had no term that could carry one.
+   *
+   * MEASURED IN BARS, RELATIVE TO THE RUN. The transport free-runs from page
+   * load and is never reset — `main.ts`'s retry path calls `director.reset`
+   * and `world.start` and nothing else — so `transport.bar` is page time, and
+   * a second run would have opened in whatever act the first one had reached.
+   * Stamping the bar the run began at is one field and makes the clock
+   * musical (it is bars, so an act boundary lands on a phrase line) AND
+   * run-relative.
+   *
+   * -1 rather than 0 as the empty value, because bar 0 is a legal start.
+   * ------------------------------------------------------------------ */
+
+  /** Transport bar this run started on, or -1 before the first update. */
+  private runStartBar = -1;
+  /** Eight-bar phrases elapsed since this run started. */
+  private runPhrase = 0;
+  /** Which part of the arc the run has reached. See `ACT_SHAPE`. */
+  private act: Act = 'exposition';
+  /**
+   * The tonic the run OPENED in, so the recapitulation has somewhere to return.
+   *
+   * `reset()` sets the tonic to 57 and `onWaveStart` walks it away from there;
+   * this is read rather than hardcoded so the two cannot drift, which is the
+   * same reason `reset()` reads `MODE_LADDER[0]` instead of naming a mode.
+   */
+  private homeTonic = 57;
+  /**
+   * The groove the run OPENED with, held again through the recapitulation.
+   *
+   * `feelForWave(0, false)` is `boomchick`, and reading it rather than naming
+   * it means re-ordering `FEEL_CYCLE` cannot silently make the recap return to
+   * a groove the opening never played.
+   */
+  private homeFeel: Feel = 'boomchick';
+
   /** When OVERDRIVE last earned a forced drop. See `onPickup`. */
   private lastOverdriveDrop = -999;
 
   /** A modulation waiting for the next phrase boundary. See `onWaveStart`. */
   private pendingTonic: number | null = null;
+  /**
+   * The phrase whose last bar was built as a PIVOT. See `updateHarmony`.
+   *
+   * Written by `buildSlots` when it actually places the chord, and read by
+   * `updateHarmony` to decide whether the modulation has been announced yet.
+   * Deliberately a record of what was BUILT rather than of what was intended:
+   * a pivot that was computed and then lost to a later rebuild must not count,
+   * and this is the only field in the class that can tell the difference.
+   */
+  private pivotPhrase = -1;
+  /** Phrases a handover has been held waiting for its pivot. Capped at 2. */
+  private heldForPivot = 0;
   /** The wave the current mode was chosen for; see `updateHarmony`. */
   private modeWave = -1;
   /*
@@ -500,6 +583,38 @@ export class MusicDirector {
    */
   private movement: Movement | null = null;
 
+  /*
+   * THE TACET — which lane sits out this phrase.
+   *
+   * A drop only lands if something was taken away first, and until the run
+   * form existed the only lanes this arrangement ever genuinely ZEROED were
+   * kick/clap/bass in a `breakdown` and everything in a `collapse`. The
+   * research pass counted the consequence: the mix sat at 93-98% of its own
+   * maximum voice count in its two densest sections, one of which holds nearly
+   * half a run — and the "yield" the voice budget applies to a losing tonal
+   * lane lands at 0.144, a rounding error away from `texture`'s 0.15 FORWARD
+   * threshold, which is to say a subtraction the project's own tool cannot see.
+   *
+   * So one of the exempt lanes rests through every `sustain` phrase, by rota.
+   * Not by tension — by position in the form, which is the whole difference
+   * between "quiet is what happens when the game is calm" and "quiet is part of
+   * the piece".
+   *
+   * `hats` IS NOT IN THE ROTA AND MUST NOT BE. It plays the motor, which is the
+   * clock the whole arrangement is kept by now that the kick no longer hits all
+   * four beats — see `buildMotor`. The plan already records that the motor is
+   * the one lane that must stay exempt from any section-tacet rule. `sub` is
+   * out for a different reason: it is an accent gated at `in: 0.44` and absent
+   * most of the time, so resting it would subtract something usually not there.
+   *
+   * `null` in the fourth slot on purpose. Three phrases in four are missing a
+   * part and the fourth is the whole band, so the full texture is itself an
+   * event that recurs rather than the default everything else deviates from.
+   */
+  private static readonly TACET_ROTA: readonly (StemId | null)[] = ['clap', 'bass', 'kick', null];
+  /** The lane resting this phrase, or null. Named in the structure key. */
+  private tacetLane: StemId | null = null;
+
   /**
    * Which tonal lanes currently hold a slot in the voice budget.
    *
@@ -597,7 +712,26 @@ export class MusicDirector {
       ornament: signal(() => clamp01(remap(this.intensity, 0.68, 0.9, 0, 1))),
       fill: signal(() => clamp01(remap(this.intensity, 0.58, 0.82, 0, 1))),
       colour7: signal(() => clamp01(remap(this.p.tension, 0.2, 0.5, 0, 1))),
-      colour9: signal(() => clamp01(remap(this.p.tension, 0.55, 0.85, 0, 1))),
+      /*
+       * The NINTH is reserved until the intensification.
+       *
+       * The second piece of held-back material, and the cheapest one in the
+       * file: the chord already computes both colour tones every bar and the
+       * caller only decides how much of each is heard, so withholding one costs
+       * a multiplication. It is the right one to hold because it is the tone
+       * that makes a triad sound like a record rather than like a chord — so
+       * the moment it arrives, three quarters of the way through a run, the
+       * harmony audibly opens without a single new lane appearing.
+       *
+       * Gated on the act rather than faded across it, deliberately. A colour
+       * tone that ramps in over four minutes is a colour tone nobody notices
+       * arriving, which is the same "saturated input" defect this file has
+       * found five times. It arrives on the phrase line the act changes on, in
+       * company with the shape change and the tempo ceiling lifting.
+       */
+      colour9: signal(() =>
+        ACT_SHAPE[this.act].ninth ? clamp01(remap(this.p.tension, 0.55, 0.85, 0, 1)) : 0,
+      ),
     };
   }
 
@@ -737,7 +871,13 @@ export class MusicDirector {
     this.phraseSeedIndex = -1;
     this.wave = wave;
     this.feel = feelForWave(wave, false);
+    this.homeFeel = this.feel;
     this.tonic = 57;
+    this.homeTonic = this.tonic;
+    this.runStartBar = -1;
+    this.runPhrase = 0;
+    this.act = 'exposition';
+    this.tacetLane = null;
     /*
      * Start where the ladder says, not at a hardcoded default.
      *
@@ -766,6 +906,8 @@ export class MusicDirector {
     // first phrase boundary of the new run and move a key nothing had set.
     this.pendingTonic = null;
     this.pendingCapo = null;
+    this.pivotPhrase = -1;
+    this.heldForPivot = 0;
     this.tempoSnap = false;
     this.runSeconds = 0;
     this.lastOverdriveDrop = -999;
@@ -796,6 +938,18 @@ export class MusicDirector {
     this.snapshot = snap;
     // Wall-clock for this run, used to rate-limit event-driven section forces.
     this.runSeconds += dt;
+
+    /*
+     * The run clock. See `runStartBar`.
+     *
+     * Stamped here rather than in `reset()` because `reset()` is not handed a
+     * transport — and giving it one to set a field would put a second
+     * definition of "when the run started" in a codebase whose recurring
+     * defect is exactly that.
+     */
+    if (this.runStartBar < 0) this.runStartBar = Math.floor(transport.bar);
+    this.runPhrase = Math.max(0, Math.floor((transport.bar - this.runStartBar) / BARS_PER_PHRASE));
+    this.act = actForPhrase(this.runPhrase);
 
     /*
      * The rig's audio abilities, read once per step.
@@ -1061,7 +1215,7 @@ export class MusicDirector {
        * there is nothing to gain by applying it sooner.
        */
       this.leadRegister = this.wantRegister;
-      this.arranger.onBar(transport, this.energy);
+      this.arranger.onBar(transport, this.energy, this.runPhrase);
       this.updateHarmony(transport, this.energy);
       this.updateTempo(this.energy);
       this.rebuildIfNeeded(transport);
@@ -1145,6 +1299,27 @@ export class MusicDirector {
      * follow. See `orchestration.ts` for the whole argument.
      */
     const wants = {} as Record<StemId, number>;
+
+    /*
+     * Which lane is resting this phrase. See `TACET_ROTA`.
+     *
+     * Keyed on the RUN phrase rather than the transport's, so the rota starts
+     * at the top of every run instead of wherever the page clock happens to be
+     * — the same reason the acts are counted from `runStartBar`.
+     *
+     * `sustain` only. A `drop` is defined by having everything in it; a
+     * `breakdown` already zeroes three lanes and a second rule fighting it
+     * would be two definitions of the same gesture; a `build` is a promise and
+     * an `intro` is already staged. Sustain is where the bars are and it is the
+     * second-densest section in the mix, which is exactly the combination that
+     * makes it the right place to spend a rest.
+     */
+    const tacet =
+      section === 'sustain'
+        ? MusicDirector.TACET_ROTA[this.runPhrase % MusicDirector.TACET_ROTA.length]
+        : null;
+    this.tacetLane = tacet;
+    const shape = ACT_SHAPE[this.act];
 
     for (const id of STEM_IDS) {
       // Continuous, not a switch. See STEM_CURVES for why this matters.
@@ -1316,6 +1491,31 @@ export class MusicDirector {
        */
       if (section === 'collapse') want = id === 'fx' ? want : id === 'sub' ? 0.3 : 0;
 
+      /*
+       * THE FORM RESERVES THE SUB, and it attenuates rather than muting.
+       *
+       * "A form is largely a schedule of things you have not used yet", and
+       * before this the only reserved material in the entire system was the
+       * boss leitmotif — reserved by EVENT rather than by position in the run.
+       * The sub is the right thing to hold back: it is the only source in the
+       * 63 Hz octave apart from the kick, so withholding it is a change to the
+       * spectrum a listener feels rather than a change to the note count, and
+       * it gives the development somewhere to arrive from.
+       *
+       * 0.3 rather than 0, and the difference is not cosmetic. `postgain` is
+       * squared by `setGainCurve(x => x*x)`, so a 0.3 multiplier on the fader
+       * is 0.09 on the energy — about 21 dB down, which is reserved by any
+       * musical standard. A hard zero would additionally take the lane's
+       * `active` latch down, `drainRebuild` would replace its cache with
+       * `silence`, and the lane would then be un-soloable: `tools/mixaudit.mjs`
+       * pins each stem to unity in turn and would report the sub as a DEAD
+       * LAYER for the whole of its three-minute run, which sits entirely
+       * inside the exposition. That is a real property of this architecture and
+       * not a gate being worked around — a lane at exactly zero is *gone*, not
+       * quiet, and cannot return until the next rebuild.
+       */
+      if (id === 'sub' && !shape.sub) want *= 0.3;
+
       // The low end is where health lives. As the player gets hurt the bottom
       // of the mix is pulled out from under them; combined with the rising
       // high-pass on the upper layers, a badly hurt run sounds thin and
@@ -1372,6 +1572,28 @@ export class MusicDirector {
       // it, worst-case amplitude runs past unity and there is no limiter.
       want *= ensembleTrim(ensembleSize(snap?.abilities));
 
+      /*
+       * THE TACET, APPLIED LAST, for exactly the reason the collapse is.
+       *
+       * The note forty lines above records what happened the first time a
+       * "this lane is silent" rule was stated before the per-lane blocks: two
+       * of them ASSIGN rather than multiply and wrote straight over the zero,
+       * so the two loudest lanes on the death screen were the two the collapse
+       * existed to remove. `ensembleLift` ADDS, twenty lines above this, and
+       * `clap`, `bass` and `kick` are all lanes THE BAND staffs (SNARE ROLL,
+       * DRONES/BLACKHOLE, NOVA/TIMPANI) — so a tacet stated any earlier would
+       * have been silently undone for any player holding those instruments,
+       * and only for them. That is the same bug in a new costume, and
+       * `tools/sections.mjs` says the hazard is structural rather than
+       * incidental: state the rule once, after everything.
+       *
+       * A hard zero is right here, unlike the sub's reservation above, because
+       * this one is transient by construction — the rota moves every phrase and
+       * the lane is named in the structure key, so leaving a tacet forces the
+       * rebuild that brings the part back on the phrase line.
+       */
+      if (id === tacet) want = 0;
+
       wants[id] = want;
     }
 
@@ -1392,6 +1614,28 @@ export class MusicDirector {
       // How many parts may sound at once: the arrangement's wish, capped by
       // how many musicians have actually been recruited. See `allocate`.
       ensemble: ensembleSize(snap?.abilities),
+      /*
+       * ...and narrowed by how far into the run we are. The ceiling ramp: the
+       * opening is a smaller band than the endgame by the FORM's decision
+       * rather than by how many cards the player has taken. See `ACT_SHAPE`.
+       *
+       * EXCEPT ON A HUSHED WAVE, and that exception was measured rather than
+       * reasoned. HUSHED is the one movement in the game built out of absence:
+       * `MOVEMENT_MIX` already takes the kit to 0.1-0.28 and pushes the pad and
+       * the tune up, and `rankTonal` hands the spare slot to the ARP because
+       * there are no enemies worth voicing. Stacking the act's reservation on
+       * top of that took the arp out too — and the arp is the movement's air
+       * source, so the thing HUSHED is supposed to open closed instead.
+       *
+       * `tools/movements.mjs`, which measures each movement against ordinary
+       * waves sampled in the same run: HUSHED's low/air ratio ran 3.02 against
+       * an ordinary 2.41-2.78 at HEAD (already the wrong way by 20% against a
+       * 13% control band — a pre-existing failure), and 4.44 against 2.03-2.35
+       * with the delta applied, which is the wrong way by 54%. Two subtractions
+       * of the same lane are not twice the gesture; they are the gesture
+       * cancelling itself.
+       */
+      budgetDelta: this.movement === 'hush' ? 0 : shape.budget,
     }, this.tonalHeld);
 
     /*
@@ -1473,6 +1717,47 @@ export class MusicDirector {
     const wantBossTheme = this.boss || this.bossArmed;
     const bossChanged = wantBossTheme !== this.themeBoss;
     this.themeBoss = wantBossTheme;
+
+    /*
+     * A MODULATION WAITS FOR ITS OWN ANNOUNCEMENT.
+     *
+     * `onWaveStart` arms `pendingTonic` and this method spends it on the very
+     * next phrase line. The pivot is written into the last bar of the phrase
+     * (see `buildSlots`), so if the wave happens to start DURING that bar there
+     * is nowhere left to put it and the key moves unprepared. Measured off the
+     * haps over four twenty-minute runs, that is about one modulation in eight
+     * — small, and it is the difference between "usually announced" and
+     * "announced", which is the difference between a device and an accident.
+     *
+     * So the handover is held for one more phrase when the pivot did not get
+     * built for the phrase that just ended. Held ENTIRELY — tonic, capo and
+     * wave together — rather than just the tonic, because forty lines below
+     * this file insists the key, the mode and the tune "all turn together", and
+     * deferring one of the three would break that to fix something smaller.
+     *
+     * Two escapes, both mandatory:
+     *
+     *   - `bossChanged` overrides it. A fight starting or ending is a boundary
+     *     in its own right and the leitmotif's mode has to turn on the bar the
+     *     tune does; a deferred handover would open a fight in the wrong scale,
+     *     which is the exact desync `bossArmed` exists to remove.
+     *   - A hard cap of two phrases. A modulation must never be LOST, and a
+     *     condition that can only be satisfied by a rebuild is a condition that
+     *     can in principle never be satisfied. After two phrases the key moves
+     *     whether or not anything announced it.
+     */
+    const endedPhrase = Math.floor(transport.bar / BARS_PER_PHRASE) - 1;
+    if (
+      this.pendingTonic !== null &&
+      !bossChanged &&
+      this.pivotPhrase !== endedPhrase &&
+      this.heldForPivot < 2
+    ) {
+      this.heldForPivot++;
+      this.modeBias *= 0.72;
+      return;
+    }
+    this.heldForPivot = 0;
 
     /*
      * A PHRASE BOUNDARY IS NOT ENOUGH. The mode also has to hold for the whole
@@ -1723,7 +2008,25 @@ export class MusicDirector {
     if (this.collapsing) target = BPM_MIN;
     // UP-TEMPO: "pushed ahead of the beat". 3% a level, so three levels is a
     // shade under 10% — audible as urgency without becoming a different song.
-    this.targetBpm = clamp(Math.round(target * (1 + this.tempoLift)), BPM_MIN, BPM_MAX);
+    /*
+     * ...and the FORM owns the top of the range.
+     *
+     * Every term above this line is a cycle or a scalar: `base` climbs with the
+     * wave and saturates, tension is noise on the timescale of a bar, the feel
+     * and the section rotate. Measured at HEAD over four twenty-minute runs,
+     * peak BPM per two-minute window read 134-150 in the FIRST window of every
+     * seed and 139-150 in the last — the whole tempo range was available in
+     * minute one, so a late run could not be faster than an early one in any
+     * way a listener could hear.
+     *
+     * `ACT_SHAPE.tempo` is a CEILING and not an offset, so it takes nothing
+     * away from calm play: an exposition that never asks for more than 132 is
+     * unclamped, and the breakdown's -20 and the boss's -16 are untouched in
+     * every act. What it removes is the ability to spend the top of the range
+     * before the run has earned it. `BPM_MAX` still binds above all of it.
+     */
+    const actCeiling = Math.min(BPM_MAX, ACT_SHAPE[this.act].tempo);
+    this.targetBpm = clamp(Math.round(target * (1 + this.tempoLift)), BPM_MIN, actCeiling);
 
     /*
      * A DEADBAND, because the tempo was hunting rather than travelling.
@@ -1850,6 +2153,26 @@ export class MusicDirector {
      */
     this.keyFields = [
       ['section', section],
+      /*
+       * The ACT and the TACET, both structural, both IMMEDIATE.
+       *
+       * The act selects the harmonic sentence (`progressionFor`) and the theme
+       * (`MusicalState.recap`), so a phrase built before the act turned would
+       * go on playing the previous act's chords for up to eight bars after the
+       * form had moved — the same desync `pendingWave`/`pendingTonic` exist to
+       * prevent, arriving one level up. It changes three times in a run, so
+       * naming it costs three rebuilds.
+       *
+       * The tacet has to be here for a different and sharper reason: a lane at
+       * `want = 0` fades out, drops its `active` latch, and `drainRebuild`
+       * replaces its cache with `silence`. Without a key field the part could
+       * not come back until some unrelated change happened to trigger a
+       * rebuild, so a one-phrase rest would have been an indefinite one. It
+       * only ever moves on a phrase line, and `rebuildIfNeeded` is only reached
+       * on a bar crossing, so IMMEDIATE here is exact rather than eager.
+       */
+      ['act', this.act],
+      ['tacet', this.tacetLane ?? '-'],
       ['intensity', this.intensityBucket.update(this.intensity)],
       ['brightness', this.brightnessBucket.update(this.brightness)],
       ['mode', this.mode],
@@ -1915,7 +2238,7 @@ export class MusicDirector {
     // `movement` is immediate because the game announces it with a banner: a
     // stage that says FLANKED and goes on sounding like the last one is worse
     // than any glitch.
-    const IMMEDIATE = new Set(['section', 'mode', 'tonic', 'wave', 'boss', 'movement']);
+    const IMMEDIATE = new Set(['section', 'mode', 'tonic', 'wave', 'boss', 'movement', 'act', 'tacet']);
     const LAZY = new Set(['health', 'grazing', 'bombs', 'combo', 'enemies']);
     const movedFields = names.filter((_, i) => prev[i] !== next[i]);
     const structural = this.lastKey === '' || movedFields.some((n) => IMMEDIATE.has(n));
@@ -1994,10 +2317,23 @@ export class MusicDirector {
    */
   private buildSlots(transport: Transport, section: SectionName): MusicalState[] {
     const snap = this.snapshot;
-    // Defensive: an unrecognised mode used to throw from deep inside a pattern
-    // build, killing the frame with a message that pointed nowhere near the
-    // cause.
-    const progression = PROGRESSIONS[this.mode] ?? PROGRESSIONS.aeolian;
+    /*
+     * WHICH SENTENCE, not just which colour.
+     *
+     * `progressionFor` is defensive in both arguments for the reason the old
+     * line here was defensive in one: an unrecognised mode used to throw from
+     * deep inside a pattern build, killing the frame with a message that
+     * pointed nowhere near the cause.
+     *
+     * The shape is chosen by the ACT and never by tension. Tension already
+     * drives the mode ladder — nine colours of harmony — and hanging a second
+     * harmonic decision on the same signal would make the two move together
+     * and produce one louder version of the same information rather than two
+     * independent axes. Where you are in the run and how much trouble you are
+     * in are different questions and the harmony now answers both.
+     */
+    const act = ACT_SHAPE[this.act];
+    const progression = progressionFor(this.mode, act.shape);
     const arr = this.arranger.state(transport);
 
     // Which eight-bar phrase of the run we are in. Motivic development reads
@@ -2037,10 +2373,42 @@ export class MusicDirector {
 
     // Build every chord first, so each bar knows what it is heading toward and
     // the bass can write an approach into it.
+    /*
+     * THE PIVOT — the last bar of a phrase that is about to modulate.
+     *
+     * `pendingTonic` is non-null exactly while a key change is queued and
+     * waiting for the next phrase line, so this is the outgoing phrase and
+     * `BARS_PER_PHRASE - 1` is its last bar. Substituting the incoming key's
+     * dominant there turns a modulation from a fact into an EVENT: the ear
+     * hears the pull, then the arrival, instead of simply finding itself
+     * somewhere new. See `pivotChord` for why this costs one function — the
+     * cycle of fourths makes the outgoing tonic the incoming dominant, so the
+     * chord is the one the music is already sitting on, re-spelled.
+     *
+     * Voice-led like every other chord in the phrase, so it joins the sentence
+     * rather than interrupting it, and the bass and the pad both take it for
+     * free because they read `chord.root` and `chord.notes`.
+     *
+     * NOT gated on the act. A modulation is an arrival wherever it happens,
+     * and the exposition is precisely where a listener is still learning where
+     * home is — announcing the first departure is worth more than announcing
+     * the fifth.
+     */
+    const pivotAt = this.pendingTonic !== null ? BARS_PER_PHRASE - 1 : -1;
+    // Record that this phrase's last bar carries the announcement, so
+    // `updateHarmony` can hold the key back if it does not.
+    if (pivotAt >= 0) this.pivotPhrase = phrase;
     const chords: Chord[] = [];
     let previousVoicing: number[] = this.phraseSeedVoicing;
     for (let i = 0; i < BARS_PER_PHRASE; i++) {
-      const raw = chordForBar(this.tonic, this.mode, progression, i);
+      const raw =
+        i === pivotAt
+          ? // Raw tonics, matching `chordForBar` on the line below. The capo is
+            // applied to `MusicalState.tonic` and not to the chord grid, so a
+            // pivot that added it would sit a whole step off the chords either
+            // side of it.
+            pivotChord(this.tonic, this.pendingTonic ?? this.tonic)
+          : chordForBar(this.tonic, this.mode, progression, i);
       const led = voiceLead(previousVoicing, raw);
       previousVoicing = led.notes;
       chords.push(led);
@@ -2099,6 +2467,9 @@ export class MusicDirector {
         bossTheme: this.themeBoss,
         bossPhase: this.bossPhase,
         wave: this.musicalWave,
+        // The one field here that is a property of the RUN rather than of the
+        // wave. See `themeForWave` and `ACT_SHAPE`.
+        recap: this.act === 'recapitulation',
         bombs: snap?.bombs ?? 0,
         health: this.health,
         // Latched rather than raw, so the shimmer cannot chatter on and off.
@@ -2191,7 +2562,24 @@ export class MusicDirector {
     // The SCORE takes the new wave at the next phrase line, with the key and
     // the mode, so all three turn together. See `musicalWave`.
     this.pendingWave = e.index;
-    this.feel = feelForWave(e.index, false);
+    /*
+     * THE RECAPITULATION HOLDS THE OPENING GROOVE.
+     *
+     * `feelForWave` is an eight-slot rota — measured median hold nineteen bars,
+     * about thirty-six seconds, the shortest structural unit in the score after
+     * the section. Holding one groove across the whole final act makes it the
+     * LONGEST-held unit of the run by a wide margin, which is the simplest
+     * available statement that the piece has arrived somewhere rather than
+     * carried on rotating. The canon this score names holds one groove for a
+     * whole cue: one to three minutes.
+     *
+     * `homeFeel` rather than a literal, so re-ordering `FEEL_CYCLE` cannot
+     * silently make the recapitulation return to a groove the opening never
+     * played. Bosses still gallop — `onBossTelegraph`/`update` set the feel
+     * from `feelForWave(wave, true)` elsewhere and a boss in the last four
+     * minutes is still the biggest event on the field.
+     */
+    this.feel = this.act === 'recapitulation' ? this.homeFeel : feelForWave(e.index, false);
     /*
      * Modulate every FOURTH wave, not every wave.
      *
@@ -2229,8 +2617,29 @@ export class MusicDirector {
      * that actually modulates; the other three set the same value and queue
      * nothing.
      */
+    /*
+     * ...and THE RECAPITULATION COMES HOME.
+     *
+     * The circle of fourths is a cycle: it visits twelve keys and returns after
+     * forty-eight waves, which is longer than any run anyone plays, so in
+     * practice a run simply walks away from where it started and never comes
+     * back. That is the harmonic form of the whole fault — a departure with no
+     * return is a sequence, not a journey.
+     *
+     * In the final act the walk stops and the key returns to the one the run
+     * opened in. It arrives through the same `pendingTonic` machinery as every
+     * other modulation, which means it also gets the PIVOT: the phrase before
+     * it ends on the dominant of home and resolves onto the downbeat. That
+     * cadence, the signature theme returning with it and the opening groove
+     * holding underneath are the three halves of the recapitulation, and they
+     * all land on one phrase line.
+     *
+     * The bare `57` below is the tonic `reset()` chooses, and `homeTonic` is
+     * read from it rather than restated so the two cannot drift.
+     */
     const modulation = Math.floor(e.index / 4);
-    const nextTonic = 57 + ((modulation * 5) % 12) - (((modulation * 5) % 12) > 6 ? 12 : 0);
+    const walked = 57 + ((modulation * 5) % 12) - (((modulation * 5) % 12) > 6 ? 12 : 0);
+    const nextTonic = this.act === 'recapitulation' ? this.homeTonic : walked;
     if (nextTonic !== this.tonic) this.pendingTonic = nextTonic;
     this.lastKey = '';
     /*
@@ -2266,8 +2675,10 @@ export class MusicDirector {
 
   /** The chord the run is currently sitting on, for the wave-clear cadence. */
   currentChordNotes(): number[] {
-    const progression = PROGRESSIONS[this.mode] ?? PROGRESSIONS.aeolian;
-    return chordForBar(this.tonic, this.mode, progression, 0).notes;
+    // The shape the run is actually in, not the period shape. This is the
+    // chord `sfxWaveClear` cadences on, and a cadence onto a chord the score
+    // is not playing is worse than no cadence.
+    return chordForBar(this.tonic, this.mode, progressionFor(this.mode, ACT_SHAPE[this.act].shape), 0).notes;
   }
 
   /**
@@ -2565,7 +2976,11 @@ export class MusicDirector {
    * direct way to make "this music is being written right now" legible.
    */
   sourceLines(): { label: string; code: string }[] {
-    const progression = PROGRESSIONS[this.mode] ?? PROGRESSIONS.aeolian;
+    // The act's shape, for the same reason every other mirror in this method
+    // reads the bucket rather than the raw value: the panel exists to show the
+    // code that is playing, and this file and the builders have drifted apart
+    // five times already.
+    const progression = progressionFor(this.mode, ACT_SHAPE[this.act].shape);
     const chord = chordForBar(this.tonic, this.mode, progression, 0);
     const root = chord.root - 12;
 
@@ -2630,8 +3045,14 @@ export class MusicDirector {
   }
 
   readout(transport: Transport): DirectorReadout {
+    const arr = this.arranger.state(transport);
     return {
       section: this.arranger.section,
+      act: this.act,
+      runPhrase: this.runPhrase,
+      tacet: this.tacetLane,
+      barsSinceQuiet: arr.barsSinceQuiet,
+      forcedRests: arr.forcedRests,
       bpm: this.bpm,
       /*
        * The SOUNDING key, so `+ capo`. The transposition is applied where the

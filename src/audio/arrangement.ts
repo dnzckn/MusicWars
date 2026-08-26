@@ -14,6 +14,144 @@
 import { clamp } from '../core/math';
 import type { SectionName } from '../core/events';
 import { BARS_PER_PHRASE, type Transport } from '../core/transport';
+import type { ProgressionShape } from './theory';
+
+/* ==========================================================================
+ * THE FORM — the layer above the section machine.
+ * ==========================================================================
+ *
+ * WHY THIS EXISTS, measured before it was written.
+ *
+ * Every timescale in this score was a CYCLE, and none of them was longer than
+ * ninety seconds. Driven over four twenty-minute runs (2560 bars, mean bar
+ * 1.87s), the median hold of each unit came out:
+ *
+ *     key (tonic)   48 bars   90.0s      n=46
+ *     theme         32 bars   60.0s      n=86
+ *     mode          16 bars   30.0s      n=99
+ *     groove        19 bars   35.6s      n=143
+ *     section        4 bars    7.5s      n=643
+ *
+ * Nothing in that table accumulates. The key walks the circle of fourths and
+ * returns; the theme rotates a rondo; the groove rotates an eight-slot rota;
+ * this file's own state machine is a servo on a scalar with NO MEMORY OF THE
+ * RUN AT ALL. So wave 30 was structurally identical to wave 4 — a different
+ * key, a different tune, the same shape at every level — and a twenty-minute
+ * run was fifteen repetitions of an eighty-second loop with layers switching on
+ * and off. A generative score that never modulates toward anything, never
+ * resolves and never remembers what it already played is wallpaper.
+ *
+ * The one thing in the whole director that read elapsed run time was
+ * OVERDRIVE's forty-five-second drop cooldown. That is the fault, and it is a
+ * fault of ARCHITECTURE rather than of any note: there was no term to hang an
+ * arc on, so there was no arc.
+ *
+ * THE FORM IS A CLOCK, NOT A DIFFICULTY CURVE. `runProgress`-style ramps were
+ * considered and are not what this is. An act does not make the music louder
+ * (`ensembleTrim` deliberately refuses that) and it does not make it faster on
+ * its own. It moves the CEILINGS and it changes the MATERIAL: how many parts
+ * the budget will admit, which harmonic sentence the phrases are built from,
+ * whether the sub accent and the chordal ninth exist yet, how long the
+ * arrangement may work before the form insists on a rest. The same music, with
+ * more of its range unlocked as the run goes on — so minute twelve sounds like
+ * a later part of the same piece rather than another instance of it.
+ *
+ * MEASURED IN PHRASES, NOT SECONDS, and relative to the RUN rather than to the
+ * page. A phrase is eight bars, about fifteen seconds at the tempi this game
+ * actually plays, so the boundaries below fall at roughly 3, 9 and 16 minutes
+ * of a twenty-minute run. The transport free-runs from page load and is never
+ * reset on retry (`main.ts` calls `director.reset` and `world.start` and
+ * nothing else), so the director stamps the bar the run began at and counts
+ * from there. Using wall-clock seconds instead would have been the easier
+ * option and the wrong one: everything else in this file quantises to bars, and
+ * an act boundary that lands mid-phrase is the same defect as a groove that
+ * changes mid-phrase.
+ */
+
+/** Which part of the run's arc a phrase belongs to. */
+export type Act = 'exposition' | 'development' | 'intensification' | 'recapitulation';
+
+export interface ActShape {
+  /**
+   * Added to the section's tonal-lane budget. Negative RESERVES parts.
+   *
+   * This is the ceiling ramp and it is the cheapest half of the arc: the same
+   * eleven lanes, the same curves, the same rules — the opening simply may not
+   * spend as many of them at once. See `orchestration.allocate`.
+   */
+  budget: number;
+  /**
+   * The top of the tempo range this act will ask for.
+   *
+   * `updateTempo` already computes a target from wave, feel, section and
+   * tension; this clamps it. Measured at HEAD, peak BPM per two-minute window
+   * ran 134-150 from the first window onward, so the tempo's top was available
+   * in minute one and there was nowhere left for a late run to go.
+   */
+  tempo: number;
+  /** Is the sub accent unlocked yet? See `STEM_CURVES.sub` for what it is. */
+  sub: boolean;
+  /** Is the chordal ninth unlocked yet? See `Signals.colour9`. */
+  ninth: boolean;
+  /** Which harmonic sentence the phrases are built from. See `theory.ts`. */
+  shape: ProgressionShape;
+  /**
+   * Bars of continuous work before the form INSISTS on a rest.
+   *
+   * The old arrangement had exactly one route to quiet: tension falling below
+   * a threshold. Measured over four twenty-minute runs, that left whole
+   * two-minute windows with ZERO quiet bars out of sixty-four — five such
+   * windows in one seed. "Quiet is what happens when the game is calm" is not
+   * dynamics; it is the absence of a decision. This makes rest part of the
+   * form, which is the whole difference.
+   */
+  restAfter: number;
+}
+
+/**
+ * What each act is allowed to be.
+ *
+ * Read down a column and you get the arc. Budget -1, -1, 0, 0: the opening is
+ * genuinely a smaller band and the second half is genuinely the full one.
+ * Tempo 132, 140, 150, 150: there is somewhere for a late run to go. The sub
+ * and the ninth are RESERVED — a form is largely a schedule of things you have
+ * not used yet, and before this the only reserved material in the whole system
+ * was the boss leitmotif.
+ *
+ * The recapitulation deliberately does NOT go further than the intensification
+ * on any dial. It is the same forces, spent on the opening material in the
+ * opening key: an arrival, not an escalation. A recap that was simply the
+ * biggest thing yet would be a fourth act of intensification wearing a
+ * classical name.
+ */
+export const ACT_SHAPE: Record<Act, ActShape> = {
+  exposition: { budget: -1, tempo: 132, sub: false, ninth: false, shape: 'period', restAfter: 24 },
+  development: { budget: -1, tempo: 140, sub: true, ninth: false, shape: 'turn', restAfter: 24 },
+  intensification: { budget: 0, tempo: 150, sub: true, ninth: true, shape: 'climb', restAfter: 32 },
+  // Home: the opening sentence, the opening key, the opening groove, at the
+  // forces the run has earned. See `MusicDirector.onWaveStart`.
+  recapitulation: { budget: 0, tempo: 150, sub: true, ninth: true, shape: 'period', restAfter: 28 },
+};
+
+/**
+ * Where each act begins, in phrases since the run started.
+ *
+ * 12 / 36 / 64 phrases is about 3 / 9 / 16 minutes at the tempi measured in
+ * play. A run that ends before a boundary simply never reaches that act, which
+ * is correct: the arc is a property of a long run and a short one is an
+ * exposition that stopped.
+ */
+export const ACT_AT_PHRASE: readonly (readonly [Act, number])[] = [
+  ['recapitulation', 64],
+  ['intensification', 36],
+  ['development', 12],
+  ['exposition', 0],
+];
+
+export function actForPhrase(phrase: number): Act {
+  for (const [act, from] of ACT_AT_PHRASE) if (phrase >= from) return act;
+  return 'exposition';
+}
 
 export interface ArrangementState {
   section: SectionName;
@@ -27,6 +165,14 @@ export interface ArrangementState {
   barsToDrop: number;
   /** True on the final bar of a phrase, where fills belong. */
   fillBar: boolean;
+  /** Which part of the run's arc this bar belongs to. */
+  act: Act;
+  /** Bars since the arrangement last rested. See `ActShape.restAfter`. */
+  barsSinceQuiet: number;
+  /** How many drops this run has reached. The arranger's run memory. */
+  dropsThisRun: number;
+  /** How many rests the FORM has insisted on, as opposed to tension allowing. */
+  forcedRests: number;
 }
 
 interface Pending {
@@ -130,6 +276,21 @@ const MIN_BARS: Record<SectionName, number> = {
   collapse: 2,
 };
 
+/**
+ * How long a rest the FORM asked for holds, in bars.
+ *
+ * Four, not two, and not eight. Two is `MIN_BARS.breakdown` and is the length a
+ * tension-driven breakdown already gets; a form whose rest was the same length
+ * as an accident would be indistinguishable from one. Eight is a whole phrase
+ * with the kick, the clap and the bass gone, which at 130bpm is fifteen
+ * seconds — long enough that combat would visibly be waiting for the music.
+ *
+ * Four bars is about seven and a half seconds. `breakdown`'s own eight-bar
+ * timeout is untouched above it, so this can only ever shorten the range a
+ * breakdown occupies, never extend it past what the section already allowed.
+ */
+const FORCED_REST_BARS = 4;
+
 export class Arranger {
   section: SectionName = 'intro';
   private sectionStartBar = 0;
@@ -141,6 +302,44 @@ export class Arranger {
   private locked = false;
   /** Where a one-bar fill returns to. */
   private afterFill: SectionName = 'drop';
+
+  /* ---------------------------------------------------------------------
+   * THE RUN MEMORY.
+   *
+   * "A form is a sequence of decisions that reference each other; a thermostat
+   * is not a form however well its thresholds are tuned." Everything above
+   * this line is the thermostat. These six fields are the only state in the
+   * arrangement that outlives a section, and they are what lets a decision
+   * made at minute twelve know what happened at minute two.
+   * ------------------------------------------------------------------ */
+
+  /** Which part of the arc we are in. Written by the director each bar. */
+  private act: Act = 'exposition';
+  /** Bars since the arrangement last held a resting section. */
+  private barsSinceQuiet = 0;
+  /** How many drops this run has reached. */
+  private dropsThisRun = 0;
+  /** How many rests the FORM insisted on, rather than tension allowing. */
+  private forcedRests = 0;
+  /**
+   * Bar index a forced rest holds until, so the form's rest is not ejected on
+   * the bar it starts.
+   *
+   * The breakdown's own exit is `tension > 0.55 || barsIn >= 8`, and the
+   * measured median energy is 0.622 — so a breakdown entered while the game is
+   * doing anything at all leaves on its two-bar minimum. That is the right
+   * behaviour for a breakdown the TENSION asked for and the wrong one for a
+   * rest the FORM asked for: the whole point is that it happens whether or not
+   * the game is calm. Four bars is about seven and a half seconds with the
+   * kick, the clap and the bass gone, which is long enough to be a passage
+   * rather than a stumble, and short enough that combat never waits on it.
+   */
+  private restHold = -1;
+  /** A rest the form has asked for and has not been able to place yet. */
+  private restDue = false;
+
+  /** Which of the resting sections count as the arrangement having stopped. */
+  private static readonly RESTING = new Set<SectionName>(['breakdown', 'intro', 'collapse']);
 
   /**
    * Drop a one-bar fill in immediately and come back to whatever we were doing.
@@ -198,6 +397,12 @@ export class Arranger {
     this.pending = null;
     this.dropAtBar = -1;
     this.locked = false;
+    this.act = 'exposition';
+    this.barsSinceQuiet = 0;
+    this.dropsThisRun = 0;
+    this.forcedRests = 0;
+    this.restHold = -1;
+    this.restDue = false;
   }
 
   /** Bar index the transport is currently in. */
@@ -231,6 +436,20 @@ export class Arranger {
    */
   scheduleDrop(t: Transport, seconds: number): void {
     if (this.locked) return;
+    /*
+     * A BOSS OUTRANKS THE FORM'S REST, in both directions.
+     *
+     * The forced rest refuses to start while a drop is scheduled (see `onBar`),
+     * and a rest already running is released here. Without the second half, a
+     * telegraph that arrived during a four-bar rest would have its build held
+     * until the rest was served, and the drop would land after the boss had
+     * already opened fire — losing the one coincidence this file exists for.
+     * The boss telegraph leads `bossActive` by exactly 4.0 bars (measured over
+     * 19 fights across five seeds), and `FORCED_REST_BARS` is 4, so the overlap
+     * is not hypothetical.
+     */
+    this.restHold = -1;
+    this.restDue = false;
     const barsAway = Math.max(1, Math.round(seconds / (t.secondsPerBeat() * 4)));
     const bar = this.currentBar(t);
     this.buildStartBar = bar;
@@ -252,10 +471,26 @@ export class Arranger {
 
   /**
    * Called once per bar crossing. `tension` is the sustained stress value.
+   * `runPhrase` is how many eight-bar phrases into THIS RUN we are — the only
+   * term in the whole arrangement that knows how long the run has been going.
    * Returns the new state.
    */
-  onBar(t: Transport, tension: number): void {
+  onBar(t: Transport, tension: number, runPhrase = 0): void {
     const bar = this.currentBar(t);
+    this.act = actForPhrase(runPhrase);
+
+    /*
+     * The rest counter, advanced before anything can change the section.
+     *
+     * Counted in bars of WORK, so a run that has been resting reads zero and
+     * one that has been driving for forty seconds reads twenty-something. It
+     * is deliberately not a timer: a breakdown that the game happened to allow
+     * counts exactly as much as one the form insisted on, because the listener
+     * cannot tell them apart and the point is how long it has been since they
+     * last heard the band stop.
+     */
+    if (Arranger.RESTING.has(this.section)) this.barsSinceQuiet = 0;
+    else this.barsSinceQuiet++;
 
     // A scheduled build that reached its deadline becomes the drop.
     if (this.section === 'build' && this.dropAtBar >= 0 && bar >= this.dropAtBar) {
@@ -288,7 +523,20 @@ export class Arranger {
      * `enter()` directly rather than through `request()`, so the bomb's
      * one-bar answer is unaffected by any of this.
      */
-    if (this.pending && bar >= this.pending.atBar) {
+    /*
+     * A FORCED REST OUTRANKS A PENDING REQUEST, and it has to.
+     *
+     * The comment below explains that a `request()` used to bypass `MIN_BARS`
+     * entirely and that every breakdown in the game was consequently ended by
+     * `onWaveStart`'s build about two seconds after it began. `MIN_BARS` fixed
+     * that for the general case, but `MIN_BARS.breakdown` is 2 — so the form's
+     * four-bar rest would still have been cut in half by the next wave, which
+     * is the same bug with a smaller number. `collapse` still wins, because
+     * the player is dead and the score has to stop arguing.
+     */
+    if (this.pending && bar >= this.pending.atBar && this.pending.section !== 'collapse' && bar < this.restHold) {
+      // Held, not dropped: it lands the moment the rest is served.
+    } else if (this.pending && bar >= this.pending.atBar) {
       const next = this.pending.section;
       if (next === 'collapse' || bar - this.sectionStartBar >= MIN_BARS[this.section]) {
         this.pending = null;
@@ -300,6 +548,103 @@ export class Arranger {
     if (this.locked) return;
 
     const barsIn = bar - this.sectionStartBar;
+
+    /*
+     * THE FORM INSISTS ON A REST, and this is the subtractive half of the arc.
+     *
+     * A drop only lands if something was taken away first, and until this
+     * existed the only route to quiet was tension falling under 0.44. Measured
+     * at HEAD over four twenty-minute runs, that produced two-minute windows
+     * containing ZERO quiet bars out of sixty-four — five such windows in one
+     * seed, three in another. An arrangement that only ever accumulates has no
+     * dynamics at any timescale longer than a bar, whatever its peak level
+     * says.
+     *
+     * Five guards, and each one is there because the alternative is worse:
+     *
+     *   - ARMED ONLY ON A PHRASE LINE. Every big move in this file waits for
+     *     one; a rest that ARRIVED on bar 3 of a phrase would cut the tune off
+     *     mid-sentence, which is the defect the `pendingWave`/`pendingTonic`
+     *     machinery exists to prevent. See the latch note below for why arming
+     *     and firing are separate.
+     *   - NOT DURING `build`. A build is a promise, and breaking it to rest is
+     *     the one thing a riser must never do. The latch keeps the debt, so the
+     *     rest lands as soon as the drop it was promising is over.
+     *   - NOT DURING `intro`, `fill` or `collapse`. The first two are already
+     *     short fixed shapes and the third is the player being dead.
+     *   - NOT WHILE A DROP IS STILL SCHEDULED AHEAD OF US. `scheduleDrop` sizes
+     *     a build so the drop lands on the exact bar a boss starts firing, and
+     *     this file's own header calls that coincidence "the whole reason to do
+     *     this at all". A rest that delayed it by up to four bars would trade
+     *     the score's best moment for the form's most routine one.
+     *
+     *     `dropAtBar >= bar`, NOT `dropAtBar >= 0`, and the difference is a bug
+     *     I wrote and then measured. **`dropAtBar` IS NEVER CLEARED EXCEPT ON
+     *     ONE PATH.** Only the branch at the top of this method that converts a
+     *     timed build into its drop resets it; a drop entered any other way —
+     *     a `pending` request landing, the automatic build exit, an OVERDRIVE
+     *     force — leaves the field pointing at a bar in the past, for the rest
+     *     of the run. Written as `>= 0` the guard therefore switched the forced
+     *     rest OFF PERMANENTLY from the first boss telegraph onward: measured
+     *     on seed 1, `restDue` latched true at bar 608 and was still true at
+     *     bar 640, with `dropAtBar` stuck at 616 and 80 bars of unbroken work.
+     *     Comparing against `bar` asks the question that was meant — "is a drop
+     *     still coming" — and is immune to the stale value.
+     *
+     *     THE STALE FIELD IS A PRE-EXISTING DEFECT AND IS NOT FIXED HERE. Its
+     *     other consumer is that same conversion branch, so a stale past value
+     *     means the NEXT timed build is converted to a drop on its first bar,
+     *     since `bar >= dropAtBar` is trivially true. Clearing it in `enter`
+     *     would be a one-line fix and a real change to the section machine's
+     *     timing, which wants its own baseline against `sections` and is a
+     *     different piece of work from this one.
+     *   - THE CURRENT SECTION'S `MIN_BARS` IS SERVED. Without this, the rest
+     *     could cut a two-bar-old drop, and a drop that is interrupted is not a
+     *     drop. It costs at most a phrase of delay.
+     *
+     * Entered directly rather than through `request()` because a `pending` can
+     * be outranked by any later caller, and the whole value of this rule is
+     * that it is not negotiable. That is the same reasoning `fill()` gives.
+     */
+    /*
+     * LATCHED, because the first version could miss for a whole run.
+     *
+     * Written as a single condition — "at a phrase line, if it has been long
+     * enough, rest" — it fired on the phrase line or not at all, and `build`
+     * is excluded. Measured over four twenty-minute runs, one two-minute window
+     * still contained zero resting bars out of sixty-four: whenever the
+     * section machine happened to be in a build at every phrase line the debt
+     * simply carried on growing. A rule that is only checked at eight-bar
+     * intervals against a state machine with its own eight-bar cycle can
+     * resonate with it, and this one did.
+     *
+     * So the phrase line ARMS it and the next legal bar fires it. The musical
+     * intent is unchanged — the rest still wants to land on a phrase line and
+     * usually does, since `build` is two to four bars — and it can no longer be
+     * starved. The latch is cleared by the rest itself, so it cannot stack.
+     */
+    if (
+      bar % BARS_PER_PHRASE === 0 &&
+      !Arranger.RESTING.has(this.section) &&
+      this.barsSinceQuiet >= ACT_SHAPE[this.act].restAfter
+    ) {
+      this.restDue = true;
+    }
+    if (
+      this.restDue &&
+      !Arranger.RESTING.has(this.section) &&
+      this.section !== 'build' &&
+      this.section !== 'fill' &&
+      !(this.dropAtBar >= 0 && this.dropAtBar >= bar) &&
+      barsIn >= MIN_BARS[this.section]
+    ) {
+      this.restDue = false;
+      this.forcedRests++;
+      this.restHold = bar + FORCED_REST_BARS;
+      this.enter('breakdown', bar);
+      return;
+    }
+
     if (barsIn < MIN_BARS[this.section]) return;
 
     /*
@@ -452,6 +797,16 @@ export class Arranger {
          * median, so a breakdown ends when the game genuinely picks back up
          * rather than on the first flicker.
          */
+        /*
+         * ...unless the FORM put us here, in which case it holds.
+         *
+         * `restHold` is the one place a section's own exit is overruled, and
+         * it is overruled in the direction of less music rather than more,
+         * which is the direction this arrangement has never once been pushed
+         * in. The eight-bar timeout is untouched, so a forced rest can still
+         * only ever be four bars long. See `restHold`.
+         */
+        if (bar < this.restHold) break;
         if (tension > 0.55 || barsIn >= 8) this.enter('build', bar);
         break;
       case 'fill':
@@ -478,7 +833,13 @@ export class Arranger {
 
   private enter(section: SectionName, bar: number): void {
     if (this.section === section) return;
-    if (section === 'drop') this.dropped = true;
+    if (section === 'drop') {
+      this.dropped = true;
+      this.dropsThisRun++;
+    }
+    // Entering a rest satisfies the form immediately, so a rest the game
+    // allowed on bar 20 resets the clock exactly as one the form forced does.
+    if (Arranger.RESTING.has(section)) this.barsSinceQuiet = 0;
     this.section = section;
     this.sectionStartBar = bar;
     if (section === 'build' && this.dropAtBar < 0) this.buildStartBar = bar;
@@ -512,6 +873,10 @@ export class Arranger {
       // Last bar of every phrase gets a fill, which is what stops an eight-bar
       // loop from sounding like an eight-bar loop.
       fillBar: Math.floor(barF) % BARS_PER_PHRASE === BARS_PER_PHRASE - 1,
+      act: this.act,
+      barsSinceQuiet: this.barsSinceQuiet,
+      dropsThisRun: this.dropsThisRun,
+      forcedRests: this.forcedRests,
     };
   }
 }

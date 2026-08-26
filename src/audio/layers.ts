@@ -479,6 +479,15 @@ export interface MusicalState {
   bossTheme: boolean;
   bossPhase: number;
   wave: number;
+  /**
+   * True once the run has reached its recapitulation. See `themeForWave`.
+   *
+   * A property of WHERE IN THE RUN this bar falls, not of the wave — it is the
+   * only field in this interface that is, and that is the point. Everything
+   * else here is a cycle; this is the one term that knows the run has been
+   * going for sixteen minutes.
+   */
+  recap: boolean;
   /** Bombs in reserve. */
   bombs: number;
   /** 1 = untouched, 0 = one hit from a game over. */
@@ -1993,7 +2002,24 @@ export function buildChords(m: MusicalState): Pattern {
    * the pad IS the harmony and needs its third; there is nothing above it to
    * make room for.
    */
-  const melodyPresent = m.tension > STEM_CURVES.lead.in;
+  /*
+   * ...EXCEPT ON A PIVOT, where the third is the entire chord.
+   *
+   * The rule above is right and stays. It has one counter-example and this is
+   * it: the bar before a modulation plays the incoming key's dominant, whose
+   * major third is that key's LEADING TONE — the note that pulls a semitone up
+   * onto the new tonic on the next downbeat. Dropping it leaves an open fifth,
+   * which is the one sonority that belongs to no key at all, so the arrival
+   * would resolve from nowhere in particular.
+   *
+   * This is the only change the run-level form asked of `layers.ts` besides
+   * `themeForWave`'s recapitulation branch, and it is one bar per modulation —
+   * about ten bars in a twenty-minute run. The pad's own argument for dropping
+   * the third is that the melody is walking past it for a whole bar; on a
+   * cadence bar the melody is landing rather than walking, which is what a
+   * cadence is.
+   */
+  const melodyPresent = m.tension > STEM_CURVES.lead.in && !m.chord.pivot;
   const rootPc = (((m.chord.root % 12) + 12) % 12);
   const openTones = m.chord.notes.filter((n) => {
     const iv = ((((n % 12) - rootPc) % 12) + 12) % 12;
@@ -2634,8 +2660,30 @@ export function buildChords(m: MusicalState): Pattern {
  * signature returns every fourth wave rather than every second, and each
  * statement is a real 16-bar period instead of a single phrase.
  */
-export function themeForWave(wave: number, boss = false): Theme {
+/**
+ * ...and in the RECAPITULATION it is the signature, whatever the rota says.
+ *
+ * One of the two changes the run-level form asked of `layers.ts` (the other is
+ * the pivot exception in `buildChords`), and it is
+ * here rather than in the director because `buildLead` and `buildArp` both
+ * resolve the theme themselves from `MusicalState` — routing the decision
+ * around them would have meant two call sites agreeing about the rondo, which
+ * is the shape of the `render/levelup.ts` mirror bug.
+ *
+ * A recapitulation is not a fifth episode. The whole content of the gesture is
+ * that the material is one the listener met in the first minute and has not
+ * heard for a while, arriving in the key it was first heard in (see
+ * `MusicDirector.onWaveStart`) with the forces the run has since earned.
+ * `THEMES[0]` is the rondo's A — the most-heard tune in the game by
+ * construction, which is exactly what makes it the one worth coming home to.
+ *
+ * A BOSS STILL WINS. The leitmotif outranks the form: a boss that arrived in
+ * the last four minutes and played the signature would throw away the one
+ * piece of reserved material the score had before any of this existed.
+ */
+export function themeForWave(wave: number, boss = false, recap = false): Theme {
   if (boss) return BOSS_THEME;
+  if (recap) return THEMES[0];
   const period = Math.floor(wave / 2);
   if (period % 2 === 0) return THEMES[0];
   const episodes = THEMES.length - 1;
@@ -2663,7 +2711,7 @@ export function buildArp(m: MusicalState): Pattern {
    * pitch to its slot index instead means filling a gap adds a note without
    * moving any of the others.
    */
-  const theme = themeForWave(m.wave, m.bossTheme);
+  const theme = themeForWave(m.wave, m.bossTheme, m.recap);
   const cell = cellForBar(theme, m.phrase, m.barInPhrase);
   const gaps = arpGapsFor(cell);
   /*
@@ -2894,7 +2942,7 @@ export function buildArp(m: MusicalState): Pattern {
 }
 
 export function buildLead(m: MusicalState): Pattern {
-  const theme = themeForWave(m.wave, m.bossTheme);
+  const theme = themeForWave(m.wave, m.bossTheme, m.recap);
   /*
    * The melody's register follows the player up the screen.
    *

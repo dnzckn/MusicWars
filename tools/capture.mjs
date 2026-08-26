@@ -147,6 +147,11 @@
  *   --verify-determinism[=N]  re-derive the score, then re-run the whole tool N
  *                     more times (default 3) in clean processes and report the
  *                     spread across every run — see above
+ *   --windows=N       split the render into N equal windows and report loudness,
+ *                     RMS and the octave bands for each, labelled with the
+ *                     section and act that produced them. 0 (default) is off.
+ *                     Use with a long render: --bars=128 --windows=8 gives
+ *                     sixteen-bar windows over about four minutes.
  *   --selftest        skip the game entirely and push a known 1 kHz -20 dBFS
  *                     stereo sine through the same analyser, so the octave-band
  *                     table can be checked against an answer that is known in
@@ -183,6 +188,27 @@ const AUDIO_SEED = Number(opt('audio-seed', 'CAPTURE_AUDIO_SEED', 1));
 const TAIL = Number(opt('tail', 'CAPTURE_TAIL', 2));
 const SELFTEST = flag('selftest');
 const TWICE = argv.some((a) => a === '--verify-determinism' || a.startsWith('--verify-determinism='));
+/*
+ * --windows=N — ANALYSE OVER TIME RATHER THAN AS ONE AGGREGATE.
+ *
+ * The band table below reduces a whole render to ten numbers, and ten numbers
+ * cannot tell a score with a shape from a score without one. A run with real
+ * form is not statistically flat end to end: its loudness, its band profile or
+ * its voice count should CHANGE across the render by more than the instrument's
+ * own noise floor. A run without form produces the same table in every window,
+ * and that is a result too — it means the form was coded and is not audible.
+ *
+ * The noise floor is stated with the table every time, because it is the whole
+ * difference between a reading and a claim. Repeat renders of one identical hap
+ * stream differ by up to 1.329 dB in the 500 Hz band (see the determinism note
+ * above), so a full-mix difference under about 1.4 dB IS NOT A RESULT. A soloed
+ * stem measures 0.00-0.019 dB and is where small differences can live.
+ *
+ * Each window is labelled with the section and the ACT the director was in
+ * while those bars were scheduled, so the table says what changed and not only
+ * that something did.
+ */
+const WINDOWS = Number(opt('windows', 'CAPTURE_WINDOWS', 0));
 const KEEP_OPEN = flag('keep-open');
 /*
  * ON by default as insurance, not because it was ever caught doing damage:
@@ -296,9 +322,36 @@ async function buildScore() {
    * `breakdown` is a mix of two different pieces, and the band table is their
    * average. When the two lines below disagree, read the table accordingly.
    */
-  const startReadout = director.readout(transport);
+  /*
+   * SNAPSHOT the readout, because `levels` is a live reference.
+   *
+   * `MusicDirector.readout` returns `levels: this.levels` — the director's own
+   * mutable object, not a copy. So the "bar 0" and "bar 128" lines printed
+   * below were the SAME eleven numbers every time, both showing the state at
+   * the END of the render, while the section, bpm and key beside them were
+   * genuine (those are primitives and get copied by the object literal). Two
+   * lines that exist precisely to show that the arrangement moved were
+   * reporting that it had not.
+   *
+   * Fixed here rather than in the director: a live reference is the right thing
+   * for the HUD, which reads it every frame, and every other caller in `tools/`
+   * consumes it immediately. Only a tool that keeps a readout across time needs
+   * a copy, and there are two of them, both in this file.
+   */
+  const snap = (r) => ({ ...r, levels: { ...r.levels } });
+  const startReadout = snap(director.readout(transport));
   const startBar = Math.floor(transport.bar) + 1;
   const events = [];
+  /*
+   * WHERE EACH BAR STARTS, AND WHAT THE SCORE THOUGHT IT WAS DOING THERE.
+   *
+   * Recorded so `--windows` can label a slice of the WAV with the section and
+   * the act that produced it. Without this the time-resolved table would be a
+   * loudness curve with no explanation attached, and a loudness curve that
+   * cannot be tied to a decision is exactly the "we relabelled it" finding
+   * `sections.mjs` warns about in its own footer.
+   */
+  const timeline = [];
   let sec = 0;
   let guardTotal = 0;
   for (let i = 0; i < BARS; i++) {
@@ -310,8 +363,20 @@ async function buildScore() {
       transport.advance(DT);
       director.update(world.snapshot, transport, DT);
     }
-    const spb = (60 / director.readout(transport).bpm) * 4;
+    const rd = director.readout(transport);
+    const spb = (60 / rd.bpm) * 4;
     const cps = 1 / spb;
+    timeline.push({
+      bar: i,
+      t: sec,
+      section: rd.section,
+      act: rd.act ?? '-',
+      bpm: rd.bpm,
+      key: rd.key,
+      energy: rd.energy,
+      tacet: rd.tacet ?? null,
+      levels: { ...rd.levels },
+    });
     for (const h of director.masterPattern().queryArc(target, target + 1)) {
       if (h.hasOnset && !h.hasOnset()) continue;
       const b = Number(h.whole?.begin ?? h.part.begin);
@@ -332,7 +397,7 @@ async function buildScore() {
   }
   events.sort((a, b) => a.t - b.t);
 
-  return { events, span: sec, startReadout, endReadout: director.readout(transport) };
+  return { events, span: sec, timeline, startReadout, endReadout: snap(director.readout(transport)) };
 }
 
 /* --------------------------------------------------------------- the page */
@@ -887,7 +952,7 @@ if (SELFTEST) {
 }
 
 const t0 = Date.now();
-const { events, span, startReadout, endReadout } = await buildScore();
+const { events, span, timeline, startReadout, endReadout } = await buildScore();
 const hapHash = createHash('sha1').update(JSON.stringify(events)).digest('hex').slice(0, 12);
 
 const stateLine = (label, r) =>
@@ -995,6 +1060,113 @@ const hash = createHash('sha256').update(pcm).digest('hex');
 console.log(`  wrote ${OUT} (${(pcm.length / 1e6).toFixed(1)} MB pcm, sha256 ${hash.slice(0, 16)})`);
 
 const analysis = report(pcm, `octave bands — ${STEM === 'all' ? 'full mix' : `${STEM} soloed`}, ${BARS} bars`);
+
+/* ------------------------------------------------- time-resolved analysis */
+
+if (WINDOWS > 1) {
+  /*
+   * The same analyser, applied to slices instead of to the whole file.
+   *
+   * `report` is deliberately reused rather than re-implemented: a windowed
+   * table computed by a second copy of the octave-band code would drift from
+   * the aggregate one the first time either was touched, and this directory
+   * keeps an incident log about exactly that. The slice boundaries are on
+   * sample counts rather than on bar lines because the tempo moves during a
+   * render, so a "16-bar window" is not a fixed number of samples; the labels
+   * below come from the timeline instead, which knows.
+   */
+  const frames = pcm.length / 4;
+  const per = Math.floor(frames / WINDOWS);
+  const rows = [];
+  for (let k = 0; k < WINDOWS; k++) {
+    const from = k * per;
+    const to = k === WINDOWS - 1 ? frames : (k + 1) * per;
+    const slice = pcm.subarray(from * 4, to * 4);
+    const L = new Float64Array(to - from);
+    const Rr = new Float64Array(to - from);
+    const mono = new Float64Array(to - from);
+    for (let i = 0; i < to - from; i++) {
+      L[i] = slice.readInt16LE(i * 4) / 32768;
+      Rr[i] = slice.readInt16LE(i * 4 + 2) / 32768;
+      mono[i] = (L[i] + Rr[i]) / 2;
+    }
+    const bands = octaveBands(mono, SR);
+    const loud = lufs(L, Rr, SR);
+    let peak = 0;
+    for (let i = 0; i < mono.length; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(Rr[i]));
+    const rms = Math.sqrt(mono.reduce((a, v) => a + v * v, 0) / mono.length);
+    // Which bars of the score produced this slice, and what it was doing.
+    const t0 = (from / SR);
+    const t1 = (to / SR);
+    const inWin = timeline.filter((b) => b.t >= t0 - 1e-9 && b.t < t1);
+    const secs = [...new Set(inWin.map((b) => b.section))].join('/');
+    const acts = [...new Set(inWin.map((b) => b.act))].map((a) => a.slice(0, 3)).join('/');
+    const keys = [...new Set(inWin.map((b) => b.key))].join(' ');
+    const fwd = inWin.length
+      ? inWin.reduce((a, b) => a + Object.values(b.levels).filter((v) => v > 0.15).length, 0) / inWin.length
+      : 0;
+    const tacets = [...new Set(inWin.map((b) => b.tacet).filter(Boolean))].join(',');
+    rows.push({ k, t0, t1, bands, loud, peak, rms, secs, acts, keys, fwd, bars: inWin.length, tacets });
+  }
+
+  console.log('');
+  console.log(`  TIME-RESOLVED — ${WINDOWS} windows of ${(span / WINDOWS).toFixed(1)}s over ${BARS} bars`);
+  console.log(
+    '  NOISE FLOOR: repeat renders of one identical hap stream differ by up to 1.329 dB ' +
+      '(500 Hz band).' + String.fromCharCode(10) +
+      '  A full-mix window-to-window difference under ~1.4 dB is NOT a result.',
+  );
+  console.log('');
+  const cols = [63, 125, 250, 500, 1000, 2000, 4000];
+  console.log(
+    `  ${'win'.padStart(3)} ${'act'.padEnd(11)} ${'section'.padEnd(20)} ${'bars'.padStart(4)} ` +
+      `${'LUFS'.padStart(7)} ${'rms dB'.padStart(7)} ${'fwd'.padStart(4)}  ` +
+      cols.map((c) => `${c}Hz`.padStart(8)).join(''),
+  );
+  for (const r of rows) {
+    console.log(
+      `  ${String(r.k).padStart(3)} ${r.acts.padEnd(11)} ${r.secs.padEnd(20)} ${String(r.bars).padStart(4)} ` +
+        `${r.loud.lufs.toFixed(2).padStart(7)} ${(20 * Math.log10(Math.max(r.rms, 1e-9))).toFixed(2).padStart(7)} ` +
+        `${r.fwd.toFixed(1).padStart(4)}  ` +
+        cols.map((c) => fmt(dB(r.bands.ms[BAND_CENTRES.indexOf(c)]))).join(''),
+    );
+  }
+  console.log(`        keys: ${rows.map((r) => r.keys).join(' | ')}`);
+  if (rows.some((r) => r.tacets)) console.log(`        tacet lanes seen: ${rows.map((r) => r.tacets || '-').join(' | ')}`);
+
+  /*
+   * The spread per column, which is the actual verdict.
+   *
+   * AGENTS.md §3 asks how a check could be satisfied without changing anything.
+   * This one could: a render whose windows all read the same is FLAT, and a
+   * flat render means the form is in the source and not in the speakers. So the
+   * spread is printed for every column and compared against the instrument's
+   * own noise floor rather than against zero.
+   */
+  const NOISE = 1.4;
+  console.log('');
+  console.log(`  window-to-window SPREAD (max - min), against a ${NOISE} dB noise floor:`);
+  const spreadOf = (vals) => Math.max(...vals) - Math.min(...vals);
+  const lufsSpread = spreadOf(rows.map((r) => r.loud.lufs));
+  const rmsSpread = spreadOf(rows.map((r) => 20 * Math.log10(Math.max(r.rms, 1e-9))));
+  console.log(`    integrated loudness  ${lufsSpread.toFixed(2)} LU${lufsSpread > NOISE ? '   <- above the floor' : ''}`);
+  console.log(`    rms                  ${rmsSpread.toFixed(2)} dB${rmsSpread > NOISE ? '   <- above the floor' : ''}`);
+  let bandsAbove = 0;
+  for (const c of cols) {
+    const i = BAND_CENTRES.indexOf(c);
+    const sp = spreadOf(rows.map((r) => dB(r.bands.ms[i])));
+    if (sp > NOISE) bandsAbove++;
+    console.log(`    ${String(c).padStart(5)} Hz band       ${Number.isFinite(sp) ? sp.toFixed(2) : '  inf'} dB${sp > NOISE ? '   <- above the floor' : ''}`);
+  }
+  console.log(
+    `${String.fromCharCode(10)}  ${bandsAbove}/${cols.length} octave bands move by more than the noise floor across the render; ` +
+      `loudness ${lufsSpread > NOISE ? 'does' : 'does NOT'}.`,
+  );
+  if (bandsAbove === 0 && lufsSpread <= NOISE) {
+    console.log('  READ THAT PLAINLY: this render is statistically flat end to end. Whatever');
+    console.log('  structure is in the source is not reaching the speakers.');
+  }
+}
 
 if (TWICE) {
   /*

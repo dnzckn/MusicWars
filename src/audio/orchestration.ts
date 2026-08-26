@@ -176,6 +176,25 @@ export interface ScoreContext {
    * rather than silently getting a one-voice mix.
    */
   ensemble?: number;
+  /**
+   * How many lanes the FORM adds to or takes from the section's budget.
+   *
+   * Negative RESERVES parts. This is the ceiling ramp, and it is the cheapest
+   * half of giving a run an arc: `SECTION_BUDGET` says how many tonal lanes
+   * this KIND of passage wants and `ensemble` says how many the player has
+   * recruited, and neither of them knows how far into the run it is. Measured
+   * at HEAD over four twenty-minute runs, the forward-voice count reached its
+   * ceiling inside the first two-minute window and stayed there for the
+   * remaining eighteen — Spearman(window index, peak forward voices) = 0.257
+   * against 0.602 for peak energy. Every device the score owned was available
+   * in minute one, so a late run had nothing left to give.
+   *
+   * Optional for the same reason `ensemble` is: `undefined` means "no opinion",
+   * which keeps every tool that builds a context by hand working unchanged
+   * rather than silently getting a thinner mix. See `ACT_SHAPE` in
+   * `arrangement.ts` for the values and the argument.
+   */
+  budgetDelta?: number;
 }
 
 /**
@@ -285,7 +304,22 @@ export function allocate(
    * on any spectral evidence.
    */
   const ensembleBudget = ctx.ensemble === undefined ? Infinity : Math.max(2, 1 + ctx.ensemble);
-  const budget = Math.min(SECTION_BUDGET[ctx.section], ensembleBudget);
+  /*
+   * The form's delta lands on the SECTION's wish, not on the ensemble's cap.
+   *
+   * Those two numbers mean different things and the minimum between them is
+   * load-bearing: the ensemble cap is "how many musicians exist", which no
+   * arrangement decision may exceed, while the section budget is "how many
+   * parts this passage wants", which is an opinion. An act reserving a part is
+   * an opinion about the passage, so it belongs to the second one.
+   *
+   * Floored at 2 for the reason the comment above gives at length — one lane
+   * is a degenerate mix rather than a sparse one — so an act delta cannot
+   * reintroduce the dead-lane defect `session` caught when the ensemble floor
+   * was missing.
+   */
+  const wanted = Math.max(2, SECTION_BUDGET[ctx.section] + (ctx.budgetDelta ?? 0));
+  const budget = Math.min(wanted, ensembleBudget);
   const rank = rankTonal(ctx);
 
   // Score every lane: its position in the ranking, plus a bonus for holding.

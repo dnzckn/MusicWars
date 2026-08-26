@@ -126,6 +126,29 @@ const PROGRESSIONS = extractLiteral(theorySrc, 'PROGRESSIONS');
 const THEMES = extractLiteral(layersSrc, 'THEMES');
 
 /*
+ * THE OTHER SHAPES, and why they are scored here rather than trusted.
+ *
+ * `theory.ts` used to hold ONE harmonic sentence and nine colours of it. It now
+ * holds three, chosen by where in the RUN a phrase falls: `period` (states,
+ * asks, restates, closes), `turn` (the same chords entered from elsewhere) and
+ * `climb` (a deceptive cadence that refuses to land). Two thirds of the harmony
+ * a player meets over a long run is therefore material this tool could not see,
+ * which is exactly the "unmeasured properties rot" failure AGENTS.md §3 names.
+ *
+ * The tables are optional so this file still runs against a checkout that has
+ * only `PROGRESSIONS` — the same reason `arc.mjs` degrades on a build with no
+ * act table. A missing table is reported, not assumed away.
+ */
+const SHAPE_TABLES = [['period', PROGRESSIONS]];
+for (const [name, ident] of [['turn', 'PROGRESSIONS_TURN'], ['climb', 'PROGRESSIONS_CLIMB']]) {
+  try {
+    SHAPE_TABLES.push([name, extractLiteral(theorySrc, ident)]);
+  } catch {
+    console.log(`  (no ${ident} in theory.ts — this build has one harmonic shape)`);
+  }
+}
+
+/*
  * The boss leitmotif, and why it needs its own row.
  *
  * `BOSS_THEME` is declared outside `THEMES` on purpose — `themeForWave` returns
@@ -190,8 +213,8 @@ function phraseCells(theme) {
   return [theme.a, theme.a2, theme.b, theme.b2, theme.a, theme.a2, theme.c, theme.tag];
 }
 
-function analyseMode(mode, themes = THEMES) {
-  const progression = PROGRESSIONS[mode];
+function analyseMode(mode, themes = THEMES, table = PROGRESSIONS) {
+  const progression = table[mode];
   if (!progression) throw new Error(`no progression for mode ${mode}`);
   let onBeat = 0;
   let clashes = 0;
@@ -297,6 +320,153 @@ if (bossModes.length && BOSS_THEME) {
 }
 
 /*
+ * --shapesearch — score every candidate SHAPE before adopting one.
+ *
+ * The same discipline `--candidates` exists for, applied to the other axis. The
+ * first `climb` shape written for the run form put a DECEPTIVE cadence under
+ * the `tag` cell — musically the right idea, and it scored worse in all nine
+ * modes (dorian 3 -> 18) for a reason the tool made obvious the moment it was
+ * asked: the tag is the cadence figure and it is written to land on the tonic,
+ * so a chord that is not the tonic under it leaves the phrase's final note
+ * hanging. Guessing would have shipped that.
+ *
+ * The space searched is deliberately small and structural rather than creative:
+ *
+ *   - every permutation of the phrase's BODY spans (everything before the
+ *     two-bar cadence), which reorders which chord each melodic cell meets
+ *     without inventing a chord;
+ *   - each of those with the CADENCE TARGET (the final one-bar span) replaced
+ *     by a degree the shape already uses.
+ *
+ * Both stay inside the degree set the period shape uses, which is the invariant
+ * ten other tools depend on — see the SHAPES section below.
+ */
+if (process.argv.includes('--shapesearch')) {
+  const permute = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => permute([...a.slice(0, i), ...a.slice(i + 1)]).map((r) => [x, ...r])));
+  console.log('');
+  console.log('  SHAPE SEARCH — body permutations and cadence targets, scored against the live themes');
+  console.log('  (baseline is the period shape; only candidates at or under it are listed)');
+  for (const mode of [...ladderModes, ...bossModes]) {
+    const themes = bossModes.includes(mode) && BOSS_THEME ? [BOSS_THEME] : THEMES;
+    const period = PROGRESSIONS[mode];
+    const base = analyseMode(mode, themes, PROGRESSIONS).unresolved;
+    const body = period.slice(0, period.length - 2);
+    const cadence = period.slice(period.length - 2);
+    const degrees = [...new Set(period.map(([d]) => d))];
+    const seen = new Map();
+    for (const perm of permute(body)) {
+      for (const target of degrees) {
+        const cand = [...perm, cadence[0], [target, cadence[1][1]]];
+        const key = JSON.stringify(cand);
+        if (seen.has(key)) continue;
+        const r = analyseMode(mode, themes, { [mode]: cand }).unresolved;
+        seen.set(key, r);
+      }
+    }
+    const ok = [...seen.entries()].filter(([k, v]) => v <= base && k !== JSON.stringify(period));
+    ok.sort((a, b) => a[1] - b[1]);
+    console.log(`
+  ${mode}  period ${base} unresolved, ${seen.size} candidates, ${ok.length} at or under it`);
+    for (const [k, v] of ok.slice(0, 12)) console.log(`    ${String(v).padStart(3)}  ${k}`);
+  }
+  console.log('');
+  process.exit(0);
+}
+
+/* ==========================================================================
+ * THE SHAPES — every harmonic sentence the run can produce, scored.
+ * ==========================================================================
+ *
+ * TWO ASSERTIONS, and both are exit-code failures. This file used to print and
+ * never fail, which made "do not accept a rise in the last column" a request
+ * rather than a gate; adding harmony without a gate on it would have been
+ * adding unmeasured material to a file whose whole premise is that the orderings
+ * were chosen by counting.
+ *
+ * 1. NO ALTERNATIVE SHAPE MAY SCORE WORSE THAN THAT MODE'S `period` SHAPE.
+ *    The period shape is what shipped and what the themes were written against,
+ *    so it is the standard the new material has to meet. It is a strict
+ *    inequality with no margin, because `turn` is a permutation of `period`'s
+ *    spans and therefore scores IDENTICALLY by construction in every mode whose
+ *    exchanged spans are the same length — a margin would only hide a mistake
+ *    in the two that are authored rather than permuted.
+ *
+ * 2. NO ALTERNATIVE SHAPE MAY INTRODUCE A DEGREE THE `period` SHAPE DOES NOT
+ *    USE. Ten tools in this directory enumerate a mode's chords by sweeping
+ *    `for (const [degree] of PROGRESSIONS[mode])` — `masking`, `motorcheck`,
+ *    `leadcheck`, `basscheck`, `registermap`, `tune`, `contour`, `rhythm`,
+ *    `motion`, `instruments`. A new degree would silently make every one of
+ *    them incomplete, and none of them would go red saying so. Holding the
+ *    degree SET fixed while varying the ORDER and the CADENCE keeps all ten
+ *    total without editing any of them, and this is the check that keeps that
+ *    promise honest.
+ *
+ * BOTH SEEN RED, SEPARATELY, before either was trusted — per AGENTS.md §3,
+ * which warns that a multi-assertion check can pass its own fail-test on the
+ * strength of one while the rest are dead. That nearly happened here: the first
+ * attempt at breaking assertion 1 (`PROGRESSIONS_TURN.aeolian` opened on the
+ * dominant) scored 6 against the period's 7 and stayed GREEN, which is the tool
+ * being right rather than the tool being broken, and the second attempt tripped
+ * both assertions at once and would have proved nothing about either.
+ *
+ *   assertion 1, alone: `PROGRESSIONS_CLIMB.aeolian` set to the deceptive
+ *     cadence `[[0,2],[5,2],[2,2],[4,1],[5,1]]` — every degree already in the
+ *     period shape, so only the consonance check can fire. RED: "aeolian climb
+ *     scores 12 unresolved against period's 7", exit 1.
+ *   assertion 2 (with 1): the same table's last span set to degree 6, which
+ *     aeolian's period shape does not use. RED on both lines, exit 1.
+ *
+ * Restored after each, and the file exits 0 again.
+ */
+let shapeFails = 0;
+if (SHAPE_TABLES.length > 1) {
+  console.log('');
+  console.log(`  SHAPES — ${SHAPE_TABLES.map(([n]) => n).join(' / ')}, scored against the same themes`);
+  console.log('  ' + '-'.repeat(78));
+  console.log('  mode                 ' + SHAPE_TABLES.map(([n]) => `${n} unresolved`.padEnd(20)).join(''));
+  let compared = 0;
+  for (const mode of [...ladderModes, ...bossModes]) {
+    const themes = bossModes.includes(mode) && BOSS_THEME ? [BOSS_THEME] : THEMES;
+    const scores = SHAPE_TABLES.map(([, table]) => analyseMode(mode, themes, table).unresolved);
+    const degreesOf = (table) => new Set(table[mode].map(([d]) => d));
+    const periodDegrees = degreesOf(SHAPE_TABLES[0][1]);
+    console.log(
+      `  ${mode.padEnd(20)}` +
+        scores.map((v, i) => `${v}${i === 0 ? '' : v > scores[0] ? ' WORSE' : v < scores[0] ? ' better' : ' same'}`.padEnd(20)).join(''),
+    );
+    for (let i = 1; i < SHAPE_TABLES.length; i++) {
+      compared++;
+      const [name, table] = SHAPE_TABLES[i];
+      if (scores[i] > scores[0]) {
+        shapeFails++;
+        console.log(
+          `    FAIL  ${mode} ${name} scores ${scores[i]} unresolved against period's ${scores[0]}. ` +
+            'A shape that fits the themes worse than the one they were written against is not free.',
+        );
+      }
+      const extra = [...degreesOf(table)].filter((d) => !periodDegrees.has(d));
+      if (extra.length) {
+        shapeFails++;
+        console.log(
+          `    FAIL  ${mode} ${name} uses degree(s) ${extra.join(',')} that the period shape does not. ` +
+            'Ten tools enumerate the chords of a mode from PROGRESSIONS and would silently stop being complete.',
+        );
+      }
+    }
+  }
+  // AGENTS.md §3: print the denominator; `checked === 0` is a failure.
+  console.log(`  ${compared} shape/mode pairs compared against the period shape`);
+  if (compared === 0) {
+    shapeFails++;
+    console.log('    FAIL  zero pairs compared — the shape tables were not read');
+  }
+  if (!shapeFails) {
+    console.log('    ok  every alternative shape is at least as consonant as the period shape,');
+    console.log('        and none of them introduces a chord degree the period shape does not use');
+  }
+}
+
+/*
  * Candidate progressions, for the harmonic-rhythm question.
  *
  * The work order's item 11 wants chords changing every bar rather than every
@@ -392,3 +562,15 @@ console.log(
     '  The earlier figure of 225 is not comparable — it included harmonicMinor\n' +
     '  scored against six themes that can never sound in it.',
 );
+
+/*
+ * THIS FILE NOW HAS AN EXIT CODE, and only for the shapes.
+ *
+ * The ladder total and the boss row are still reported rather than gated: the
+ * right threshold for them is "not worse than last time", which is a comparison
+ * across commits that a single run cannot make, and inventing an absolute
+ * number for them now would be picking a target rather than measuring one. The
+ * shape assertions are different — each one is a comparison this run can make
+ * for itself, against a baseline that is in the same file.
+ */
+process.exit(shapeFails ? 1 : 0);
