@@ -1260,10 +1260,25 @@ export class LevelUpOverlay {
   /**
    * The level as noteheads on a staff line.
    *
-   * Eight for an instrument, five for a rig item — the ceilings the fusion
-   * table is built on — so how far a thing is from maxing, which is the only
-   * number that decides whether an evolution is reachable, is a shape rather
-   * than a fraction to be read and subtracted.
+   * `maxLevelOf` decides how many — three for an instrument, three for a rig
+   * item, three for a fusion — so how far a thing is from maxing, which is the
+   * only number that decides whether an evolution is reachable, is a shape
+   * rather than a fraction to be read and subtracted.
+   *
+   * The count is read off the card and never assumed. It used to be eight and
+   * five and this comment used to say so; the code below has always taken
+   * `c.max`, which is why the ladders could shorten without the drawing
+   * changing at all.
+   *
+   * WHAT DID CHANGE IS THE WIDTH OF THE ROW, and it is worth knowing before
+   * anyone reads the screen and calls it a bug. `step` is
+   * `clamp((sw - 150) / n, 8, 17)`; at n = 8 the divisor bound and the 17px
+   * ceiling landed near each other, and at n = 3 the ceiling always wins. So
+   * the SPACING between noteheads is unchanged and the row is now three of them
+   * across ~34px instead of eight across ~119px — a short motif rather than a
+   * bar of them. That is the honest picture of a three-rung ladder and it reads
+   * correctly, but it has not been looked at by a person; `tools/levelupdraw.mjs`
+   * is the check that renders it.
    */
   private drawLevelStaff(
     g: CanvasRenderingContext2D,

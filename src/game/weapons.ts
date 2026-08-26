@@ -38,10 +38,101 @@
 
 import type { AbilityId, AbilitySlot, EvolvedId, InstrumentId, RigId } from '../core/events';
 
-/** Instruments cap at 8, as in Vampire Survivors. Seven decisions per instrument. */
-export const INSTRUMENT_MAX_LEVEL = 8;
-/** Rig caps at 5. Deliberately shorter: rig is the catalyst, not the payoff. */
-export const RIG_MAX_LEVEL = 5;
+/**
+ * Instruments cap at 3. TWO decisions per instrument, and the ladder is short
+ * on purpose.
+ *
+ * IT WAS EIGHT, copied from Vampire Survivors, and the copy imported a pacing
+ * assumption that does not hold here. VS runs thirty minutes with six weapon
+ * slots and an evolution table where the catalyst caps at 5; the ladder is long
+ * because the RUN is long. A MusicWars run reaches level 55-61 in twenty
+ * minutes over ~54 offers (`tools/arena.mjs`), and an evolution demanded a base
+ * at 8 *and* a catalyst at 5 — thirteen levels, twelve of them picks, all of
+ * them landing on the right two of four cards. `tools/combine.mjs` measured the
+ * most fusion-focused player the game permits taking until wave 30 to land two.
+ *
+ * The owner's complaint was the symptom of exactly that: "the combos that exist
+ * are cool, but take way too long to unlock the upgrade." So the ladder is cut
+ * to the length of the thing it gates. Base 3 + catalyst 3 is six levels, five
+ * of them picks, and the fusion is then its own three-rung ladder — which is
+ * the shape asked for: three levels to a weapon, then it combines, then three
+ * more.
+ *
+ * THE ROSTER IS NOT NERFED BY THIS. Cutting seven rungs to two by deleting five
+ * of them would have taken 60% of every instrument's ladder out of the game.
+ * Instead each instrument's seven steps were FOLDED into two: every `add` is
+ * summed and every `mul` multiplied, so the stat block at the new max is
+ * IDENTICAL to the stat block at the old level 8, field for field. No field in
+ * the table carried both an add and a mul, which is what makes the fold exact
+ * rather than approximate. `tools/_maxprobe.mjs` diffs the emitted blocks
+ * against a pristine copy of this file and reports zero drift; that is a
+ * measurement of the folded output, not a reading of this comment.
+ *
+ * What changed is the SLOPE. The ceiling is where it was and it is reached in
+ * two picks instead of seven, which is the whole point — and it is why each
+ * surviving step has to buy something a player can see. A step here is now
+ * worth three and a half of the old ones.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THE SLOPE IS WHAT BROKE THE DIFFICULTY CURVE. Say this plainly, because
+ * it is the one thing this change costs and it is not fixable in this file.
+ *
+ * `tools/arena.mjs`, 3 runs of 20 minutes, card-0 bot, before against after:
+ *
+ *     fusions per run     0.33 -> 5.00        nominal dps    942 -> 3768
+ *     kills/min          101.5 -> 167.5       wave          35.7 -> 42.3
+ *     enemies on field (p50/p90)  7.3/30.3 -> 2.0/9.7
+ *     encirclement p90    0.53 -> 0.02        <-- the STRUCTURE gate wants >0.25
+ *
+ * The arena's `the player does get surrounded` check is RED and it is right to
+ * be. Reading the per-minute income table, the two runs are identical at minute
+ * 1 and diverge from minute 2 (45 -> 57 kills) and decisively by minute 3
+ * (40 -> 90): the first few level-ups now max an instrument outright, so the
+ * player outruns the wave curve almost immediately and the field never fills.
+ *
+ * This is a POWER-PER-MINUTE problem, not a power-at-max problem — the ceiling
+ * is provably unmoved. The fix is enemy hp and spawn scaling in `waves.ts` and
+ * `enemies.ts`, which have to be re-fitted to a player who arrives at full
+ * strength around minute three instead of minute twelve. Do NOT fix it by
+ * lengthening these ladders again; that is the complaint this change exists to
+ * answer, and the rig ablation below shows the catalyst is not the lever
+ * either.
+ */
+export const INSTRUMENT_MAX_LEVEL = 3;
+/**
+ * Rig caps at 3 as well, and this one is load-bearing rather than tidy.
+ *
+ * It was 5, and leaving it there would have MOVED the bottleneck rather than
+ * removed it: `readyFusions` requires `catLevel >= maxLevelOf(f.catalyst)`, so
+ * an evolution with a 3-level base and a 5-level catalyst costs 2 + 5 = seven
+ * picks, of which five are the passive. The catalyst would have become 71% of
+ * the cost of every designed recipe in the table. Verified against the
+ * requirement itself and not assumed — `readyFusions` reads `maxLevelOf`, which
+ * returns this constant for every rig id, and all thirteen evolutions take a
+ * rig item as their catalyst (`tools/_fusecost.mjs` prints the cost of each).
+ *
+ * Same treatment as the instruments: `levels` is CUMULATIVE, so entry 3 is the
+ * old entry 5 verbatim and the two rungs below it are re-spaced. Every passive
+ * therefore tops out at exactly the multiplier it topped out at before.
+ *
+ * ABLATED, because "the rig is what makes the player too strong" is the obvious
+ * objection and it is wrong. Holding this at 5 while everything else stayed —
+ * which costs nothing in power, since `rigModifiers` clamps to
+ * `levels.length`, and so isolates the PICK COST on its own — was run through
+ * `tools/arena.mjs` at 3 runs of 20 minutes:
+ *
+ *     rig 3   fusions/run 5.00   nominal dps 3768   kills/min 167   enc p90 0.02
+ *     rig 5   fusions/run 3.00   nominal dps 2172   kills/min 166   enc p90 0.00
+ *
+ * A five-pick catalyst does cut the fusion count, and it does NOT recover the
+ * difficulty curve: kills per minute is identical and the encirclement signal
+ * is no better — it is marginally worse. Whatever made the player too strong is
+ * the two-pick INSTRUMENT ladder, not the catalyst. So paying seven picks a
+ * recipe would have bought nothing except the exact complaint this change
+ * exists to answer. Do not re-propose it without a number that contradicts
+ * these two rows.
+ */
+export const RIG_MAX_LEVEL = 3;
 
 /**
  * What the world needs to fire an instrument.
@@ -143,7 +234,12 @@ export interface InstrumentDef {
   shape: InstrumentShape;
   /** Level 1. Every step below is applied on top of this, in order. */
   base: InstrumentStats;
-  /** Seven steps, taking level 1 to level 8. Fusions carry none. */
+  /**
+   * Two steps, taking level 1 to level 3. Fusions carry none.
+   *
+   * `tools/levelup.mjs` asserts `steps.length === INSTRUMENT_MAX_LEVEL - 1`, so
+   * this length follows the constant rather than being a second copy of it.
+   */
   steps: readonly LevelStep[];
   /** One line for the HUD and the offer card. */
   blurb: string;
@@ -206,9 +302,15 @@ export function noModifiers(): Modifiers {
 export interface RigDef {
   id: RigId;
   label: string;
-  /** Five entries, one per level. Each is the *cumulative* modifier at that level. */
+  /**
+   * Three entries, one per level. Each is the *cumulative* modifier at that
+   * level, so entry 3 is the ceiling and not a delta on top of entry 2.
+   *
+   * `tools/levelup.mjs` asserts both arrays are exactly `RIG_MAX_LEVEL` long,
+   * so the length tracks the constant instead of being a second copy of it.
+   */
   levels: readonly Partial<Modifiers>[];
-  /** Per-level player-facing notes, five entries. */
+  /** Per-level player-facing notes, three entries. */
   notes: readonly string[];
   blurb: string;
   character: string;
@@ -252,14 +354,33 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     // Level 1 deliberately reproduces the ship's current gun, so the arena
     // conversion starts a player exactly where the vertical game left them.
     base: stats({ interval: 0.22, count: 2, damage: 4, speed: 1150, range: 620 }),
+    /*
+     * FOLDED FROM SEVEN STEPS TO TWO, and this row is the worked example for
+     * the other eleven.
+     *
+     * The old ladder was `+1 count / x1.18 speed x1.25 range / +1 count /
+     * x0.68 interval / +1 pierce / +2 count / +1 pierce x1.4 damage`. Summed:
+     * count +4, pierce +2, speed x1.18, range x1.25, interval x0.68,
+     * damage x1.4. No field takes both an add and a mul, so splitting those
+     * totals across two steps reproduces level 8's block exactly at level 3 —
+     * count 6, damage 5.6, interval 0.1496, speed 1357, pierce 3, range 775.
+     *
+     * The split is by KIND rather than by arithmetic: the first step is more
+     * bolts going further, the second is more bolts going harder and faster.
+     * Both notes therefore name a count change, which is the one thing a player
+     * can count on the screen without reading a stat.
+     */
     steps: [
-      { note: 'a third bolt', add: { count: 1 } },
-      { note: 'bolts travel further and faster', mul: { speed: 1.18, range: 1.25 } },
-      { note: 'a fourth bolt', add: { count: 1 } },
-      { note: 'fires half again as often', mul: { interval: 0.68 } },
-      { note: 'bolts pass through one enemy', add: { pierce: 1 } },
-      { note: 'a fifth and sixth bolt', add: { count: 2 } },
-      { note: 'every bolt hits harder and passes through two', add: { pierce: 1 }, mul: { damage: 1.4 } },
+      {
+        note: 'two more bolts, thrown further and faster — and each one carries through the first thing it hits',
+        add: { count: 2, pierce: 1 },
+        mul: { speed: 1.18, range: 1.25 },
+      },
+      {
+        note: 'six bolts now, fired half again as often, each hitting harder and punching through two',
+        add: { count: 2, pierce: 1 },
+        mul: { interval: 0.68, damage: 1.4 },
+      },
     ],
   },
   {
@@ -271,13 +392,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.95,
     base: stats({ interval: 1.05, count: 1, damage: 11, area: 96, arc: 1.5, range: 96 }),
     steps: [
-      { note: 'the sweep answers behind you as well', add: { count: 1 } },
-      { note: 'wider arc', mul: { arc: 1.3 } },
-      { note: 'rolls twice as fast', mul: { interval: 0.66 } },
-      { note: 'reaches further out', mul: { area: 1.3, range: 1.3 } },
-      { note: 'a third sweep, off to the side', add: { count: 1 } },
-      { note: 'hits harder', mul: { damage: 1.5 } },
-      { note: 'a full sweep, and it knocks what it hits backwards', mul: { arc: 1.5, damage: 1.2 } },
+      {
+        note: 'the roll answers behind you as well, and both sweeps open wider and reach further out',
+        add: { count: 1 },
+        mul: { arc: 1.3, area: 1.3, range: 1.3 },
+      },
+      {
+        note: 'a third sweep off to the side, rolling twice as fast — a near-full circle that knocks back what it touches',
+        add: { count: 1 },
+        mul: { arc: 1.5, interval: 0.66, damage: 1.8 },
+      },
     ],
   },
   {
@@ -289,13 +413,15 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.85,
     base: stats({ interval: 1.6, count: 1, damage: 7, area: 9, speed: 0, pierce: 99, linger: 0.5, range: 520 }),
     steps: [
-      { note: 'the bow is held longer', mul: { linger: 1.6 } },
-      { note: 'thicker stroke', mul: { area: 1.4 } },
-      { note: 'reaches across the arena', mul: { range: 1.5 } },
-      { note: 'drawn twice as often', mul: { interval: 0.62 } },
-      { note: 'a second beam, opposite', add: { count: 1 } },
-      { note: 'the stroke bites', mul: { damage: 1.6 } },
-      { note: 'held almost continuously', mul: { linger: 1.7, interval: 0.75 } },
+      {
+        note: 'a far thicker stroke, held much longer, reaching right across the arena',
+        mul: { linger: 1.6, area: 1.4, range: 1.5 },
+      },
+      {
+        note: 'a second beam draws opposite the first, both bite, and they are redrawn so often the pair is all but continuous',
+        add: { count: 1 },
+        mul: { linger: 1.7, interval: 0.465, damage: 1.6 },
+      },
     ],
   },
   {
@@ -342,14 +468,25 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * which is where the trap was.
      */
     base: stats({ interval: 1.4, count: 2, damage: 16, area: 34, range: 460 }),
+    /*
+     * THE RENUMBERING NOTE ABOVE STILL HOLDS, at a different length. Every
+     * `add` in the old seven-rung ladder is still here — the count total is
+     * unchanged at +4, so the ceiling is still six bells and the opener is
+     * still two. `tools/openers.mjs` measures the first four minutes, and the
+     * first four minutes are now the whole ladder, so watch it after any edit
+     * to these two rows.
+     */
     steps: [
-      { note: 'a third strike', add: { count: 1 } },
-      { note: 'strikes land wider', mul: { area: 1.35 } },
-      { note: 'a fourth strike', add: { count: 1 } },
-      { note: 'rings out faster', mul: { interval: 0.7 } },
-      { note: 'each strike is heavier', mul: { damage: 1.5 } },
-      { note: 'a fifth and sixth strike', add: { count: 2 } },
-      { note: 'strikes reach the whole arena', mul: { range: 1.8, area: 1.25 } },
+      {
+        note: 'four bells instead of two, landing wider and reaching the far side of the arena',
+        add: { count: 2 },
+        mul: { area: 1.35, range: 1.8 },
+      },
+      {
+        note: 'six bells, rung faster and struck half again as hard — the room never stops ringing',
+        add: { count: 2 },
+        mul: { area: 1.25, interval: 0.7, damage: 1.5 },
+      },
     ],
   },
   {
@@ -361,13 +498,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.9,
     base: stats({ interval: 0.9, count: 5, damage: 5, arc: 1.1, speed: 780, range: 540 }),
     steps: [
-      { note: 'two more strings in the fan', add: { count: 2 } },
-      { note: 'the fan opens wider', mul: { arc: 1.35 } },
-      { note: 'the run comes round faster', mul: { interval: 0.72 } },
-      { note: 'three more strings', add: { count: 3 } },
-      { note: 'bolts carry through one enemy', add: { pierce: 1 } },
-      { note: 'the low strings hit harder', mul: { damage: 1.45 } },
-      { note: 'the fan opens past a half-circle and sweeps as it fires', mul: { arc: 1.6 } },
+      {
+        note: 'three more strings in the fan, and it opens a third wider',
+        add: { count: 3 },
+        mul: { arc: 1.35 },
+      },
+      {
+        note: 'ten strings sweeping past a half-circle, coming round faster, and the low ones carry through an enemy',
+        add: { count: 2, pierce: 1 },
+        mul: { arc: 1.6, interval: 0.72, damage: 1.45 },
+      },
     ],
   },
   {
@@ -379,13 +519,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.95,
     base: stats({ interval: 0.34, count: 2, damage: 3, area: 46, speed: 1050, range: 560 }),
     steps: [
-      { note: 'a third pod', add: { count: 1 } },
-      { note: 'the ring widens', mul: { area: 1.22 } },
-      { note: 'a fourth pod', add: { count: 1 } },
-      { note: 'pods fire faster', mul: { interval: 0.7 } },
-      { note: 'pods come back from an absorb twice as quickly', mul: { linger: 0.5, damage: 1.15 } },
-      { note: 'a fifth and sixth pod', add: { count: 2 } },
-      { note: 'pods fire outward as well as forward, and hit hard', mul: { damage: 1.5 } },
+      {
+        note: 'four pods on a wider ring, each coming back from an absorb twice as quickly',
+        add: { count: 2 },
+        mul: { area: 1.22, linger: 0.5 },
+      },
+      {
+        note: 'six pods, firing outward as well as forward, faster and far harder',
+        add: { count: 2 },
+        mul: { interval: 0.7, damage: 1.725 },
+      },
     ],
   },
   {
@@ -400,13 +543,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     // field not locked to the transport.
     base: stats({ interval: 1.85, count: 1, damage: 9, area: 130, linger: 0.35 }),
     steps: [
-      { note: 'the ring reaches further', mul: { area: 1.3 } },
-      { note: 'pulses every other beat instead of every bar', mul: { interval: 0.6 } },
-      { note: 'a second ring chases the first', add: { count: 1 } },
-      { note: 'the ring hits harder', mul: { damage: 1.5 } },
-      { note: 'the ring hangs before it fades', mul: { linger: 1.8 } },
-      { note: 'a third ring', add: { count: 1 } },
-      { note: 'the ring covers most of the arena', mul: { area: 1.5 } },
+      {
+        note: 'a second ring chases the first, both reach further, and they pulse every other beat instead of every bar',
+        add: { count: 1 },
+        mul: { area: 1.3, interval: 0.6 },
+      },
+      {
+        note: 'a third ring, covering most of the arena, hanging in the air before it fades',
+        add: { count: 1 },
+        mul: { area: 1.5, damage: 1.5, linger: 1.8 },
+      },
     ],
   },
   {
@@ -418,13 +564,15 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.7,
     base: stats({ interval: 6.5, count: 1, damage: 26, area: 150, linger: 2.4 }),
     steps: [
-      { note: 'the well pulls from further out', mul: { area: 1.28 } },
-      { note: 'it holds open longer', mul: { linger: 1.4 } },
-      { note: 'deployed more often', mul: { interval: 0.72 } },
-      { note: 'the collapse is heavier', mul: { damage: 1.6 } },
-      { note: 'a second well', add: { count: 1 } },
-      { note: 'it swallows enemy fire as well as enemies', mul: { area: 1.2 } },
-      { note: 'the collapse detonates outward when it closes', mul: { damage: 1.5, area: 1.2 } },
+      {
+        note: 'the well pulls from half again as far out, holds open longer, and is deployed more often',
+        mul: { area: 1.536, linger: 1.4, interval: 0.72 },
+      },
+      {
+        note: 'a second well, swallowing enemy fire as well as enemies, and the collapse detonates outward when it closes',
+        add: { count: 1 },
+        mul: { area: 1.2, damage: 2.4 },
+      },
     ],
   },
   {
@@ -436,13 +584,14 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.85,
     base: stats({ interval: 0.5, count: 1, damage: 5, area: 74 }),
     steps: [
-      { note: 'the field reaches further', mul: { area: 1.28 } },
-      { note: 'it burns continuously instead of ticking', mul: { interval: 0.55 } },
-      { note: 'it bites harder', mul: { damage: 1.5 } },
-      { note: 'further again', mul: { area: 1.25 } },
-      { note: 'it slows what it is touching', mul: { damage: 1.2 } },
-      { note: 'the hum doubles', mul: { damage: 1.5, interval: 0.8 } },
-      { note: 'the field reaches half the arena and never stops', mul: { area: 1.4 } },
+      {
+        note: 'the field reaches half again as far and burns continuously instead of ticking',
+        mul: { area: 1.6, interval: 0.44 },
+      },
+      {
+        note: 'the hum doubles and swallows half the arena, biting nearly three times as hard and never letting up',
+        mul: { area: 1.4, damage: 2.7 },
+      },
     ],
   },
   {
@@ -454,13 +603,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.85,
     base: stats({ interval: 0.75, count: 2, damage: 6, speed: 620, bounces: 2, range: 1400 }),
     steps: [
-      { note: 'one more bounce', add: { bounces: 1 } },
-      { note: 'a third bolt', add: { count: 1 } },
-      { note: 'bolts live longer before they fade', mul: { range: 1.4 } },
-      { note: 'fires faster', mul: { interval: 0.7 } },
-      { note: 'two more bounces', add: { bounces: 2 } },
-      { note: 'each bounce hits harder than the last', mul: { damage: 1.5 } },
-      { note: 'bolts bounce off enemies too', add: { bounces: 2, pierce: 1 } },
+      {
+        note: 'a third bolt, and every bolt takes three more bounces before it fades',
+        add: { bounces: 3, count: 1 },
+        mul: { range: 1.4 },
+      },
+      {
+        note: 'seven bounces each, off enemies as well as walls, fired faster and hitting harder every time they return',
+        add: { bounces: 2, pierce: 1 },
+        mul: { interval: 0.7, damage: 1.5 },
+      },
     ],
   },
   {
@@ -472,13 +624,15 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.7,
     base: stats({ interval: 3.2, count: 1, damage: 34, area: 170, linger: 0.25 }),
     steps: [
-      { note: 'the wave carries further', mul: { area: 1.3 } },
-      { note: 'struck more often', mul: { interval: 0.75 } },
-      { note: 'the hit is heavier', mul: { damage: 1.5 } },
-      { note: 'a second, delayed wave', add: { count: 1 } },
-      { note: 'the wave staggers what survives it', mul: { linger: 1.8 } },
-      { note: 'further again', mul: { area: 1.3 } },
-      { note: 'the strike shakes the whole arena', mul: { damage: 1.6, area: 1.2 } },
+      {
+        note: 'the wave carries much further, is struck more often, and staggers whatever survives it',
+        mul: { area: 1.69, interval: 0.75, linger: 1.8 },
+      },
+      {
+        note: 'a second, delayed wave — and the strike shakes the whole arena at well over twice the weight',
+        add: { count: 1 },
+        mul: { area: 1.2, damage: 2.4 },
+      },
     ],
   },
   {
@@ -490,13 +644,16 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     weight: 0.85,
     base: stats({ interval: 1.1, count: 1, damage: 4, area: 62, linger: 2.6 }),
     steps: [
-      { note: 'a second pool per drop', add: { count: 1 } },
-      { note: 'pools spread wider', mul: { area: 1.3 } },
-      { note: 'dropped more often', mul: { interval: 0.7 } },
-      { note: 'pools last much longer', mul: { linger: 1.7 } },
-      { note: 'pools burn harder', mul: { damage: 1.6 } },
-      { note: 'a third pool', add: { count: 1 } },
-      { note: 'pools creep outward as they burn', mul: { area: 1.35, linger: 1.3 } },
+      {
+        note: 'a second pool per drop, spread wider and still burning long after you have gone',
+        add: { count: 1 },
+        mul: { area: 1.3, linger: 1.7 },
+      },
+      {
+        note: 'a third pool, dropped more often, burning harder and creeping outward as it burns',
+        add: { count: 1 },
+        mul: { area: 1.35, interval: 0.7, linger: 1.3, damage: 1.6 },
+      },
     ],
   },
 
@@ -536,7 +693,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * which is the only way out of the zero-sum trap this project has found.
      *
      * The decision is real because `applyFusion` deletes the base. Hold
-     * PIZZICATO at 8 with both CAPO and COMPRESSOR maxed and both cards are on
+     * PIZZICATO at its ceiling with both CAPO and COMPRESSOR maxed and both cards are on
      * the table; take either and the base is spent, so the other is gone for
      * the run. That is the Ball x Pit shape — commit, and the commitment costs
      * you the alternative.
@@ -838,6 +995,32 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
  * read shorter and are worse to reason about: you cannot answer "what does this
  * do at level 4" without folding, and every balance conversation about a
  * passive is exactly that question.
+ *
+ * ---------------------------------------------------------------------------
+ * FIVE RUNGS BECAME THREE, AND THE CEILING DID NOT MOVE.
+ *
+ * Because these entries are cumulative rather than incremental, shortening the
+ * ladder is a re-spacing rather than a re-costing: `levels[2]` below is the old
+ * `levels[4]` VERBATIM in all twelve rows, so every passive tops out at exactly
+ * the multiplier it topped out at before. The two rungs beneath it are the old
+ * entries 2 and 4, which keeps the curve's shape — a modest first pick and a
+ * decisive last one — with the middle of the old ladder removed rather than the
+ * top. `tools/_maxprobe.mjs` diffs `rigModifiers` for every single item at max
+ * and for all twelve at once against a pristine copy of this file, and reports
+ * zero drift.
+ *
+ * What that means in play is that a passive is now WORTH MORE PER PICK and no
+ * more at the end. Two picks used to buy old level 2; they now buy old level 4.
+ * That is the intended half of the change: the rig is the catalyst, and the
+ * catalyst was 5 of the 12 picks every designed fusion cost.
+ *
+ * THE NOTES WERE REWRITTEN, not truncated. Three of the twelve rows used to
+ * read `'+24%'`, `'+180%'`, `'+45% duration'` — a bare number, which the header
+ * of this file explicitly calls a step that should be redesigned, and which it
+ * only got away with because that rule was written about instruments. With five
+ * rungs a bare percentage was at least a legible ramp; with three, each note is
+ * a third of everything the passive will ever say, so each one now says what
+ * the player will notice.
  * ------------------------------------------------------------------------ */
 
 export const RIG: readonly RigDef[] = [
@@ -849,13 +1032,15 @@ export const RIG: readonly RigDef[] = [
     blurb: 'Everything hits harder, and eventually goes through.',
     character: 'aggressive — the lead holds instead of stabbing',
     levels: [
-      { damage: 1.12 },
       { damage: 1.24 },
-      { damage: 1.36 },
       { damage: 1.5, pierce: 1 },
       { damage: 1.7, pierce: 2 },
     ],
-    notes: ['+12% damage', '+24% damage', '+36% damage', '+50% damage, everything pierces one', '+70% damage, pierces two'],
+    notes: [
+      'everything in the band hits a quarter harder',
+      'half again as hard — and every shot now goes through the first enemy it meets',
+      'seventy per cent harder, and shots carry through two',
+    ],
   },
   {
     id: 'spread',
@@ -864,8 +1049,12 @@ export const RIG: readonly RigDef[] = [
     weight: 1.0,
     blurb: 'One more of everything that comes out in numbers.',
     character: 'shimmering — wider, more detuned supersaws',
-    levels: [{ count: 1 }, { count: 1, area: 1.06 }, { count: 2, area: 1.06 }, { count: 2, area: 1.12 }, { count: 3, area: 1.2 }],
-    notes: ['+1 projectile', '+1 projectile, slightly wider', '+2 projectiles', '+2 projectiles, wider', '+3 projectiles, much wider'],
+    levels: [{ count: 1 }, { count: 2, area: 1.12 }, { count: 3, area: 1.2 }],
+    notes: [
+      'one more of everything that comes out in numbers',
+      'two more, and everything with a radius grows to make room for them',
+      'three more, and the whole stage is a fifth wider',
+    ],
   },
   {
     id: 'rapid',
@@ -874,8 +1063,12 @@ export const RIG: readonly RigDef[] = [
     weight: 1.0,
     blurb: 'Everything comes round sooner.',
     character: 'mechanical — hi-hats double in subdivision',
-    levels: [{ cooldown: 0.92 }, { cooldown: 0.85 }, { cooldown: 0.78 }, { cooldown: 0.71 }, { cooldown: 0.62 }],
-    notes: ['-8% cooldown', '-15% cooldown', '-22% cooldown', '-29% cooldown', '-38% cooldown'],
+    levels: [{ cooldown: 0.85 }, { cooldown: 0.71 }, { cooldown: 0.62 }],
+    notes: [
+      'the whole band comes round about a sixth sooner',
+      'nearly a third sooner — the gaps between volleys start to close',
+      'everything fires at half again the rate it did',
+    ],
   },
   {
     id: 'homing',
@@ -884,8 +1077,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.9,
     blurb: 'Bolts that would have missed do not.',
     character: 'mechanical — the arpeggio grows a long delay tail',
-    levels: [{ homing: 0.2 }, { homing: 0.36 }, { homing: 0.5 }, { homing: 0.64 }, { homing: 0.8 }],
-    notes: ['bolts drift toward targets', 'they turn harder', 'they turn hard', 'they hunt', 'they do not miss'],
+    levels: [{ homing: 0.36 }, { homing: 0.64 }, { homing: 0.8 }],
+    notes: [
+      'bolts that would have drifted past bend back toward what you aimed at',
+      'they hunt — a target has to break hard to shake one off',
+      'they do not miss',
+    ],
   },
   {
     id: 'magnet',
@@ -895,13 +1092,15 @@ export const RIG: readonly RigDef[] = [
     blurb: 'Shards come to you.',
     character: 'shimmering — the bass filter inverts into a vacuum',
     levels: [
-      { pickupRadius: 1.5 },
       { pickupRadius: 2.1 },
-      { pickupRadius: 2.8 },
       { pickupRadius: 3.6 },
       { pickupRadius: 5.0, xpGain: 1.05 },
     ],
-    notes: ['+50% pickup radius', '+110%', '+180%', '+260%', '+400%, and shards are worth a little more'],
+    notes: [
+      'shards jump to you from twice as far out',
+      'most of what drops near you comes in without your going to get it',
+      'shards cross the arena to reach you, and they are worth a little more when they land',
+    ],
   },
   {
     id: 'timewarp',
@@ -910,8 +1109,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.7,
     blurb: 'The room runs slow. You do not.',
     character: 'eerie — half-time, at exactly the same tempo',
-    levels: [{ enemyTime: 0.94 }, { enemyTime: 0.89 }, { enemyTime: 0.84 }, { enemyTime: 0.79 }, { enemyTime: 0.72 }],
-    notes: ['enemies 6% slower', '11% slower', '16% slower', '21% slower', '28% slower'],
+    levels: [{ enemyTime: 0.89 }, { enemyTime: 0.79 }, { enemyTime: 0.72 }],
+    notes: [
+      'the room runs a tenth slow; you do not',
+      'a fifth slow — gaps you could not have made start to open',
+      'everything but you moves at under three quarters speed',
+    ],
   },
   {
     id: 'reverb',
@@ -919,8 +1122,12 @@ export const RIG: readonly RigDef[] = [
     weight: 1.0,
     blurb: 'Everything with a radius gets a bigger one.',
     character: 'shimmering — tail and space',
-    levels: [{ area: 1.1 }, { area: 1.2 }, { area: 1.32 }, { area: 1.45 }, { area: 1.62 }],
-    notes: ['+10% area', '+20% area', '+32% area', '+45% area', '+62% area'],
+    levels: [{ area: 1.2 }, { area: 1.45 }, { area: 1.62 }],
+    notes: [
+      'every ring, pool and sweep grows a fifth',
+      'half again as much room — auras begin to overlap each other',
+      'everything with a radius takes up two thirds more of the arena',
+    ],
   },
   {
     id: 'compressor',
@@ -928,8 +1135,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.9,
     blurb: 'More to lose before you lose it.',
     character: 'heavy — glued, dense, nothing peaks',
-    levels: [{ maxHp: 1 }, { maxHp: 1, damage: 1.05 }, { maxHp: 2, damage: 1.05 }, { maxHp: 2, damage: 1.1 }, { maxHp: 3, damage: 1.15 }],
-    notes: ['+1 shield', '+1 shield, +5% damage', '+2 shields', '+2 shields, +10% damage', '+3 shields, +15% damage'],
+    levels: [{ maxHp: 1, damage: 1.05 }, { maxHp: 2, damage: 1.1 }, { maxHp: 3, damage: 1.15 }],
+    notes: [
+      'one more shield, and the band glues together a little louder',
+      'two shields — one mistake stops being the end of the run',
+      'three shields, and everything plays fifteen per cent hotter',
+    ],
   },
   {
     id: 'capo',
@@ -937,8 +1148,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.9,
     blurb: 'Everything that travels, travels faster.',
     character: 'mechanical — brighter and tighter, everything up a step',
-    levels: [{ speed: 1.12 }, { speed: 1.24 }, { speed: 1.36 }, { speed: 1.5 }, { speed: 1.7 }],
-    notes: ['+12% projectile speed', '+24%', '+36%', '+50%', '+70%'],
+    levels: [{ speed: 1.24 }, { speed: 1.5 }, { speed: 1.7 }],
+    notes: [
+      'everything that travels leaves a quarter faster, and reaches further before it fades',
+      'half again as fast — bolts arrive before the gap closes',
+      'seventy per cent faster; nothing you fire lags behind you',
+    ],
   },
   {
     id: 'fermata',
@@ -946,8 +1161,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.9,
     blurb: 'Things that linger, linger.',
     character: 'mournful — held past its length',
-    levels: [{ linger: 1.15 }, { linger: 1.3 }, { linger: 1.48 }, { linger: 1.68 }, { linger: 1.95 }],
-    notes: ['+15% duration', '+30%', '+48%', '+68%', '+95%'],
+    levels: [{ linger: 1.3 }, { linger: 1.68 }, { linger: 1.95 }],
+    notes: [
+      'pools and held beams last a third longer than they are written',
+      'two thirds longer — what you left behind is still working when you come back',
+      'held to almost double; the field never quite clears',
+    ],
   },
   {
     id: 'tempo',
@@ -955,8 +1174,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.9,
     blurb: 'You move faster. In an arena that is a weapon.',
     character: 'aggressive — pushed ahead of the beat',
-    levels: [{ moveSpeed: 1.07 }, { moveSpeed: 1.13 }, { moveSpeed: 1.19 }, { moveSpeed: 1.25 }, { moveSpeed: 1.33 }],
-    notes: ['+7% move speed', '+13%', '+19%', '+25%', '+33%'],
+    levels: [{ moveSpeed: 1.13 }, { moveSpeed: 1.25 }, { moveSpeed: 1.33 }],
+    notes: [
+      'you start arriving ahead of the beat',
+      'a quarter faster — you can cross a ring before it closes',
+      'a third faster, and in an arena that is a weapon',
+    ],
   },
   {
     id: 'resonance',
@@ -964,8 +1187,12 @@ export const RIG: readonly RigDef[] = [
     weight: 0.85,
     blurb: 'Shards are worth more. Levels come sooner.',
     character: 'shimmering — rings on after the strike',
-    levels: [{ xpGain: 1.1 }, { xpGain: 1.2 }, { xpGain: 1.32 }, { xpGain: 1.45 }, { xpGain: 1.6 }],
-    notes: ['+10% XP', '+20% XP', '+32% XP', '+45% XP', '+60% XP'],
+    levels: [{ xpGain: 1.2 }, { xpGain: 1.45 }, { xpGain: 1.6 }],
+    notes: [
+      'every shard is worth a fifth more than it was',
+      'half again — levels start arriving between waves instead of after them',
+      'shards pay sixty per cent over, and the band fills out fast',
+    ],
   },
 ];
 
@@ -1126,8 +1353,43 @@ const INSTRUMENT_BY_ID = new Map<string, InstrumentDef>(INSTRUMENTS.map((d) => [
  * result predictable: a duet is worth the same whether you fused at 6 or
  * waited until 8, so there is no hidden penalty for combining as soon as you
  * can — which is the decision the mechanic is supposed to be about.
+ *
+ * ---------------------------------------------------------------------------
+ * NOW THREE, WHICH IS THE INSTRUMENT MAX, AND THAT IS DELIBERATE RATHER THAN A
+ * CLAMP.
+ *
+ * It could not stay at 6: `INSTRUMENT_MAX_LEVEL` is 3, `readyDuets` admits at
+ * `min(DUET_INPUT_LEVEL, maxLevelOf(id))`, and a threshold above every ceiling
+ * it is compared against is a dead number that silently reads as "max". The
+ * question is only whether it should be 2 or 3.
+ *
+ * IT IS 3, because 2 would put generic duets AHEAD of the authored table and
+ * this repository has already paid for that mistake twice. An evolution needs
+ * its base at 3 *and* its catalyst at 3; a duet needs two instruments at this
+ * value and nothing else. At 2 the generic pairing would be available a full
+ * pick before any designed recipe could be, on a ladder only two picks long —
+ * and duets are combinatorial while `FUSIONS` is not, so four held instruments
+ * offer six duets against at most a handful of recipes. The measured cost of
+ * exactly that crowding is recorded twice in this file and in AGENTS.md §5:
+ * designed fusions per run 1.63 -> 1.13 when duets went 4 -> 9. At 3 the two
+ * tiers unlock on the same pick and the designed one is still cheaper in
+ * cards, because its catalyst is a passive rather than a second instrument
+ * competing for a stand slot.
+ *
+ * The original reason for 6-of-8 — "a core verb that does not exist for the
+ * first half of the game is not a core verb" — is satisfied by the ladder being
+ * short rather than by the threshold sitting below it. Two picks reaches max.
+ *
+ * ONE KNOCK-ON, stated because it is a real balance change and not a rename:
+ * the synthesised stats below blend the parents at this level, so a duet is now
+ * built from two MAXED parents rather than from two three-quarter ones, and the
+ * `1.5x the better parent` rescale at the bottom of `synthesiseDuet` is
+ * therefore measured against a bigger number. A duet used to be beatable by its
+ * own parent's top two rungs; it no longer is. That is the correct direction —
+ * it costs two maxed instruments and a stand slot — but it is a buff, and
+ * `tools/builds.mjs` and `tools/combine.mjs` are where it should be read.
  */
-export const DUET_INPUT_LEVEL = 6;
+export const DUET_INPUT_LEVEL = 3;
 
 // The id grammar lives in `core/duet.ts` so `audio/` can read it without
 // importing `game/`. Re-exported here because every existing call site expects
@@ -1246,8 +1508,10 @@ export function slotOf(id: string): AbilitySlot | null {
  * `applyFusion` seats a result here immediately rather than at 1. A fused
  * instrument is never draftable — you earn it by combining — so it was never
  * offered as a level-up card either, and seating it at 1 left it at 1 for the
- * whole run: thirteen picks spent (a base at 8, a catalyst at 5) for something
- * standing at a third of its own ceiling.
+ * whole run: twelve picks spent (a base from 1 to 8, a catalyst from 0 to 5)
+ * for something standing at a third of its own ceiling. That bill is now five
+ * picks, because the two ladders it counts are three rungs each — but the
+ * seating argument is unchanged, and so is this number.
  *
  * This number is load-bearing for the TOP of the tree, which is the part that
  * is easy to miss. `readyDuets` admits an instrument at
@@ -1257,8 +1521,11 @@ export function slotOf(id: string): AbilitySlot | null {
  * in every run ever measured; seated here, a committed player lands one in half
  * their runs.
  *
- * Three rather than the base eight because a fusion arrives already strong, and
- * because this is a starting position rather than something to be climbed.
+ * Three because a fusion arrives already strong, and because this is a starting
+ * position rather than something to be climbed. It used to be "three rather
+ * than the base eight"; the base is now three as well, which is precisely the
+ * shape the owner asked for — three levels to a weapon, then it combines, then
+ * three more. This constant did not move to get there.
  *
  * An earlier note here claimed the short ladder kept fused ids "in the pool"
  * and so held off pool exhaustion. That was never true — `availableOptions`

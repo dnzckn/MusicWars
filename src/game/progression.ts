@@ -202,8 +202,31 @@ export const BANISHES_START = 1;
 export const OFFER_TUNING = {
   /** Weight multiplier on the rig item that catalyses an instrument you are maxing. */
   catalyst: 2.0,
-  /** Instrument level at which the game starts nudging its catalyst toward you. */
-  catalystHintLevel: 5,
+  /**
+   * Instrument level at which the game starts nudging its catalyst toward you.
+   *
+   * THIS NUMBER MUST STAY BELOW `INSTRUMENT_MAX_LEVEL` OR THE ENTIRE CATALYST
+   * PIPELINE GOES DARK, and that is not a theoretical hazard — it is what
+   * happens if you shorten the instrument ladder and leave this at 5.
+   *
+   * Two separate mechanisms read it and both fail SILENTLY when it is
+   * unreachable. `weightOf` uses it to raise a catalyst's draw weight, which
+   * merely stops helping. `catalysesPursued` uses it to decide whether a FULL
+   * rig may be offered a passive it does not hold — and that is the only escape
+   * from the dead end `OfferOption.replaces` exists to fix. Set this above the
+   * instrument ceiling and `catalysesPursued` returns false for every id
+   * forever, every swap card disappears, and a player whose three rig slots
+   * filled before they picked a recipe can never fuse again. Nothing throws,
+   * no gate goes red, and the HUD keeps saying ONE STEP AWAY.
+   *
+   * The instrument ladder is three rungs now (see `INSTRUMENT_MAX_LEVEL`), so
+   * this is 2: one pick short of the ceiling, which is the same relationship 5
+   * had to 8 in spirit and a tighter one in fact. It fires while the player can
+   * still act on it, which is the whole promise — "past this level the game
+   * says it has noticed what you are building", and it now has one pick's
+   * warning rather than three.
+   */
+  catalystHintLevel: 2,
   /** Weight multiplier on an option that would complete a fusion outright. */
   completes: 3.0,
   /**
@@ -358,6 +381,48 @@ export interface OfferOption {
    * intact, the dead end is gone, and what was a silent impossibility is now
    * the most interesting decision in the run — give up something working to
    * finish something better.
+   *
+   * -------------------------------------------------------------------------
+   * `tools/combine.mjs` STILL PRINTS A LOCKOUT AND THE NUMBER IS A PROXY. Read
+   * this before acting on it.
+   *
+   * That tool reports "LOCKED: 193 of 424 offers (46%) could not deal the
+   * catalyst at all", which reads as an indictment of this mechanism. It is
+   * not measuring this mechanism. Its test is `rig is at capacity && the
+   * catalyst is not held` — it never asks `availableOptions` whether the swap
+   * card would have been dealt, so every offer this block RESCUES is still
+   * counted as locked.
+   *
+   * Asked of `availableOptions` directly, over the same eight 900s runs and the
+   * same committed policy, counting only offers where a catalyst was still
+   * needed (denominators are the whole point here):
+   *
+   *     ceilings 8/5   172 pursuit offers   catalyst in the legal pool  82%
+   *                                         absent                      18%
+   *     ceilings 3/3   198 pursuit offers   catalyst in the legal pool  60%
+   *                                         absent                      40%
+   *
+   * So the true absence rate was 18%, not 46% — the proxy over-counts by two
+   * and a half times.
+   *
+   * AND THE CAUSE IS NOT THE RIG CAP. Every single absence in both trees was
+   * `catalysesPursued` declining, and `sacrificeFor` returned null **zero**
+   * times out of 31 and zero out of 80. Splitting the refusals by what the
+   * target base was actually standing at when they happened: at the 3/3
+   * ceilings, 76 of 80 were an instrument the player did not own AT ALL (level
+   * 0) and the other 4 were at level 1, one pick under the hint. Not one
+   * refusal was aimed at a player who had invested in the base.
+   *
+   * That is the hint gate doing its job. The committed bot picks its target the
+   * first time any recipe's base appears in an OFFER, which is not the same as
+   * holding it, so it spends much of the run demanding a swap for an instrument
+   * it has never taken. Widening this block to serve that would sell a held
+   * passive to chase something the player has shown no commitment to, which is
+   * the opposite of what `OfferOption.replaces` is for.
+   *
+   * The binding constraint on fusion was never this. It was the length of the
+   * two ladders: cutting them 8/5 -> 3/3 moved designed fusions per run from
+   * 2.00 to 5.75 while the LOCKED proxy barely moved, 46% -> 42%.
    */
   replaces: AbilityId | string | null;
   grace: GraceKind | null;
@@ -1009,7 +1074,7 @@ export function readyDuets(state: ProgressionState): FusionResult[] {
        *
        * Once a fusion result seats at its ceiling an evolved instrument becomes
        * duet-eligible, and the first version of that let it pair with any base
-       * instrument at level 6. That does not deepen the tree, it widens it: the
+       * instrument at `DUET_INPUT_LEVEL`. That does not deepen the tree, it widens it: the
        * extra pairings are all tier-two duets wearing a tier-three input, and
        * measured they cost exactly what the last such mistake did — designed
        * fusions 1.63 -> 1.13 per run while duets went 4 -> 9, the four-card
@@ -1135,8 +1200,9 @@ export function applyFusion(state: ProgressionState, f: FusionResult): void {
    * being drafted stopped it being levelled. Measured over eight 15-minute
    * runs, every evolved instrument a committed player earned still read 1 of 3
    * at the end. That is worse than what was paid for it: an evolution costs a
-   * base at level 8 and a catalyst at level 5, thirteen picks, and handed back
-   * a thing at a third of its own ceiling.
+   * base at max and a catalyst at max — twelve picks under the old eight-and-five
+   * ceilings, five picks under the current three-and-three — and handed back a
+   * thing at a third of its own ceiling.
    *
    * It also silently closed the top of the tree. `readyDuets` admits an evolved
    * instrument at `min(DUET_INPUT_LEVEL, maxLevelOf(id))` — 3 for a fusion —
