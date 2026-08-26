@@ -131,11 +131,70 @@ console.log('\nTABLE');
     for (const s of d.steps) if (!s.note || s.note.length < 4) fail(`${d.id} has a step with no note`);
     for (const s of d.steps) if (!s.add && !s.mul) fail(`${d.id} has a step that changes nothing`);
   }
+  /*
+   * A RIG ITEM'S THREE RUNGS MUST EACH BUY SOMETHING, and since passives can
+   * now install RULES as well as scale numbers, "something" is the union of the
+   * two. The old form of this check only counted `levels`, so a rule-only
+   * passive with `[{}, {}, {}]` would have sailed through it — which is the
+   * whole defect class, dressed as the fix for it.
+   *
+   * The test is per RUNG and against the rung below, because `levels` and
+   * `rules` are both CUMULATIVE: an entry identical to its predecessor is a
+   * level-up that changes nothing, and that is exactly what a passive looks
+   * like when someone adds a rung and forgets to move a dial.
+   */
+  const differs = (a, b) => {
+    const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+    for (const k of keys) if ((a?.[k] ?? null) !== (b?.[k] ?? null)) return true;
+    return false;
+  };
+  let ruleItems = 0;
   for (const d of W.RIG) {
     if (d.levels.length !== W.RIG_MAX_LEVEL) fail(`rig ${d.id} has ${d.levels.length} levels, want ${W.RIG_MAX_LEVEL}`);
     if (d.notes.length !== W.RIG_MAX_LEVEL) fail(`rig ${d.id} has ${d.notes.length} notes, want ${W.RIG_MAX_LEVEL}`);
+    if (d.rules) {
+      ruleItems++;
+      if (d.rules.length !== W.RIG_MAX_LEVEL) fail(`rig ${d.id} has ${d.rules.length} rule rungs, want ${W.RIG_MAX_LEVEL}`);
+      // Every key a rule rung names has to be a real `Rules` field, or it is a
+      // typo that folds to nothing and fires never.
+      const known = new Set(Object.keys(W.noRules()));
+      for (const r of d.rules) {
+        for (const k of Object.keys(r)) if (!known.has(k)) fail(`rig ${d.id} sets unknown rule '${k}'`);
+      }
+    }
+    for (let lv = 1; lv < W.RIG_MAX_LEVEL; lv++) {
+      const movedNumber = differs(d.levels[lv - 1], d.levels[lv]);
+      const movedRule = d.rules ? differs(d.rules[lv - 1], d.rules[lv]) : false;
+      if (!movedNumber && !movedRule) fail(`rig ${d.id} L${lv + 1} moves neither a modifier nor a rule`);
+    }
+    // A note per rung, and each one has to say something different — three
+    // rungs sharing a sentence is three cards that read the same.
+    if (new Set(d.notes).size !== d.notes.length) fail(`rig ${d.id} repeats a level note`);
   }
+  console.log(`  ${ruleItems} of ${W.RIG.length} passives install a rule; ${W.RIG.length - ruleItems} are pure numbers`);
+  if (ruleItems === 0) fail('no passive installs a rule — the trigger surface is unused');
+  if (ruleItems === W.RIG.length) fail('every passive is a rule — the numeric baseline they read against is gone');
   if (failures === 0) pass('every level of every ability has a described, non-empty change');
+
+  /*
+   * The rule fold has to be order-independent for the same reason the modifier
+   * fold does, and it is checked the same way. Two passives are two behaviours;
+   * if the order they were taken in changes what the rig does, the system is
+   * lying to the player about their build.
+   */
+  {
+    const ids = W.RIG.map((d) => d.id);
+    const owned = {};
+    for (const id of ids) owned[id] = 1 + (ids.indexOf(id) % W.RIG_MAX_LEVEL);
+    const a = W.rigRules(owned);
+    const shuffled = {};
+    for (const id of [...ids].reverse()) shuffled[id] = owned[id];
+    const b = W.rigRules(shuffled);
+    let ok = true;
+    for (const k of Object.keys(a)) if (Math.abs(a[k] - b[k]) > 1e-9) ok = false;
+    if (!ok) fail('rigRules depends on the order items were taken');
+    else pass('rule folding is order-independent');
+  }
 
   // Every ability carries a musical character, because the audio side reads it.
   for (const d of [...W.INSTRUMENTS, ...W.RIG]) {

@@ -383,9 +383,19 @@ function runOnce(seed, minutes, immortal, opts = {}) {
     range('mods.damage').add(m.damage);
     range('mods.area').add(m.area);
     range('mods.count').add(m.count);
-    range('mods.homing').add(m.homing);
+    /*
+     * `mods.homing` and `mods.pierce` USED TO BE SAMPLED HERE and the fields
+     * are gone, not forgotten. Both were fed by exactly one passive and both
+     * were re-pointed into `Rules`: LASER's overcharge sets
+     * `InstrumentStats.pierce` on the activation it fires, and HOMING's steer
+     * became `BulletFlag.Seeking` per bullet. The `homing` row is worth a
+     * moment's regret — this tool reported `world: mods.homing > 0` at 14.98%
+     * and was satisfied, while the VALUE of the field was never read at all, so
+     * HOMING L1, L2 and L3 steered identically for the life of the table. A
+     * field being READ is not a field being USED, and nothing here could see
+     * the difference. `tools/rulefire.mjs` is the answer to that.
+     */
     range('mods.maxHp').add(m.maxHp);
-    range('mods.pierce').add(m.pierce);
     range('mods.moveSpeed').add(m.moveSpeed);
     range('mods.xpGain').add(m.xpGain);
     range('mods.linger').add(m.linger);
@@ -395,7 +405,18 @@ function runOnce(seed, minutes, immortal, opts = {}) {
     count('updateDrops: pickupRadius > 1.6').add(m.pickupRadius > 1.6);
     count('rigModifiers: cooldown floor 0.18 bites').add(m.cooldown <= 0.18);
     count('rigModifiers: enemyTime floor 0.35 bites').add(m.enemyTime <= 0.35);
-    count('world: mods.homing > 0').add(m.homing > 0);
+    /*
+     * The rig's RULES, as CUMULATIVE counters — the same idiom as
+     * `playerBullets.bounced` two rows down, and for the same reason: a
+     * behaviour nothing can observe is a behaviour that can rot.
+     *
+     * These are read from an ordinary run rather than from a forced loadout, so
+     * a `max` of 0 here means the run never held the passive and NOT that the
+     * rule is broken. `tools/rulefire.mjs` is the check that forces each
+     * passive and asserts the fire; this row is the ambient one, and its job is
+     * to notice a rule quietly starved by a change made somewhere else.
+     */
+    for (const k of Object.keys(w.ruleFires)) range(`ruleFires.${k} (cumulative)`).add(w.ruleFires[k]);
 
     range(`threat.nearestThreat[${tag}]`).add(w.threatDistance);
     range(`threat.encircled[${tag}]`).add(w.encircled);

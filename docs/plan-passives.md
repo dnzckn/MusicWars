@@ -219,3 +219,162 @@ the other.
 - The claim that six-rules-six-numbers is the right mix is taste, not measurement.
   `tools/builds.mjs` measures whether the pick changes the run and is the closest
   thing to a test of it.
+
+---
+
+## 8. WHAT LANDED — steps 2 and 3 of §6, measured
+
+Step 1 (LOCKED) is **NOT done**; see §8.6. Steps 2 and 3 are.
+
+### 8.1 The surface, and the one deviation from §3.1
+
+`Rules` is in `weapons.ts` beside `Modifiers`, folded by `rigRules` once per step
+into `World.rules`, and every rule fires **in place inside `world.ts` at the line
+that already emits the matching event** — no bus subscription, exactly as §3.1
+demanded.
+
+**It is a flat record of numbers, not `{ onKill: RuleSpec[] }`.** The reason is
+the one `Modifiers` gives two declarations above it: a flat record FOLDS.
+`rigRules` is `rigModifiers`' twin, order-independent by construction and
+diffable by a tool holding no copy of anyone's arithmetic; a bag of specs needs
+an interpreter, an ordering rule and a dispatch table, which is machinery for a
+table with one contributor per rule. What makes these rules is not the container
+— it is that each is consumed by a BRANCH at a moment the player can act on,
+rather than by a multiplication in `applyModifiers`.
+
+**`onGraze` and `onCollect` were dropped from the draft.** No passive wanted
+them, and a declared field nobody installs is the defect this whole document is
+about. `tools/rulefire.mjs` fails on exactly that condition, so a future rule has
+to be wired before it can be declared.
+
+### 8.2 §7's first falsifier, tested: NO container was needed
+
+| passive | rule | container | worst case, extra objects |
+|---|---|---|---|
+| `laser` | every Nth activation of each instrument pierces everything and seeks | none | **0** — it re-flags bolts that were going to be fired anyway |
+| `homing` | a bullet-kill throws 1-3 bolts back out at the next target | `BulletPool` | **+3 per bullet-kill**, non-recursive (`BulletFlag.Echo`); ~61 bullet-kills per 300s against a 700 cap |
+| `timewarp` | enemies within 150-250px run at 0.72-0.5 speed | none | **0** — one squared-distance test per enemy per step |
+| `compressor` | taking a hit releases a ring | `novas[]` | **+1 per player hit**; ~21 hits per 300s |
+| `fermata` | standing still charges every activation to x2.6 | none | **0** — one scalar |
+| `tempo` | a damaging ring dropped every 60-80px travelled | `novas[]` | **≤11 alive**, by `life / (every / topSpeed)`; `novas.length` already means 29 and peaks at 310 |
+
+Nothing new was allocated. The cost model in §3.1 holds.
+
+### 8.3 Two `Modifiers` fields were DELETED, and one of them was already dead
+
+- **`pierce`** — fed by LASER alone. Its rule sets `InstrumentStats.pierce`
+  directly on the overcharged activation, so the modifier field had no feeder
+  left and would have folded to 0 forever.
+- **`homing`** — fed by HOMING alone, **and it was already a dead ladder.** Its
+  one consumer, `World.steerPlayerBullets`, tested `mods.homing > 0` and then
+  turned every bullet at a hardcoded 6 rad/s. **L1, L2 and L3 steered
+  identically; two of that item's three rungs bought nothing.**
+  `deadhunt-ranges` reported `world: mods.homing > 0` at 14.98% and was
+  satisfied — a field being READ is not a field being USED, and nothing in the
+  suite could tell the difference. Steering is `BulletFlag.Seeking` per bullet
+  now.
+
+The other four re-pointed passives **keep the one modifier field nothing else
+feeds**, held flat at its old level-1 value, with the rule supplying all three
+rungs. Dropping them would have orphaned `linger`, `moveSpeed`, `maxHp` and
+`enemyTime` and taken their consumers in `world.ts` dead with them — which is a
+worse defect than a passive with a small number on it. COMPRESSOR additionally
+keeps `damage: 1.05`, because LASER's departure left it the last feeder of
+`Modifiers.damage`; the rig's largest flat damage percentage went from 95% to 5%.
+
+### 8.4 LASER is power-neutral by arithmetic, not by hope
+
+An overcharge every Nth activation at xM is a mean multiplier of `(N-1+M)/N`:
+
+| level | new | old |
+|---|---|---|
+| 1 | every 5th at x2.0 = **x1.20** | x1.24 |
+| 2 | every 4th at x2.5 = **x1.375** | x1.50, +1 pierce |
+| 3 | every 3rd at x3.0 = **x1.667** | x1.70, +2 pierce |
+
+Slightly under on the mean, with infinite pierce and homing on the charged volley
+where the two pierce rungs went. The total did not move; the SHAPE it arrives in
+did, and that shape is something the player can time.
+
+### 8.5 The gates, before against after
+
+| gate | before | after |
+|---|---|---|
+| `arena` | ARENA HOLDS, encirclement p90 **0.33**, 184.1 kills/min | ARENA HOLDS, **0.35**, 188.8 |
+| `builds` | ok, ratio 0.21, hit spread **2.8x** | ok, ratio **0.23**, hit spread **2.3x** (bar 2.0) |
+| `openers` | 85% | **88%** (min 70) |
+| `deadhunt-ranges` | 6 DEAD rows, 0/24 dead steps | **6 DEAD rows, 0/24** — unchanged, and every `mods.*` field still has a live range |
+| `wiring` | ok | ok, **after fixing a latent bug it exposed** (§8.7) |
+| `combine` | **FAIL 1.3x** | **FAIL 1.4x** — see §8.6 |
+
+`levelup`, `mirror`, `discovery`, `aimcheck`, `offerchurn`, `stats` all green
+both sides. The `builds` hit spread narrowing from 2.8x to 2.3x is the one
+number that moved the wrong way and it is worth watching: a rule applies whatever
+you picked, so builds converge slightly. The ratio the tool prints as its
+diagnostic went the other way.
+
+`npm run verify:node` — 40 checks — ends **3 FAILED: `leadfreeze`, `pause`,
+`combine`.** All three were re-run against a pristine `git archive HEAD` tree
+and **all three are red at HEAD too**, so none is caused by this work:
+
+- `leadfreeze` — 1728 of 3456 rows differ, identical both sides. Audio, unrelated.
+- `pause` — red at HEAD with TWO failures and red after with ONE. The vacuity
+  failure ("nothing fired and no bullets existed after ANY resume") cleared: the
+  run now produces 5 volleys and 30 bullets after a resume where it produced
+  none. The remaining failure is the tool's own `SKIP_OFFERS` setting putting
+  the hold on a stretch with no armed enemies.
+- `combine` — §8.6.
+
+### 8.6 §6 step 1 IS STILL OPEN, and `combine` still says so
+
+`combine` fails at HEAD **and** after this change — 1.3x before, 1.4x after,
+against a bar it does not reach either side. LOCKED is 42% both times. §4 said
+"any passive work that does not fix this is decoration"; that is too strong —
+the passives were independently a stat sheet and are not now — but the sentence
+is right about fusions, and nothing here touched it.
+
+### 8.7 A latent bug this work surfaced
+
+A boss phase commits on a bar line and `openOfferNow` opens on a bar line, so the
+two fire in the SAME `update` whenever a level and a phase gate come due
+together, and `announce` overwrites: "LEVEL 17 / CHOOSE A MUSICIAN" was written
+and replaced by "PHASE II" before either rendered. `wiring` caught it at steps
+20699 and 31500 the moment the rules work moved the boss damage curve. Always
+reachable; nothing had lined the two clocks up before. The phase now waits for
+the first bar after the cards close, which is also correct on its own terms —
+the world is stopped during an offer, so committing there spends the bullet
+clear, the camera strike and 1.4s of invulnerability on a frame the player
+cannot act in.
+
+### 8.8 Findings for whoever comes next
+
+- **`World.wells` is never rendered.** `Renderer` reads `novas`, `effects`,
+  `notes`, `popups`, `drops`, both bullet pools and the particles, and no
+  drawing code anywhere reads `wells`. BLACK HOLE and TREMOLO FIELD are
+  invisible damage pools. It is why UP-TEMPO's trail is built on `novas[]`.
+- **A held nova is invisible while it holds.** `drawNovas` fades on
+  `1 - r/maxR`, which is 0 for the whole of a ring's `hold`. Every aura's
+  `linger` is therefore an invisible hang.
+- **Every aura silently cancels enemy bullets** (`clears: true` +
+  `updateNova`'s annulus), still undocumented in the instrument table.
+  COMPRESSOR's ring takes it deliberately; UP-TEMPO's trail refuses it, because
+  six bullet-cancelling rings a second following the ship would be the strongest
+  defensive item in the game bought by holding a direction.
+- **`tools/effectsdraw.mjs` WAS DEAD and has been repaired.** `Renderer`'s
+  constructor grew `new ResizeObserver(...)` which the tool's DOM stub did not
+  provide, so every invocation threw before the first assertion — confirmed
+  against a pristine HEAD tree, so it is not a regression from this work.
+  Underneath that was a second one: `fitCanvases` guards on
+  `clientHeight <= 0`, `undefined <= 0` is **false**, and the stub's canvas had
+  no `clientHeight`, so `this.scale` was NaN and every frame opened with
+  `setTransform(NaN, …)`. Both stubbed. It passes, and it now also asserts that
+  UP-TEMPO's trail drop and COMPRESSOR's ring are actually DRAWN (6 and 8 draw
+  ops over an otherwise identical frame) — fail-tested by making `drawNovas`
+  skip rings under 60px, which took the trail to `MISSING +0 ops`.
+- **Two node-only checks were not in the node-only suite.** `effectsdraw` and
+  `levelupdraw` drive the real `Renderer` with no browser and were reachable
+  only through `npm run verify`, which dies on its second step on a machine
+  without Chromium. That is exactly the failure `verify-node`'s own header names
+  — "which is how a check gets quietly left out for weeks" — and it is why the
+  `ResizeObserver` breakage went unnoticed. Both are in the `static` group now,
+  at 0.3s and 0.4s.

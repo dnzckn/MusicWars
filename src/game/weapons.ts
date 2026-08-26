@@ -367,15 +367,39 @@ export interface Modifiers {
   moveSpeed: number;
   /** Additive max HP. */
   maxHp: number;
-  /** Additive pierce. */
-  pierce: number;
-  /** 0..1 seek strength applied to projectiles that do not already home. */
-  homing: number;
-  /** Multiplier on enemy time. Below 1 is slower. */
+  /**
+   * Multiplier on enemy time. Below 1 is slower.
+   *
+   * IT IS LOCAL NOW. `Rules.slowRadius` says WHERE it applies, and TIMEWARP is
+   * the only item that sets either — so this is the depth of the slow bubble
+   * around the ship rather than a whole-room time warp. See `Rules.slowRadius`
+   * for why the room stopped being slowed and what that cost.
+   */
   enemyTime: number;
   /** Multiplier on XP gained from shards. */
   xpGain: number;
 }
+
+/*
+ * TWO FIELDS WERE DELETED FROM `Modifiers` BY THE RULES WORK. Recorded here
+ * because both were load-bearing in the table and both are now expressed
+ * better, and because "the number vanished" and "the number was replaced" look
+ * identical in a diff.
+ *
+ *   `pierce` — additive, set by LASER alone. LASER is a rule now, and its rule
+ *   sets `InstrumentStats.pierce` directly on the overcharged activation
+ *   (`World.fireInstruments`). A modifier field nothing fed would have folded
+ *   to 0 on every frame of every run, which is this repository's most recorded
+ *   defect wearing a stat block.
+ *
+ *   `homing` — 0..1, set by HOMING alone. It was ALREADY a dead ladder: the one
+ *   consumer, `World.steerPlayerBullets`, tested `mods.homing > 0` and then
+ *   turned every bullet at a hardcoded 6 rad/s, so HOMING L1, L2 and L3 steered
+ *   identically and two of its three rungs bought nothing. `deadhunt-ranges`
+ *   could see the field was READ (14.98% of steps) and not that its VALUE was
+ *   ignored. Steering is per-bullet now — `BulletFlag.Seeking` — so a shot
+ *   either seeks or does not, and the rule that spawns it decides.
+ */
 
 export function noModifiers(): Modifiers {
   return {
@@ -388,12 +412,141 @@ export function noModifiers(): Modifiers {
     pickupRadius: 1,
     moveSpeed: 1,
     maxHp: 0,
-    pierce: 0,
-    homing: 0,
     enemyTime: 1,
     xpGain: 1,
   };
 }
+
+/**
+ * The trigger surface: what a rig item can DO, as opposed to what it can scale.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS. `docs/plan-passives.md` measured the problem: all twelve
+ * passives were entries in one spreadsheet column-set, `Modifiers` had thirteen
+ * fields and every one was a number, and so a passive physically could not say
+ * anything except *a number is bigger*. LASER — the item the owner reached for
+ * when naming what a weapon should be — rendered on the level-up card as
+ * "+12% damage". Half of every four-card offer was a percentage.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT IS A FLAT RECORD AND NOT A LIST OF `RuleSpec`s. The plan drafted
+ * `{ onKill: RuleSpec[]; onDamaged: RuleSpec[]; ... }` — a bag of specs per
+ * trigger moment. This is deliberately not that, and the reason is the one
+ * `Modifiers` states two declarations above: a flat record of numbers folds.
+ * `rigRules` is `rigModifiers`' exact twin, order-independent by construction
+ * and diffable by a tool that holds no copy of anyone's arithmetic; a list of
+ * specs needs an interpreter, an ordering rule and a dispatch table, all of
+ * which is machinery for a table with one contributor per rule. What makes
+ * these RULES rather than stats is not the container — it is that each one is
+ * consumed by a BRANCH at a moment, not by a multiplication in
+ * `applyModifiers`, and that the player can do something about the moment.
+ *
+ * ---------------------------------------------------------------------------
+ * WHERE THEY FIRE. In place inside `world.ts`, at the lines that already emit
+ * the matching event — NOT from a bus subscription. `core/events.ts` says the
+ * simulation emits and never receives and that the narrow boundary is why
+ * either half can be rewritten; a listener in `main.ts` reaching back into the
+ * world to spawn a nova would invert it, and would additionally buy an ordering
+ * question and a frame of latency for nothing.
+ *
+ *     overchargeEvery   World.fireInstruments   (on an activation)
+ *     killEcho          World.collidePlayerBullets, at the killing hit
+ *     slowRadius        World.updateEnemies, per enemy, at `e.move`
+ *     hitNova           World.onPlayerHit       (beside `player:hit`)
+ *     chargeSeconds     World.fireInstruments   (reads the idle clock)
+ *     trailDamage       World.step              (on distance travelled)
+ *
+ * `player:graze` and `shard:collect` are the two moments in the plan's draft
+ * that NOTHING here uses. There is deliberately no `onGraze` or `onCollect`
+ * field: an unused field is the defect this whole change exists to remove, and
+ * the two events are still there for the day a passive wants them.
+ *
+ * ---------------------------------------------------------------------------
+ * NO NEW CONTAINERS, WHICH WAS THE PLAN'S OWN FALSIFICATION TEST. §7 says that
+ * if the surface needs a container per rule the cost model collapses. It does
+ * not: the overcharge re-flags bullets that were going to be fired anyway, the
+ * echo and the trail reuse `BulletPool` and `novas[]`, the nova reuses
+ * `novas[]`, and the slow bubble and the still-charge are scalars.
+ */
+export interface Rules {
+  /**
+   * ON AN ACTIVATION. Every Nth activation of EACH instrument is overcharged:
+   * it pierces everything and its bolts seek. 0 is off.
+   *
+   * Per instrument and not per volley across the band, because a global counter
+   * would spend almost every overcharge on PIZZICATO — at 0.15s it fires ten
+   * times for TIMPANI's once — which is the voice the player has already heard
+   * a thousand times. Same argument as `fireInstruments`' rarest-wins tiebreak.
+   */
+  overchargeEvery: number;
+  /** Damage multiplier on an overcharged activation. */
+  overchargeDamage: number;
+  /**
+   * ON A KILL BY A PLAYER BULLET. Bolts re-fired from the corpse at the next
+   * target, seeking. 0 is off.
+   *
+   * An echo cannot echo — the re-fired bolt carries `BulletFlag.Echo` and the
+   * branch skips it — so the worst case is one extra bullet per kill and not a
+   * chain reaction that empties the field into the pool.
+   */
+  killEcho: number;
+  /**
+   * CONTINUOUSLY, PER ENEMY. Radius in px around the ship inside which
+   * `Modifiers.enemyTime` applies to an enemy's movement. 0 is off, and off is
+   * the state in which `enemyTime` does nothing at all.
+   */
+  slowRadius: number;
+  /** ON TAKING A HIT. Damage of the ring released. 0 is off. */
+  hitNova: number;
+  /** Radius of that ring. */
+  hitNovaRadius: number;
+  /**
+   * WHILE STANDING STILL. Seconds with the stick released for a full charge.
+   * 0 is off.
+   *
+   * The ladder tops out at 1.5s, well inside the `World.IDLE_GRACE_S` window of
+   * 4s that the game allows before camping starts costing you — so FERMATA's
+   * sweet spot is plant, take the swell, move before the bullets speed up.
+   */
+  chargeSeconds: number;
+  /** Damage multiplier at a full charge. */
+  chargeDamage: number;
+  /** WHILE MOVING. Damage of each ring dropped in your wake. 0 is off. */
+  trailDamage: number;
+  /** Radius each dropped ring grows to. */
+  trailRadius: number;
+  /** Seconds each dropped ring takes to grow and fade. */
+  trailLife: number;
+  /** Px of travel between drops. */
+  trailEvery: number;
+}
+
+export function noRules(): Rules {
+  return {
+    overchargeEvery: 0,
+    overchargeDamage: 1,
+    killEcho: 0,
+    slowRadius: 0,
+    hitNova: 0,
+    hitNovaRadius: 0,
+    chargeSeconds: 0,
+    chargeDamage: 1,
+    trailDamage: 0,
+    trailRadius: 0,
+    trailLife: 0,
+    trailEvery: 0,
+  };
+}
+
+/**
+ * Fields where a SMALLER positive number is the stronger version, so the fold
+ * takes the minimum of the contributors that are switched on rather than the
+ * maximum. Exported because `tools/rulefire.mjs` asserts a rule ladder never
+ * goes backwards and has to know which way forwards is; a copy of this list
+ * over there would lie by calling a real regression an improvement the day
+ * somebody moved a field between the two categories. AGENTS.md §3.
+ */
+export const RULE_LOWER_IS_STRONGER: readonly (keyof Rules)[] = ['overchargeEvery', 'chargeSeconds', 'trailEvery'];
 
 export interface RigDef {
   id: RigId;
@@ -404,8 +557,26 @@ export interface RigDef {
    *
    * `tools/levelup.mjs` asserts both arrays are exactly `RIG_MAX_LEVEL` long,
    * so the length tracks the constant instead of being a second copy of it.
+   *
+   * A RULE PASSIVE MAY LEAVE ENTRIES EMPTY. LASER and HOMING carry `{}` on all
+   * three rungs, which is the honest statement that they move no global number
+   * — their whole ladder is in `rules`. The four other re-pointed items keep
+   * the ONE modifier field that nothing else feeds, held flat at its old
+   * level-1 value: dropping it would have orphaned `linger`, `moveSpeed`,
+   * `maxHp` and `enemyTime` and taken their consumers in `world.ts` dead with
+   * them, which is a worse defect than a passive with a small number on it.
    */
   levels: readonly Partial<Modifiers>[];
+  /**
+   * Three entries, one per level, cumulative exactly as `levels` is. Absent
+   * for the six passives that are still pure numbers.
+   *
+   * `tools/levelup.mjs` asserts this is either absent or `RIG_MAX_LEVEL` long,
+   * and `tools/rulefire.mjs` asserts that every rule declared here actually
+   * FIRES in a real run — a rule installed and never triggered is the same
+   * defect as a stat nothing reads, and it is a likelier one.
+   */
+  rules?: readonly Partial<Rules>[];
   /** Per-level player-facing notes, three entries. */
   notes: readonly string[];
   blurb: string;
@@ -1247,11 +1418,14 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * Strong-and-narrow against weak-and-wide is the same axis SPICCATO and
      * SNAP already split on.
      *
-     * WHAT STILL DOES NOT WORK, recorded so it is not re-derived: HOMING is
-     * this recipe's catalyst and `Modifiers.homing` steers PLAYER BULLETS
+     * WHAT DID NOT WORK, AND NOW DOES. This entry used to read: "HOMING is this
+     * recipe's catalyst and `Modifiers.homing` steers PLAYER BULLETS
      * (`world.ts`, `steerPlayerBullets`). A field spawns none and a strike
      * spawns none, so the catalyst was inert before this change and is inert
-     * after it. Making HOMING mean something for this line needs `world.ts`.
+     * after it." That was true and it is the reason HOMING was re-pointed:
+     * `Rules.killEcho` fires on a KILL rather than on a bullet spawn, and a
+     * strike kills plenty. The catalyst of this recipe finally does something
+     * for the line it gates.
      */
     shape: 'strike',
     fused: true,
@@ -1327,22 +1501,58 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
  * ------------------------------------------------------------------------ */
 
 export const RIG: readonly RigDef[] = [
+  /*
+   * ------------------------------------------------------------------------
+   * SIX OF THE TWELVE ARE RULES NOW, AND SIX ARE STILL NUMBERS.
+   *
+   * Not twelve, deliberately. An ecosystem where everything is a rule is as
+   * flat as one where nothing is: SPREAD, RAPID, MAGNET, REVERB, CAPO and
+   * RESONANCE are the cleanest numeric items in the set and they are the
+   * baseline the six rules read as a departure from.
+   *
+   * Every id, label, catalyst relationship, `character` phrase and audio
+   * signature below is UNCHANGED. The 12x12 lattice is keyed on `id` and does
+   * not care what an item does, which is what makes re-pointing cost zero offer
+   * slots — the exit AGENTS.md §5 names, applied to passives.
+   * ------------------------------------------------------------------------
+   */
   {
     id: 'laser',
     label: 'LASER',
     legacy: true,
     weight: 1.0,
-    blurb: 'Everything hits harder, and eventually goes through.',
+    blurb: 'Every few shots, one that goes through everything.',
     character: 'aggressive — the lead holds instead of stabbing',
-    levels: [
-      { damage: 1.24 },
-      { damage: 1.5, pierce: 1 },
-      { damage: 1.7, pierce: 2 },
+    /*
+     * THE ITEM THE WHOLE PLAN IS NAMED AFTER. It was
+     * `[{damage:1.24},{damage:1.5,pierce:1},{damage:1.7,pierce:2}]` and it
+     * rendered as "+24% damage" — "the game has the word and none of the
+     * weapon".
+     *
+     * IT IS POWER-NEUTRAL BY ARITHMETIC, which is what made it safe to land
+     * without a play-test. An overcharge every Nth activation at xM is a mean
+     * damage multiplier of `(N - 1 + M) / N`:
+     *
+     *     L1  every 5th at x2.0  ->  x1.20   was x1.24
+     *     L2  every 4th at x2.5  ->  x1.375  was x1.50 (+1 pierce)
+     *     L3  every 3rd at x3.0  ->  x1.667  was x1.70 (+2 pierce)
+     *
+     * Slightly under the old curve on the mean, and the overcharged volley
+     * additionally pierces EVERYTHING and cannot miss, which is where the two
+     * lost pierce rungs went. What changes is not the total, it is that the
+     * total arrives in a shape the player can see and time: you learn the
+     * cadence and save the big volley for the pack.
+     */
+    levels: [{}, {}, {}],
+    rules: [
+      { overchargeEvery: 5, overchargeDamage: 2 },
+      { overchargeEvery: 4, overchargeDamage: 2.5 },
+      { overchargeEvery: 3, overchargeDamage: 3 },
     ],
     notes: [
-      'everything in the band hits a quarter harder',
-      'half again as hard — and every shot now goes through the first enemy it meets',
-      'seventy per cent harder, and shots carry through two',
+      'every fifth time an instrument comes round it fires white — twice as hard, straight through the whole line, and every bolt in it hunts',
+      'every fourth, and the charged volley hits two and a half times as hard',
+      'every third shot is the charged one, three times as hard, and nothing stops it',
     ],
   },
   {
@@ -1378,13 +1588,37 @@ export const RIG: readonly RigDef[] = [
     label: 'HOMING',
     legacy: true,
     weight: 0.9,
-    blurb: 'Bolts that would have missed do not.',
+    blurb: 'A shot that kills goes looking for the next one.',
     character: 'mechanical — the arpeggio grows a long delay tail',
-    levels: [{ homing: 0.36 }, { homing: 0.64 }, { homing: 0.8 }],
+    /*
+     * THIS ROW WAS ALREADY BROKEN AND NOBODY COULD SEE IT.
+     *
+     * `[{homing:0.36},{homing:0.64},{homing:0.8}]` — and the sole consumer,
+     * `World.steerPlayerBullets`, read the field as `mods.homing > 0` and then
+     * turned every bullet at a hardcoded 6 rad/s. The three rungs steered
+     * IDENTICALLY. Two of this item's three level-ups bought nothing, and
+     * `deadhunt-ranges` could not report it because the field was read — just
+     * not its value. "They hunt" and "they do not miss" were the same shot.
+     *
+     * Re-pointed rather than repaired, because the repair is not worth the
+     * card: a global steer strength is invisible (you cannot see a bolt that
+     * would have missed) and it makes aiming matter LESS, which is the opposite
+     * of every other change in this pass. A kill that re-fires is visible on
+     * the frame it happens, it rewards the thing the player is already doing,
+     * and it compounds with density — a shot into a pack chains through it.
+     *
+     * IT ALSO REPAIRS A RECIPE. `chime + homing -> vibrato` is annotated in
+     * `INSTRUMENTS` as a catalyst that was "inert before this change and inert
+     * after it", because a `strike` spawns no bullets for the old steer to
+     * bend. A strike kills; a kill echoes. The catalyst now means something for
+     * the one line it gates.
+     */
+    levels: [{}, {}, {}],
+    rules: [{ killEcho: 1 }, { killEcho: 2 }, { killEcho: 3 }],
     notes: [
-      'bolts that would have drifted past bend back toward what you aimed at',
-      'they hunt — a target has to break hard to shake one off',
-      'they do not miss',
+      'a bolt that finishes something is thrown straight back out at whatever is nearest, and that one hunts',
+      'two bolts come back off every kill',
+      'three — a shot into a crowd keeps going until the crowd runs out',
     ],
   },
   {
@@ -1410,13 +1644,36 @@ export const RIG: readonly RigDef[] = [
     label: 'TIMEWARP',
     legacy: true,
     weight: 0.7,
-    blurb: 'The room runs slow. You do not.',
+    blurb: 'Close to you, the room runs slow. Away from you it does not.',
     character: 'eerie — half-time, at exactly the same tempo',
-    levels: [{ enemyTime: 0.89 }, { enemyTime: 0.79 }, { enemyTime: 0.72 }],
+    /*
+     * THE SLOW BECOMES POSITIONAL, WHICH IS THE WHOLE POINT.
+     *
+     * A global `enemyTime` is the most passive item in the set: it is a number
+     * that is true everywhere, so there is nothing to do about it. Bounded to a
+     * bubble around the ship it becomes a place you can stand — you wade INTO a
+     * pack instead of away from it, and you position the bubble over the thing
+     * that is about to reach you.
+     *
+     * `enemyTime` STAYS in `levels` and gets deeper, because the bubble is
+     * small: 0.55 inside 150px is a far stronger effect than 0.89 everywhere
+     * and it is only true where you put it. The field keeps its floor and its
+     * only consumer, so nothing in `Modifiers` was orphaned.
+     *
+     * WHAT IT COSTS, said plainly rather than buried: the global warp is gone,
+     * so TIMEWARP no longer slows enemy BULLETS or the emitter grid. Those two
+     * were `bulletScale` and `fireScale` in `World.step` and both are now 1
+     * from this item's point of view. That is a real reduction in defensive
+     * power and it is intended — an item that slowed the bullets too was a
+     * blanket, not a decision — but the machinery is kept rather than deleted,
+     * for the same reason `rigModifiers` keeps two floors that cannot bite.
+     */
+    levels: [{ enemyTime: 0.72 }, { enemyTime: 0.6 }, { enemyTime: 0.5 }],
+    rules: [{ slowRadius: 150 }, { slowRadius: 200 }, { slowRadius: 250 }],
     notes: [
-      'the room runs a tenth slow; you do not',
-      'a fifth slow — gaps you could not have made start to open',
-      'everything but you moves at under three quarters speed',
+      'anything that gets close to you wades — inside about a ship-length and a half, the room runs at three quarters speed',
+      'the slow reaches further out and bites deeper; you can walk into a group and out the other side',
+      'a wide bubble of half-speed travels with you, and the rest of the arena never notices',
     ],
   },
   {
@@ -1436,13 +1693,51 @@ export const RIG: readonly RigDef[] = [
     id: 'compressor',
     label: 'COMPRESSOR',
     weight: 0.9,
-    blurb: 'More to lose before you lose it.',
+    blurb: 'A shield, and a hit that answers back.',
     character: 'heavy — glued, dense, nothing peaks',
-    levels: [{ maxHp: 1, damage: 1.05 }, { maxHp: 2, damage: 1.1 }, { maxHp: 3, damage: 1.15 }],
+    /*
+     * A COMPRESSOR ANSWERS A PEAK. That is what the word means and it is what
+     * the item does now: get hit, and the hit comes back out as a ring.
+     *
+     * `maxHp` is HELD FLAT at its old level-1 value rather than dropped. It is
+     * the only feeder of `Modifiers.maxHp`, and `World.applyRigHealth` is its
+     * only consumer — take it away and both go dead. So the shield is the
+     * spine, the ladder is the nova, and the passive stops being "+15% damage
+     * with a bonus".
+     *
+     * The `damage` RAMP is gone and the level-1 value stays, and that is a
+     * deliberate compromise rather than a tidy one. LASER's damage multiplier
+     * left with its re-point, so `damage: 1.05` here is the ONLY thing left
+     * feeding `Modifiers.damage` — drop it and the field folds to 1 on every
+     * frame of every run and `applyModifiers` carries a channel nobody uses.
+     * `tools/levelup.mjs` prints the maxed fold and read `dmg x1.00` the first
+     * time this row was written without it, which is how it was caught.
+     *
+     * It is the right item to own the remainder. A compressor raises the
+     * average and lowers the peaks — "glued, dense, nothing peaks" is the
+     * `character` phrase and a small global lift is literally what the device
+     * does. What it is NOT any more is the card's identity: 5% is a footnote
+     * under a rule, where 15% used to be the whole item. The rig's largest
+     * flat damage percentage went from 95% to 5%.
+     *
+     * THE RING INHERITS THE BULLET-CANCEL AND THAT IS WANTED. `updateNova`
+     * deletes enemy bullets in the annulus for any ring with `clears: true`,
+     * which is undocumented behaviour every aura quietly has. Here it is
+     * deliberate: `onPlayerHit` already runs `cancelBullets`, which spares
+     * anything not flagged `Cancellable`, and the expanding ring sweeps those
+     * up behind it. A defensive item that clears the screen it just failed to
+     * save you from is the correct reading of the card.
+     */
+    levels: [{ maxHp: 1, damage: 1.05 }, { maxHp: 1, damage: 1.05 }, { maxHp: 1, damage: 1.05 }],
+    rules: [
+      { hitNova: 40, hitNovaRadius: 170 },
+      { hitNova: 90, hitNovaRadius: 230 },
+      { hitNova: 160, hitNovaRadius: 300 },
+    ],
     notes: [
-      'one more shield, and the band glues together a little louder',
-      'two shields — one mistake stops being the end of the run',
-      'three shields, and everything plays fifteen per cent hotter',
+      'one more shield — and every hit you take blows a ring back out of you that hurts what caused it',
+      'the ring goes out further and lands much harder',
+      'getting hit clears the room: a wide ring that eats the shots still in the air and takes a real bite out of whatever is standing in it',
     ],
   },
   {
@@ -1462,26 +1757,96 @@ export const RIG: readonly RigDef[] = [
     id: 'fermata',
     label: 'FERMATA',
     weight: 0.9,
-    blurb: 'Things that linger, linger.',
+    blurb: 'Plant your feet and the whole band swells.',
     character: 'mournful — held past its length',
-    levels: [{ linger: 1.3 }, { linger: 1.68 }, { linger: 1.95 }],
+    /*
+     * A FERMATA IS A HOLD. The item held the EFFECTS; now it also rewards the
+     * PLAYER for holding, which is the same gesture pointed at the person.
+     *
+     * THE OPPOSITE POLE TO UP-TEMPO, deliberately, and that opposition is the
+     * point of the pair: FERMATA pays you to plant and UP-TEMPO pays you to
+     * keep moving, so a rig carrying both is carrying two contradictions and a
+     * rig carrying one is a build.
+     *
+     * IT CANNOT BECOME A CAMPING ITEM, and the reason is a mechanism that
+     * already exists. The charge reads `World.idleTime`, the same clock
+     * `campPressure` reads — and camping starts costing you at
+     * `IDLE_GRACE_S` = 4s, with enemy bullets accelerating and both rescue
+     * mechanics switched off past half ramp. A full charge takes 2.5s falling
+     * to 1.5s, so the whole ladder lives INSIDE the grace window. Plant, take
+     * the swell, move before the field speeds up. Standing there for twenty
+     * seconds buys exactly the same charge and a much worse arena.
+     *
+     * It is not consumed by firing, and that is the one decision here worth
+     * arguing. Spending it on the next activation reads better on the card —
+     * but the band fires constantly (PIZZICATO every 0.15s), so a charge that
+     * is spent would never reach more than a few per cent before something ate
+     * it, and the item would be inert for exactly the reason this whole pass
+     * exists. Building and holding makes it a state the player manages instead.
+     *
+     * `linger` is held flat at its old level-1 value for the reason
+     * COMPRESSOR's `maxHp` is: FERMATA is the only feeder of
+     * `Modifiers.linger`, and dropping it would kill the field in
+     * `applyModifiers` along with aura hold and well life.
+     */
+    levels: [{ linger: 1.3 }, { linger: 1.3 }, { linger: 1.3 }],
+    rules: [
+      { chargeSeconds: 2.5, chargeDamage: 1.6 },
+      { chargeSeconds: 2, chargeDamage: 2.1 },
+      { chargeSeconds: 1.5, chargeDamage: 2.6 },
+    ],
     notes: [
-      'pools and held beams last a third longer than they are written',
-      'two thirds longer — what you left behind is still working when you come back',
-      'held to almost double; the field never quite clears',
+      'hold still for a breath and the band swells — everything you fire while planted lands over half again as hard, and it drops the moment you break',
+      'the swell arrives sooner and climbs to double',
+      'a second and a half of stillness and you are hitting for two and a half; standing your ground is now a weapon, and moving costs you it',
     ],
   },
   {
     id: 'tempo',
     label: 'UP-TEMPO',
     weight: 0.9,
-    blurb: 'You move faster. In an arena that is a weapon.',
+    blurb: 'Where you have been burns behind you.',
     character: 'aggressive — pushed ahead of the beat',
-    levels: [{ moveSpeed: 1.13 }, { moveSpeed: 1.25 }, { moveSpeed: 1.33 }],
+    /*
+     * `docs/research-weapons.md` D.2's `trail` shape, reused as a passive
+     * rather than as a weapon — the plan's own suggestion, and the machinery is
+     * built either way so whichever lands first pays for the other.
+     *
+     * THE POLE OPPOSITE FERMATA. This one only pays while you are moving: the
+     * drop is triggered by DISTANCE TRAVELLED and not by a timer, so a parked
+     * ship lays nothing at all. Kiting a group through your own wake is the
+     * play, and it is the exact behaviour `campPressure` is trying to
+     * encourage — the first item in the game that rewards it directly.
+     *
+     * IT DROPS INTO `novas[]`, NOT `wells[]`, and the reason is that nothing
+     * draws a well. `Renderer` reads `novas`, `effects`, `notes`, `popups`,
+     * `drops`, both bullet pools and the particles; `World.wells` is in none of
+     * them, so BLACK HOLE and TREMOLO FIELD are invisible damage pools today. A
+     * trail the player cannot see is a rule they cannot play around, which is
+     * the defect in a new costume. A ring with a small `maxR` and a slow
+     * `speed` is a growing, fading blot that `drawNovas` already renders and
+     * `updateNova` already collides.
+     *
+     * `clears: false` ON THE DROP, unlike COMPRESSOR's ring. Every aura in the
+     * game quietly deletes enemy bullets in its annulus, and a trail laid down
+     * six times a second with that behaviour would be a permanent moving
+     * bullet-shredder — far and away the strongest defensive item in the game,
+     * bought by holding a direction. It burns; it does not sweep.
+     *
+     * `moveSpeed` is held flat at its old level-1 value: UP-TEMPO is the only
+     * feeder of `Modifiers.moveSpeed`, and `Player.update` takes it as an
+     * argument.
+     */
+    levels: [{ moveSpeed: 1.13 }, { moveSpeed: 1.13 }, { moveSpeed: 1.13 }],
+    rules: [
+      { trailDamage: 26, trailRadius: 34, trailLife: 0.8, trailEvery: 80 },
+      { trailDamage: 46, trailRadius: 44, trailLife: 1, trailEvery: 70 },
+      { trailDamage: 72, trailRadius: 56, trailLife: 1.2, trailEvery: 60 },
+    ],
     notes: [
-      'you start arriving ahead of the beat',
-      'a quarter faster — you can cross a ring before it closes',
-      'a third faster, and in an arena that is a weapon',
+      'you move ahead of the beat, and the ground you cross keeps burning for a moment after you leave it',
+      'the burn is wider, hotter and laid down closer together — run a group through your own wake',
+      'a thick scorched line follows you everywhere; kiting is now the highest damage in your rig',
     ],
   },
   {
@@ -1926,10 +2291,11 @@ export function instrumentStats(id: string, level: number): InstrumentStats {
  *
  * THE TWO FLOORS BELOW CANNOT BE REACHED, and the reason is that the stack they
  * guard against does not exist. Exactly one rig item touches `cooldown` (RAPID,
- * bottoming out at 0.62) and exactly one touches `enemyTime` (TIMEWARP, 0.72),
- * so with no second contributor there is nothing to multiply and the achievable
- * ranges are [0.62, 1] and [0.72, 1]. `tools/deadhunt-ranges.mjs` enumerates
- * every legal loadout — not a sample, the whole set — and prints both.
+ * bottoming out at 0.62) and exactly one touches `enemyTime` (TIMEWARP, now
+ * 0.5), so with no second contributor there is nothing to multiply and the
+ * achievable ranges are [0.62, 1] and [0.5, 1]. `tools/deadhunt-ranges.mjs`
+ * enumerates every legal loadout — not a sample, the whole set — and prints
+ * both.
  *
  * They stay because they are cheap and because the invariant is real the moment
  * a second cooldown or time item is added to the table, which is a likely thing
@@ -1944,14 +2310,50 @@ export function rigModifiers(owned: Readonly<Record<string, number>>): Modifiers
     const at = def.levels[Math.min(level, def.levels.length) - 1];
     if (!at) continue;
     for (const [k, v] of Object.entries(at) as [keyof Modifiers, number][]) {
-      // count, maxHp, pierce and homing add; everything else scales.
-      if (k === 'count' || k === 'maxHp' || k === 'pierce') out[k] += v;
-      else if (k === 'homing') out[k] = Math.max(out[k], v);
+      // count and maxHp add; everything else scales.
+      if (k === 'count' || k === 'maxHp') out[k] += v;
       else out[k] *= v;
     }
   }
   out.cooldown = Math.max(0.18, out.cooldown);
   out.enemyTime = Math.max(0.35, out.enemyTime);
+  return out;
+}
+
+/**
+ * Fold every owned rig item's RULES into one set. `rigModifiers`' twin.
+ *
+ * Order-independent by construction, which is the property `tools/levelup.mjs`
+ * already asserts for the modifier fold and now asserts for this one: every
+ * field takes an extremum of its contributors rather than a running product, so
+ * two passives installing the same rule cannot mean different things depending
+ * on which was picked up first.
+ *
+ * Bigger wins, EXCEPT for `RULE_LOWER_IS_STRONGER` — "every 3rd shot" beats
+ * "every 5th", and a 1.5s charge beats a 2.5s one. `Math.min` over the
+ * contributors that are switched on, so an absent contributor cannot win by
+ * being zero.
+ *
+ * Exactly one passive feeds each rule today, so every branch below is a no-op
+ * on the shipped table. It is written anyway for the same reason `rigModifiers`
+ * keeps its two floors: it is the correct fold the day a second contributor
+ * lands, and it costs nothing. Do not read it as evidence that stacking is
+ * reachable — it is not, and `tools/rulefire.mjs` prints the contributor count
+ * per rule so that stays visible.
+ */
+export function rigRules(owned: Readonly<Record<string, number>>): Rules {
+  const out = noRules();
+  const lower = new Set<string>(RULE_LOWER_IS_STRONGER);
+  for (const [id, level] of Object.entries(owned)) {
+    const def = RIG_BY_ID.get(id);
+    if (!def?.rules || level < 1) continue;
+    const at = def.rules[Math.min(level, def.rules.length) - 1];
+    if (!at) continue;
+    for (const [k, v] of Object.entries(at) as [keyof Rules, number][]) {
+      if (lower.has(k)) out[k] = out[k] > 0 ? Math.min(out[k], v) : v;
+      else out[k] = Math.max(out[k], v);
+    }
+  }
   return out;
 }
 
@@ -1964,7 +2366,10 @@ export function applyModifiers(s: InstrumentStats, m: Modifiers): InstrumentStat
     area: s.area * m.area,
     arc: Math.min(Math.PI * 2, s.arc * (1 + (m.area - 1) * 0.5)),
     speed: s.speed * m.speed,
-    pierce: s.pierce + m.pierce,
+    // `+ m.pierce` is gone with `Modifiers.pierce`; LASER's overcharge sets
+    // this field directly on the activation it fires. See the note under
+    // `Modifiers`.
+    pierce: s.pierce,
     bounces: s.bounces,
     linger: s.linger * m.linger,
     range: s.range * m.speed,

@@ -79,9 +79,11 @@ import {
   maxLevelOf,
   rigDef,
   rigModifiers,
+  rigRules,
   slotOf,
   stepNote,
   type Modifiers,
+  type Rules,
 } from './weapons';
 
 /* ------------------------------------------------------------------------ *
@@ -1338,6 +1340,17 @@ export function activeInstruments(state: ProgressionState): { id: string; level:
 /** Every global multiplier the rig currently applies. */
 export function modifiers(state: ProgressionState): Modifiers {
   return rigModifiers(state.rig);
+}
+
+/**
+ * Every rule the rig currently installs. `modifiers`' twin.
+ *
+ * Folded once per step alongside the modifiers rather than looked up per use,
+ * for the same reason: `World` reads these at six different sites and a walk of
+ * the rig at each one would be six walks a frame.
+ */
+export function rules(state: ProgressionState): Rules {
+  return rigRules(state.rig);
 }
 
 /** For the HUD: filled and empty slot chips. */

@@ -39,6 +39,25 @@ export const BulletFlag = {
   Cancellable: 1 << 2,
   /** Ignores the bomb clear (boss lasers, etc). */
   Indestructible: 1 << 3,
+  /**
+   * Player bolt that steers toward the nearest enemy every frame.
+   *
+   * PER BULLET, and it used to be global. `Modifiers.homing` was a 0..1 field
+   * whose only consumer tested it for `> 0` and then turned every player bullet
+   * at a hardcoded 6 rad/s — so the passive's three levels steered identically
+   * and the strength was never read at all. A shot now either seeks or does
+   * not, and the rule that spawned it decides: LASER's overcharged volley and
+   * HOMING's kill echo both set this, and nothing else does.
+   */
+  Seeking: 1 << 4,
+  /**
+   * A bolt re-fired by HOMING's kill echo.
+   *
+   * Exists purely so an echo cannot echo. Without it a shot into a dense pack
+   * chains one kill into the next for as long as the pack lasts, and the worst
+   * case stops being "one extra bullet per kill" and becomes the pool.
+   */
+  Echo: 1 << 5,
 } as const;
 
 export interface BulletSpawn {

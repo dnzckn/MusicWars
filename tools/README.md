@@ -2221,6 +2221,68 @@ window only saw the start of it. The *shape* changed, not just the scale, so
 copying the new numbers into the old two-parameter model would fit the wrong
 thing. Refitting belongs to whoever owns the XP curve.
 
+## `rulefire` — a passive that installs a RULE and never fires it
+
+    node --experimental-transform-types tools/rulefire.mjs [seconds]
+
+`deadhunt-ranges` catches a stat nothing reads. This catches the other half of
+the same defect, which arrived with the passive overhaul: six of the twelve rig
+items now install a **rule** rather than scaling a number, and a rule fails
+differently. A multiplier cannot be silently absent — `applyModifiers` folds it
+into every stat block on every frame — but a rule waits for a moment, and if the
+moment never comes or the branch guarding it is never true, the item is inert
+and nothing downstream is unhappy. It type-checks, it prints on the level-up
+card, it shows in the HUD, and it does nothing.
+
+`deadhunt-ranges`' technique cannot reach it. That tool slices each `fire*`
+routine out of `world.ts` and greps the text for the stat names its shape's
+instruments set; a rule is not a stat name in a routine, it is a branch at a
+moment. So this measures the OUTPUT: `World` carries a monotonic `ruleFires`
+counter beside a `ruleChances` denominator — the same argument as
+`BulletPool.bounced`, which exists because a feature nothing can observe is a
+feature that can rot — and this drives seven real worlds and reads them.
+
+Four questions, and the last two are the ones that earn their keep:
+
+1. Every `Rules` field has a passive that installs it. Static, off `noRules()`
+   rather than a list here, so a field added and forgotten is reported rather
+   than skipped.
+2. Every rule maps to a counter and every counter to a rule, and each has a
+   denominator. This is the hand-maintained seam and `deadhunt-ranges` records
+   at length what happens to those when nothing checks them.
+3. **One run per rule-bearing passive**, that passive alone forced to max, real
+   `World`, real bot, reported as fires over chances. **A zero denominator is a
+   FAILURE, not a skip** — AGENTS.md §3, `checked === 0`.
+4. **A control run with an EMPTY rig, where every counter must read zero.**
+   Without it the whole file is decoration: a counter incremented one line too
+   high, outside its own `if`, passes question 3 for free. Its denominators must
+   still be non-zero, which is what proves the control produced every moment and
+   that the zeros above are the rules being absent rather than the run being
+   quiet.
+
+**The bot plants for three seconds in every eight, and that is load-bearing.**
+FERMATA charges only while the ship is genuinely stationary, so a bot that never
+stops would report the item dead for a reason that is the harness's fault.
+Three seconds is inside `World.IDLE_GRACE_S`, so the plant is ordinary play and
+the run stays comparable to every other tool's.
+
+### What it found on its first run
+
+FERMATA's charge originally read `World.idleTime`, the camp-pressure clock,
+which only resets when the ship leaves a 60px anchor. This measured a weaving
+bot holding **at least half a charge on 74.8% of its activations** — a card that
+says "hold still" paying out to a ship that never did, which is a flat damage
+multiplier with extra steps and precisely the thing the overhaul exists to
+delete. The charge is speed-gated now.
+
+### Read the rate column carefully; three rows are not percentages
+
+`homing` counts BOLTS against KILLS and level 3 throws three bolts per kill, so
+up to 300% is correct. `fermata` is sensitive to the harness for the reason
+above. `tempo` is per step at 120Hz against a drop every 60-80px, so a low
+single-digit percentage is the design working. **The assertion is non-zero, not
+a threshold** — a threshold here would be a number nobody could defend.
+
 ## `capture` — the game's real audio, offline through superdough (`tools/capture.mjs`)
 
 `AGENTS.md` says "the listening artefact is the browser capture recorder", and

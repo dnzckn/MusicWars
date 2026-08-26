@@ -50,8 +50,10 @@ import {
   instrumentStats,
   labelOf,
   noModifiers,
+  noRules,
   type InstrumentStats,
   type Modifiers,
+  type Rules,
 } from './weapons';
 import {
   arenaSpawnPositions,
@@ -406,6 +408,142 @@ export class World {
    */
   private mods: Modifiers = noModifiers();
 
+  /**
+   * Folded rig RULES, refreshed on the same line as `mods` and for the same
+   * reasons. See `Rules` in `weapons.ts` for what each one is and where it
+   * fires; the sites are all in this file, all in place, and none of them is a
+   * bus subscription.
+   */
+  private rules: Rules = noRules();
+
+  /**
+   * How many times each rule has actually FIRED this run. Monotonic.
+   *
+   * The same argument as `BulletPool.spawned` and `BulletPool.bounced`, and it
+   * is a sharper one here: a rule is far likelier than a multiplier to be
+   * installed and never triggered, because a multiplier is applied every frame
+   * by construction and a rule waits for a moment that may not come. A feature
+   * nothing can observe is a feature that can rot, and this repository's single
+   * most recorded defect is the ability that type-checks, appears in the HUD
+   * and does nothing.
+   *
+   * `tools/rulefire.mjs` reads this and asserts every one is non-zero in a real
+   * run, with a denominator. Public and mutable rather than private, because
+   * the tool must not have to reach through a private field to see it.
+   */
+  readonly ruleFires = {
+    /** Activations fired at overcharge (LASER). */
+    overcharge: 0,
+    /** Bolts re-fired from a corpse (HOMING). */
+    killEcho: 0,
+    /** Enemy-steps run slow inside the bubble (TIMEWARP). */
+    slowed: 0,
+    /** Rings released by taking a hit (COMPRESSOR). */
+    hitNova: 0,
+    /**
+     * Activations fired on at least HALF a stillness charge (FERMATA).
+     *
+     * Half and not "any", deliberately. `idleTime` resets only when the ship
+     * leaves a 60px anchor, so at top speed even a constantly-moving player
+     * carries ~0.13s of it and every single activation would count — a counter
+     * that reads 100% for a ship that never plants is a gate optimised against
+     * (AGENTS.md §3). This one only moves when the charge is worth having, so
+     * it measures the mechanic rather than the arithmetic.
+     */
+    charged: 0,
+    /** Rings dropped in the wake (UP-TEMPO). */
+    trail: 0,
+  };
+
+  /**
+   * The DENOMINATOR for each entry in `ruleFires` — how many chances the rule
+   * had, whether or not it took them.
+   *
+   * AGENTS.md §3: "Print every denominator. A check that examined nothing
+   * reports a pass." A fire count on its own cannot tell "the rule is broken"
+   * from "this run never produced the moment", and those need different fixes.
+   * Same key names as `ruleFires` so a tool can zip them without a mapping
+   * table it would have to keep in step.
+   */
+  readonly ruleChances = {
+    /** Instrument activations. */
+    overcharge: 0,
+    /** Enemies killed by a player bullet. */
+    killEcho: 0,
+    /** Enemy-steps: one per live enemy per simulation step. */
+    slowed: 0,
+    /** Hits the player took. */
+    hitNova: 0,
+    /** Instrument activations, same as `overcharge`. */
+    charged: 0,
+    /** Steps in which the ship actually moved. */
+    trail: 0,
+  };
+
+  /**
+   * Per-instrument activation counter, for LASER's every-Nth overcharge.
+   *
+   * Keyed exactly as `instrumentTimers` is, and cleared alongside it on reset
+   * and on a fusion — an evolution deletes its base, and a counter left behind
+   * would hand the result a cadence it did not earn.
+   */
+  private readonly shotCount: Record<string, number> = {};
+
+  /** Distance travelled since UP-TEMPO last dropped a ring, in px. */
+  private trailSince = 0;
+
+  /**
+   * Seconds the ship has been genuinely stationary, for FERMATA's charge.
+   *
+   * NOT `idleTime`, and the first version of this used `idleTime` because it
+   * already existed and was already the camp-pressure clock. `tools/rulefire`
+   * measured what that actually meant: `idleTime` only resets when the ship
+   * leaves a 60px anchor, so a weaving bot that never stops still held at least
+   * half a charge on **74.8% of its activations**. An item whose card says
+   * "hold still" was paying out to a ship that never did — the passive would
+   * have read as a flat damage multiplier with extra steps, which is the exact
+   * thing this whole pass exists to delete.
+   *
+   * Speed-gated instead: the stick is released and the slide has settled. That
+   * is a thing the player can feel themselves doing, and it breaks the moment
+   * they dodge.
+   */
+  private stillTime = 0;
+
+  /**
+   * True for the duration of ONE overcharged activation, so the projectile
+   * routines can flag their bolts `Seeking`.
+   *
+   * Set immediately before the `switch` in `fireInstruments` and cleared
+   * immediately after it, which is a window of one synchronous call. A
+   * parameter on all ten `fire*` signatures would be honest too, but six of
+   * them have nothing to steer and would carry it to ignore it — and
+   * `tools/deadhunt-ranges.mjs` greps those bodies for the stats they read, so
+   * a parameter nobody uses is noise in an audit that already has enough.
+   */
+  private overchargeVolley = false;
+
+  /**
+   * Flags every player bolt is spawned with.
+   *
+   * One place, so that a rule which changes what a shot IS cannot be applied to
+   * four of the five spawning routines and forgotten on the fifth — which is
+   * precisely how `bounces` spent the life of the table being honoured by one
+   * routine and dropped by the others.
+   *
+   * `fireSpray` is the one shape the overcharge only half reaches: it flags its
+   * bolts `Seeking` like everything else, but it ignores `pierce` on purpose
+   * (see `InstrumentShape`, where bounding the live count is called the one
+   * real budget in the catalogue), so an overcharged spray hits harder and
+   * homes without becoming unstoppable. That is a deliberate hole, not a
+   * missed site.
+   */
+  private get shotFlags(): number {
+    return this.overchargeVolley
+      ? BulletFlag.DespawnOffscreen | BulletFlag.Seeking
+      : BulletFlag.DespawnOffscreen;
+  }
+
   /* ---------------------------------------------------------------------- *
    * The danger signal
    * ---------------------------------------------------------------------- */
@@ -570,6 +708,36 @@ export class World {
   static readonly IDLE_RESET_DIST = 60;
   /** Bullet-speed multiplier at campPressure = 1. */
   static readonly CAMP_BULLET_BOOST = 0.5;
+  /**
+   * Total ring count past which UP-TEMPO stops laying a trail.
+   *
+   * Not a trail budget — a courtesy. The trail's own live count is bounded at
+   * eleven by its drop distance and its life (see the drop site); this exists
+   * so that in the one case where the array is already full of somebody else's
+   * auras, the instruments win. Well clear of the measured peak of 310.
+   */
+  static readonly TRAIL_CEILING = 340;
+  /**
+   * px/s below which the ship counts as stationary for FERMATA's charge.
+   *
+   * `Player.update` damps velocity rather than zeroing it, and its own comment
+   * puts the slide from top speed at about 40px — so a released stick decays
+   * through this within a couple of frames while any real input sits far above
+   * it. Well under the ~460px/s top speed, so it cannot be gamed by feathering.
+   */
+  static readonly STILL_SPEED = 40;
+  /**
+   * Hues for the two rings the RIG produces, as opposed to the ten an
+   * instrument produces.
+   *
+   * `hueOf(id)` cannot serve here: it hashes an INSTRUMENT id so that six
+   * simultaneous auras are six colours, and a rule has no instrument. Fixed
+   * hues instead, chosen to sit apart from each other and to read as what they
+   * are — COMPRESSOR's is the red of a hit answered, UP-TEMPO's the ember of
+   * ground you have already crossed.
+   */
+  static readonly HIT_NOVA_HUE = 12;
+  static readonly TRAIL_HUE = 28;
   /**
    * campPressure at which the two rescue mechanics (ENCORE, the last-life
    * auto-bomb) stop firing: past half ramped, roughly 14s of standing still.
@@ -739,10 +907,16 @@ export class World {
     this.effects.length = 0;
     for (const k of Object.keys(this.instrumentTimers)) delete this.instrumentTimers[k];
     for (const k of Object.keys(this.sprayPhase)) delete this.sprayPhase[k];
+    for (const k of Object.keys(this.shotCount)) delete this.shotCount[k];
+    this.trailSince = 0;
+    this.stillTime = 0;
+    for (const k of Object.keys(this.ruleFires) as (keyof typeof this.ruleFires)[]) this.ruleFires[k] = 0;
+    for (const k of Object.keys(this.ruleChances) as (keyof typeof this.ruleChances)[]) this.ruleChances[k] = 0;
     // In place, never reassigned: see the field's comment, and the
     // `everypowerup` entry in tools/README.md for the bug that taught us.
     prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter);
     this.mods = prog.modifiers(this.progression);
+    this.rules = prog.rules(this.progression);
     this.gapAngle = this.rng.range(0, TAU);
     this.nearestThreat = 1;
     this.encirclement = 0;
@@ -1090,6 +1264,7 @@ export class World {
     // One fold of the rig per step, shared by the player, every firing routine
     // and the enemy clock.
     this.mods = prog.modifiers(this.progression);
+    this.rules = prog.rules(this.progression);
     this.applyRigHealth();
 
     if (this.phase !== 'over') {
@@ -1143,13 +1318,95 @@ export class World {
     this.snapshot.campPressure = campPressure;
 
     /*
-     * TIMEWARP is a rig modifier now, not a powerup, and it still has to scale
-     * all three of bullet travel, fire rate and enemy movement. Scaling only
-     * bullet travel (as this once did) left emitters dumping at full rate into
-     * a slowed field, so the screen filled up faster than before — the
-     * defensive item was actively making things worse.
+     * UP-TEMPO FIRES HERE, on DISTANCE TRAVELLED and not on a clock.
+     *
+     * That is the whole design of the item: a parked ship lays nothing, so the
+     * trail is the one thing in the rig that pays you for the behaviour
+     * `campPressure` above is trying to buy. It is also the pole opposite
+     * FERMATA, which pays for exactly the opposite behaviour — a rig carrying
+     * both is carrying a contradiction, and a rig carrying one is a build.
+     *
+     * THE DROP IS A `novas[]` RING, NOT A `wells[]` POOL, and the reason is
+     * visibility: nothing in `Renderer` reads `World.wells`, so BLACK HOLE and
+     * TREMOLO FIELD are invisible today and a trail built on them would be a
+     * rule the player could not see or play around. A ring with a small `maxR`
+     * and `speed = maxR / life` grows and fades over its whole life, which
+     * `drawNovas` already draws and `updateNova` already collides — and for a
+     * radius this small the damaging annulus (±16px) is effectively the disc.
+     *
+     * `clears: false`, unlike COMPRESSOR's ring: six bullet-cancelling rings a
+     * second following the ship around would be the strongest defensive item in
+     * the game bought by holding a direction. It burns; it does not sweep.
+     *
+     * WORST CASE IS BOUNDED BY ARITHMETIC, NOT BY A CAP, and the arithmetic is
+     * `life / (every / topSpeed)`: at L3 that is 1.2s / (60px / 520px/s) = 11
+     * rings alive, against a `novas.length` that `deadhunt-ranges` already
+     * measures at a mean of 29 and a peak of 310 from the auras alone. A cap
+     * would have to either scan the array to count its own rings — 310 entries,
+     * six times a second, to guard 11 — or key on `hue`, which `hueOf` also
+     * assigns and could collide with. The `TRAIL_CEILING` below is the cheap
+     * version: one length check, and it only bites in an aura storm, where the
+     * trail is the least of what is on screen.
      */
-    const warp = this.mods.enemyTime;
+    {
+      /*
+       * One read of the ship's speed, feeding both poles of the pair: UP-TEMPO
+       * pays for having it and FERMATA pays for not. The denominators are
+       * counted whether or not either passive is held, so a zero fire count can
+       * be told apart from a run that never moved or never stopped.
+       */
+      const speed = Math.hypot(this.player.vx, this.player.vy);
+      const alive = this.phase !== 'over' && !this.player.dead;
+      if (speed > 0 && alive) this.ruleChances.trail++;
+      if (speed < World.STILL_SPEED && alive) this.stillTime += simDt;
+      else this.stillTime = 0;
+    }
+    if (this.rules.trailDamage > 0 && this.phase !== 'over' && !this.player.dead) {
+      this.trailSince += Math.hypot(this.player.vx, this.player.vy) * simDt;
+      if (this.trailSince >= Math.max(20, this.rules.trailEvery) && this.novas.length < World.TRAIL_CEILING) {
+        this.trailSince = 0;
+        const maxR = Math.max(12, this.rules.trailRadius);
+        const life = Math.max(0.2, this.rules.trailLife);
+        this.novas.push({
+          x: this.player.x,
+          y: this.player.y,
+          r: 0,
+          alive: true,
+          maxR,
+          speed: maxR / life,
+          // Same division `fireAura` makes: the number in the table is what a
+          // target standing in the drop takes, not a rate.
+          dps: this.rules.trailDamage / life,
+          hold: 0,
+          hue: World.TRAIL_HUE,
+          clears: false,
+        });
+        this.ruleFires.trail++;
+      }
+    }
+
+    /*
+     * TIMEWARP IS LOCAL NOW, AND THE THREE SCALES BELOW ARE WHAT THAT COST.
+     *
+     * This used to read `const warp = this.mods.enemyTime`, applied to all
+     * three of bullet travel, emitter rate and enemy movement — a whole-room
+     * slow. `Rules.slowRadius` moves it into a bubble around the ship, applied
+     * per enemy inside `updateEnemies`, because a number that is true
+     * everywhere is a number there is nothing to do about; a bubble is a place
+     * you can stand.
+     *
+     * So the global warp is 1 and TIMEWARP no longer slows enemy BULLETS or the
+     * emitter grid. State the loss plainly: the item is weaker against fire and
+     * stronger against bodies, on purpose.
+     *
+     * The three variables STAY. `warpedBeat` exists so the emitters can be
+     * warped without drifting off the transport, and a global time warp is a
+     * thing this game will want again — a boss phase, a powerup, a second rig
+     * item. Deleting the seam and re-deriving it later is more expensive than a
+     * multiply by 1, which is the same argument `rigModifiers` makes for two
+     * floors that cannot bite. Do not read `= 1` as "this can never move".
+     */
+    const warp = 1;
     // Camping only ever speeds bullets up, never the emitters that schedule
     // them or the enemies that carry them — both of those are locked to the
     // beat grid TIMEWARP already has to protect, and stretching that grid for
@@ -1199,7 +1456,12 @@ export class World {
     this.analyseEncirclement();
     this.computeAim();
     if (this.phase !== 'over' && !this.player.dead) this.fireInstruments(simDt);
-    if (this.mods.homing > 0) this.steerPlayerBullets(simDt);
+    /*
+     * Gated on the RULES that can produce a seeking bolt rather than on a live
+     * scan of the pool, so the ordinary loadout pays one comparison and not a
+     * walk of 700 bullets looking for a flag nothing set.
+     */
+    if (this.rules.overchargeEvery > 0 || this.rules.killEcho > 0) this.steerPlayerBullets(simDt);
     this.updateEffects(simDt);
 
     this.bannerAge += simDt;
@@ -1268,6 +1530,17 @@ export class World {
 
   private updateEnemies(dt: number, nowBeat: number, moveScale = 1): void {
     const ctx = this.context();
+    /*
+     * TIMEWARP's bubble, hoisted out of the loop.
+     *
+     * `slowRadius` is the extent and `mods.enemyTime` is the depth, and with
+     * the passive absent the radius is 0 and this whole thing costs one
+     * comparison per enemy. Squared so the per-enemy test is a multiply rather
+     * than a `hypot` — the loop already runs at 39 enemies and this is the
+     * cheapest place in it to be careless.
+     */
+    const slowSq = this.rules.slowRadius * this.rules.slowRadius;
+    const slowTo = this.mods.enemyTime;
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       e.prevX = e.x;
@@ -1310,7 +1583,29 @@ export class World {
         e.hp = Math.max(e.hp, e.maxHp * gate * 0.999 + 1);
       }
 
-      if (e.phasePending && this.transport.crossedBar()) {
+      /*
+       * NOT WHILE THE LEVEL-UP SCREEN IS OPEN, and this is a latent bug that
+       * the passive rules surfaced rather than caused.
+       *
+       * A boss phase commits on a bar line and `openOfferNow` opens on a bar
+       * line, so the two fire in the SAME update whenever a level and a phase
+       * gate come due together. `announce` overwrites, so "LEVEL 17 / CHOOSE A
+       * MUSICIAN" was written and replaced by "PHASE II" before either was
+       * rendered — `tools/wiring.mjs` caught it at steps 20699 and 31500 of a
+       * six-minute run the moment the rules work moved the boss's damage curve.
+       * It has always been reachable; nothing had happened to line the two
+       * clocks up before.
+       *
+       * Deferring is the right answer and not just the convenient one. The
+       * world is STOPPED while an offer is open (`simDt` is 0), so committing a
+       * phase here spends the bullet clear, the camera strike and the 1.4s
+       * invulnerability on a frame the player cannot act in, and it does it
+       * under a fermata the director is holding for the card screen.
+       * `crossedBar()` is a pure query and `phasePending` stays set, so the
+       * phase lands on the first bar after the cards close rather than being
+       * lost.
+       */
+      if (e.phasePending && this.transport.crossedBar() && !prog.isChoosing(this.progression)) {
         const phase = commitBossPhase(e);
         if (phase >= 0) {
           this.bus.emit('boss:phase', { phase, of: e.phases });
@@ -1346,7 +1641,27 @@ export class World {
           en.y += en.vy * d;
         };
       }
-      e.move(e, dt * moveScale, ctx);
+      /*
+       * TIMEWARP FIRES HERE, per enemy, in place — no listener, no event.
+       *
+       * Movement only. Slowing this enemy's EMITTERS as well would mean giving
+       * each one its own warped beat, and `warpedBeat` is a single number
+       * precisely so that emitters can never drift off the transport; a bubble
+       * that stretched the beat grid for whatever happened to be standing in it
+       * would put the shots off the music, which is the one thing this game
+       * cannot trade away. Bodies slow, fire does not.
+       */
+      let scale = moveScale;
+      this.ruleChances.slowed++;
+      if (slowSq > 0) {
+        const sdx = e.x - this.player.x;
+        const sdy = e.y - this.player.y;
+        if (sdx * sdx + sdy * sdy <= slowSq) {
+          scale *= slowTo;
+          this.ruleFires.slowed++;
+        }
+      }
+      e.move(e, dt * scale, ctx);
 
       // Only fire once it has entered, and never while retreating.
       if (!e.leaving && this.hasEntered(e)) {
@@ -2645,6 +2960,16 @@ export class World {
     const pb = this.playerBullets;
     if (!this.enemies.length) return;
     for (let i = 0; i < pb.count; i++) {
+      /*
+       * PER BULLET, AND IT USED TO BE ALL OF THEM.
+       *
+       * The old guard was `mods.homing > 0` at the call site and then every
+       * player bullet in the pool turned. That made the rig's `homing` field a
+       * switch whose three levels were indistinguishable — see
+       * `BulletFlag.Seeking`. Now a bolt seeks because the rule that fired it
+       * said so, and the inner O(enemies) scan below only runs for those.
+       */
+      if (!(pb.flags[i] & BulletFlag.Seeking)) continue;
       // Find the nearest enemy ahead of the bullet.
       let best = -1;
       let bestD = Infinity;
@@ -2706,13 +3031,76 @@ export class World {
         this.bus.emit('enemy:hit', { archetype: e.archetype, lethal: e.hp <= 0 });
 
 
-        if (e.hp <= 0) e.alive = false;
+        if (e.hp <= 0) {
+          e.alive = false;
+          this.ruleChances.killEcho++;
+          /*
+           * HOMING FIRES HERE — in place, at the hit that did it.
+           *
+           * NOT at `enemy:death`, and the difference matters. That event is
+           * emitted from the reap loop and from `onEnemyKilled`, neither of
+           * which knows what killed the enemy; an echo has to know it was a
+           * player BULLET and where that bullet was, or a body burned down by
+           * an aura would re-fire a bolt from nothing. This is the only line in
+           * the file that has both.
+           */
+          if (this.rules.killEcho > 0 && !(pb.flags[i] & BulletFlag.Echo)) {
+            this.fireKillEcho(e, pb.damage[i], pb.speed[i], pb.radius[i]);
+          }
+        }
         // Piercing shots keep going; everything else is consumed.
         if (pb.type[i] !== 1) {
           pb.remove(i);
           break;
         }
       }
+    }
+  }
+
+  /**
+   * HOMING's kill echo: bolts thrown back out of a corpse at whatever is next.
+   *
+   * REUSES `BulletPool`, WHICH IS THE WHOLE COST. No container, no pool, no
+   * per-echo bookkeeping — the echo is an ordinary player bullet carrying two
+   * flags. Worst case is `killEcho` extra bullets per bullet-kill, and it
+   * cannot compound because `BulletFlag.Echo` blocks an echo from echoing.
+   * Measured against `MAX_PLAYER_BULLETS` (700) that is nothing: the arena runs
+   * 1.5-2.8 kills a second and the bolts expire in under two.
+   *
+   * The bolt is `Seeking`, which is what makes the item read as HOMING at all:
+   * it is thrown at the nearest live target and then keeps correcting. With
+   * nothing left to hit it goes out along the dead enemy's own bearing from the
+   * ship — a visible follow-through rather than a shot that silently is not
+   * fired, so a player learns the mechanic on the kill that clears the wave.
+   */
+  private fireKillEcho(from: Enemy, damage: number, speed: number, radius: number): void {
+    const n = Math.max(1, Math.round(this.rules.killEcho));
+    let angle = Math.atan2(from.y - this.player.y, from.x - this.player.x);
+    let bestD = Infinity;
+    for (const e of this.enemies) {
+      if (!e.alive || e === from || e.invuln > 0) continue;
+      const d = dist2(e.x, e.y, from.x, from.y);
+      if (d < bestD) {
+        bestD = d;
+        angle = Math.atan2(e.y - from.y, e.x - from.x);
+      }
+    }
+    for (let k = 0; k < n; k++) {
+      // Fanned slightly when there is more than one, so three echoes read as
+      // three bolts leaving rather than as one thick one.
+      const spread = n === 1 ? 0 : (k / (n - 1) - 0.5) * 0.5;
+      this.playerBullets.spawn({
+        x: from.x,
+        y: from.y,
+        angle: angle + spread,
+        speed: Math.max(700, speed),
+        radius: Math.max(4, radius),
+        ttl: 1.4,
+        damage,
+        type: 0,
+        flags: BulletFlag.DespawnOffscreen | BulletFlag.Seeking | BulletFlag.Echo,
+      });
+      this.ruleFires.killEcho++;
     }
   }
 
@@ -2898,6 +3286,7 @@ export class World {
 
   private onPlayerHit(): void {
     this.waveDamage++;
+    this.ruleChances.hitNova++;
     this.camera.shake(0.85);
     this.camera.freeze(0.09);
     this.camera.strike(0, 0.65);
@@ -2905,6 +3294,42 @@ export class World {
     this.shock(this.player.x, this.player.y, 340, 3400);
     this.cancelBullets();
     this.combo = 0;
+
+    /*
+     * COMPRESSOR FIRES HERE — in place, two lines from the `player:hit` emit at
+     * the bottom of this method, and not through it.
+     *
+     * The ring is an ordinary entry in `novas[]`: same container as every aura,
+     * same `updateNova`, same `drawNovas`. One object per hit, and the arena's
+     * worst-behaved pick policy takes 67 hits in a fifteen-minute run.
+     *
+     * `clears: true`, DELIBERATELY. Every aura in the game quietly deletes
+     * enemy bullets in its annulus and nothing says so; here it is the point.
+     * `cancelBullets()` two lines up spares anything not flagged `Cancellable`,
+     * and this ring sweeps those up as it goes out. See the item's row in
+     * `weapons.ts`.
+     *
+     * `dps` divides the ring's damage over its crossing, exactly as `fireAura`
+     * does, so the number in the table is what a target standing in it takes
+     * rather than a rate that scales with how far the ring travels.
+     */
+    if (this.rules.hitNova > 0) {
+      const maxR = Math.max(40, this.rules.hitNovaRadius);
+      const speed = 520;
+      this.novas.push({
+        x: this.player.x,
+        y: this.player.y,
+        r: 0,
+        alive: true,
+        maxR,
+        speed,
+        dps: this.rules.hitNova / Math.max(0.08, maxR / speed),
+        hold: 0,
+        hue: World.HIT_NOVA_HUE,
+        clears: true,
+      });
+      this.ruleFires.hitNova++;
+    }
 
     // ENCORE: not a drop you find, one the game sends. Once per wave, when the
     // run is nearly over. This is the direct answer to "give me a chance" — a
@@ -3334,6 +3759,12 @@ export class World {
       delete this.instrumentTimers[f.base];
       delete this.instrumentTimers[f.catalyst];
       this.instrumentTimers[f.result] = 0;
+      // Same argument for LASER's every-Nth counter: a result inheriting its
+      // base's position in the cadence would get an overcharge it did not fire
+      // for, or lose one it had earned.
+      delete this.shotCount[f.base];
+      delete this.shotCount[f.catalyst];
+      this.shotCount[f.result] = 0;
     }
   }
 
@@ -3558,6 +3989,23 @@ export class World {
      */
     let firedId: InstrumentId | null = null;
     let firedInterval = -1;
+    /*
+     * FERMATA FIRES HERE. `stillTime` is seconds with the stick released — see
+     * the field, and see why it is NOT `idleTime`: the first version used the
+     * camp-pressure clock and `rulefire` measured a weaving bot holding half a
+     * charge 74.8% of the time, which is a "hold still" card paying out to a
+     * ship that never held still.
+     *
+     * It builds and holds rather than being spent on the next activation. The
+     * band fires constantly — PIZZICATO every 0.15s — so a charge that were
+     * consumed would never reach a few per cent before something ate it, and
+     * the passive would be inert for exactly the reason this pass exists. See
+     * the item's row in `weapons.ts` for why this cannot become a camping
+     * reward: the whole ladder completes inside `IDLE_GRACE_S`.
+     */
+    const charge =
+      this.rules.chargeSeconds > 0 ? clamp01(this.stillTime / this.rules.chargeSeconds) : 0;
+    const chargeMul = 1 + charge * (this.rules.chargeDamage - 1);
     for (const { id, level } of held) {
       const def = instrumentDef(id);
       if (!def) continue;
@@ -3610,6 +4058,52 @@ export class World {
        */
       this.instrumentTimers[id] = Math.max(0.05, s.interval);
 
+      /*
+       * LASER FIRES HERE, and the two rules that modify an activation are
+       * applied to `s` — the stat block this instrument is about to be fired
+       * with — rather than to `this.mods`.
+       *
+       * That is the load-bearing detail. `Modifiers` is folded once per step
+       * and shared by four instruments, the enemy clock and the player; a rule
+       * that reached into it would apply to whatever else happened to read it
+       * that frame. `s` is a fresh object per instrument per activation, so
+       * mutating it here is scoped to exactly the volley the rule is about.
+       *
+       * The counter is PER INSTRUMENT (`shotCount[id]`), so each voice has its
+       * own cadence. A single global counter would spend nearly every
+       * overcharge on the fastest instrument in the band, which is the same
+       * failure the rarest-wins tiebreak above exists to avoid.
+       *
+       * `pierce = 99` rather than a flag: `fireSeek`, `fireArc`, `firePods`,
+       * `fireCone` and `fireSpray` all already read `s.pierce > 1` to choose a
+       * piercing bullet type and a fatter radius, so the overcharged volley is
+       * visibly thicker as well as unstoppable, and no routine needed a new
+       * argument. This is where `Modifiers.pierce` went when it was deleted.
+       */
+      const n = this.shotCount[id] = (this.shotCount[id] ?? 0) + 1;
+      this.ruleChances.overcharge++;
+      this.ruleChances.charged++;
+      const overcharged = this.rules.overchargeEvery > 0 && n % Math.round(this.rules.overchargeEvery) === 0;
+      if (overcharged) {
+        s.pierce = Math.max(s.pierce, 99);
+        s.damage *= this.rules.overchargeDamage;
+        this.ruleFires.overcharge++;
+      }
+      if (charge > 0) {
+        s.damage *= chargeMul;
+        // Counted at half, not at any — see `ruleFires.charged`.
+        if (charge >= 0.5) this.ruleFires.charged++;
+      }
+      /*
+       * `overcharged` is stashed on the instance rather than threaded through
+       * ten routine signatures, and it is cleared at the bottom of this
+       * iteration. The three projectile routines read it to flag their bolts
+       * `Seeking`; the field, aura and strike shapes have nothing to steer and
+       * ignore it, which is correct — an overcharged bell is a bell that hits
+       * three times as hard, and there is no bolt to aim.
+       */
+      this.overchargeVolley = overcharged;
+
       switch (def.shape) {
         case 'seek':
           this.fireSeek(s);
@@ -3642,6 +4136,7 @@ export class World {
           this.fireField(id, s);
           break;
       }
+      this.overchargeVolley = false;
       fired = true;
       // The rarest thing that fired this tick gets the voice; see above.
       // `held` is the player's instrument list, so this id is an `InstrumentId`
@@ -3861,7 +4356,7 @@ export class World {
         damage,
         type: s.pierce > 1 ? 1 : 0,
         bounces: s.bounces,
-        flags: BulletFlag.DespawnOffscreen,
+        flags: this.shotFlags,
       });
     }
   }
@@ -3898,7 +4393,7 @@ export class World {
           // the defect this was: better that the table decides, and that a
           // future bouncing fan works the day someone writes one.
           bounces: s.bounces,
-          flags: BulletFlag.DespawnOffscreen,
+          flags: this.shotFlags,
         });
       }
       return;
@@ -4145,7 +4640,7 @@ export class World {
         damage,
         type: s.pierce > 1 ? 1 : 0,
         bounces: s.bounces,
-        flags: BulletFlag.DespawnOffscreen,
+        flags: this.shotFlags,
       });
     }
   }
@@ -4221,7 +4716,7 @@ export class World {
         // collision does not implement.
         type: 0,
         bounces: s.bounces,
-        flags: BulletFlag.DespawnOffscreen,
+        flags: this.shotFlags,
       });
     }
     // Half a gap, so the next volley falls between this one's bolts.
@@ -4266,7 +4761,7 @@ export class World {
         type: s.pierce > 1 ? 1 : 0,
         // Likewise zero for both orbit instruments today; see `fireArc`.
         bounces: s.bounces,
-        flags: BulletFlag.DespawnOffscreen,
+        flags: this.shotFlags,
       });
     }
   }

@@ -117,9 +117,20 @@ function recorder(sink) {
     Object.defineProperty(g, p, { get: () => v, set: (n) => { if (!Number.isFinite(n)) sink(`${p} = ${n}`); v = n; } });
   }
   for (const p of ['font', 'textAlign', 'textBaseline', 'lineCap', 'lineJoin', 'globalCompositeOperation', 'filter']) g[p] = '';
-  // Assigned after `g` exists: the renderer is handed a canvas and calls
-  // `getContext` on it, and the bloom pass reads `g.canvas` back.
-  g.canvas = { width: 900, height: 1120, getContext: () => g };
+  /*
+   * Assigned after `g` exists: the renderer is handed a canvas and calls
+   * `getContext` on it, and the bloom pass reads `g.canvas` back.
+   *
+   * `clientHeight` IS LOAD-BEARING and was missing. `Renderer.fitCanvases`
+   * guards on `clientHeight <= 0` and returns — but `undefined <= 0` is FALSE,
+   * so it walked straight past the guard into
+   * `Math.min(1.5, Math.max(0.6, (undefined * dpr) / height))`, which is NaN,
+   * and `this.scale` was NaN for the whole run. Every frame then opened with
+   * `setTransform(NaN, ...)`. 1120 makes the scale exactly 1, so the recorded
+   * coordinates are world coordinates and the assertions below can be written
+   * in the units the world uses.
+   */
+  g.canvas = { width: 900, height: 1120, clientHeight: 1120, clientWidth: 900, getContext: () => g };
   return { g, ops };
 }
 
@@ -131,6 +142,28 @@ function installDom(rec) {
     createElement: () => ({ width: 0, height: 0, getContext: () => rec.g }),
     getElementById: () => null,
   };
+  /*
+   * THIS FILE WAS DEAD, and neither `verify:node` nor `verify` could tell you.
+   *
+   * `Renderer`'s constructor grew `new ResizeObserver(...)` and
+   * `addEventListener('resize', ...)`, and this stub provides neither, so every
+   * invocation died at `frame()` with `ReferenceError: ResizeObserver is not
+   * defined` before a single assertion ran. Confirmed against a pristine
+   * `git archive HEAD` tree, so it is not a regression from the rules work —
+   * it is the tool going quiet at some earlier point and nobody noticing,
+   * because `effectsdraw` is in `npm run verify` (which dies on its first
+   * browser gate on this machine) and not in `tools/verify-node.mjs`.
+   *
+   * A check that cannot run is worse than a red one: it looks like coverage.
+   * The two stubs below are inert — nothing here ever resizes — and exist only
+   * so the constructor completes.
+   */
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  globalThis.addEventListener ??= () => {};
 }
 
 const effect = (over) => ({
@@ -273,6 +306,32 @@ console.log('\nNOVA HUE AND REACH');
   } else {
     pass('a large nova is still drawn well into its expansion');
   }
+
+  /*
+   * THE RIG'S OWN RINGS, which are the smallest this container has ever held.
+   *
+   * UP-TEMPO's trail drop is a 34-56px ring and COMPRESSOR's on-hit ring is
+   * 170-300px, and both go through `drawNovas` rather than through any new
+   * drawing code — that is why the trail is built on `novas[]` at all, since
+   * nothing in `Renderer` reads `World.wells` and the `field` shape is
+   * consequently invisible. A trail the player cannot see is a rule they cannot
+   * play around.
+   *
+   * The specific risk at this size is the four-stroke loop: it skips any stroke
+   * whose `r - k * 5` has gone non-positive, so a 34px ring early in its life
+   * draws fewer strokes than a big one. Counted rather than assumed. The
+   * geometry is restated here rather than imported because this file
+   * deliberately does not load `world.ts` — see the header — so these numbers
+   * are a SAMPLE of the shipped range, not a second copy of it.
+   */
+  const trail = frame([], [{ x: 450, y: 700, r: 12, alive: true, maxR: 34, speed: 42, dps: 22, hue: 28 }]);
+  const hitRing = frame([], [{ x: 450, y: 700, r: 90, alive: true, maxR: 300, speed: 520, dps: 60, hue: 12 }]);
+  console.log(`    UP-TEMPO trail drop, r=12 of maxR=34, hue 28: ${huesIn(trail).has(28) ? 'present' : 'MISSING'}   +${trail.length - bare} ops`);
+  console.log(`    COMPRESSOR on-hit ring, r=90 of maxR=300, hue 12: ${huesIn(hitRing).has(12) ? 'present' : 'MISSING'}   +${hitRing.length - bare} ops`);
+  if (trail.length - bare < 3) fail(`a trail drop at r=12 draws only ${trail.length - bare} ops — the rule is invisible`);
+  else if (!huesIn(trail).has(28)) fail('the trail drop is not drawn in its own hue');
+  else pass('UP-TEMPO leaves a visible mark, and COMPRESSOR\'s ring is drawn');
+  if (hitRing.length - bare < 3) fail(`the on-hit ring at r=90 draws only ${hitRing.length - bare} ops`);
 }
 
 console.log('\nMANY AT ONCE');

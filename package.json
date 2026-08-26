@@ -160,7 +160,9 @@
     "inputcheck": "node --experimental-transform-types tools/inputcheck.mjs",
     "sfxcheck": "node tools/sfxcheck.mjs",
     "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs",
-    "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs"
+    "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs",
+    "rulefire": "node --experimental-transform-types tools/rulefire.mjs",
+    "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",

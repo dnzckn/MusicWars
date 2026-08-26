@@ -32,7 +32,20 @@ const GROUPS = [
    * across ten refresh rates cost under a second. The groups are ordered by
    * measured cost, not by how much machinery a tool touches.
    */
-  ['static', 120, ['syntax', 'domwiring', 'inputcheck', 'legibility', 'colourblind', 'typescale']],
+  /*
+   * `effectsdraw` and `levelupdraw` are node-only — they drive the real
+   * `Renderer` against a recording 2D context and never open a browser — and
+   * neither was in this list. `effectsdraw` had been DEAD for some time as a
+   * result: `Renderer`'s constructor grew a `ResizeObserver` its DOM stub does
+   * not provide, so every invocation threw before the first assertion, and the
+   * only suite that ran it (`npm run verify`) dies on its second step on any
+   * machine without a browser. The header of this file names that exact failure
+   * mode — "which is how a check gets quietly left out for weeks".
+   */
+  ['static', 120, [
+    'syntax', 'domwiring', 'inputcheck', 'legibility', 'colourblind', 'typescale',
+    'effectsdraw', 'levelupdraw',
+  ]],
   ['score', 300, [
     'tune', 'clash', 'contour', 'motif', 'rhythm', 'basscheck', 'leadcheck',
     'motorcheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
@@ -40,6 +53,13 @@ const GROUPS = [
   ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn']],
   ['slow', 600, [
     'brain', 'pause', 'drops', 'overdrive', 'session', 'realprobe',
+    /*
+     * `rulefire` sits here rather than in `rules` because it drives seven real
+     * 300-second `World` runs — one per rule-bearing passive plus a control.
+     * It belongs to the same family as `builds`: a check that can only be
+     * answered by playing the game.
+     */
+    'rulefire',
     'builds', 'difficulty', 'combine', 'openers', 'churn', 'sections',
   ]],
 ];
