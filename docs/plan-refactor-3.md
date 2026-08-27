@@ -111,7 +111,7 @@ is the only test that matters here and no tool in this repo can run it.
 
 | # | weapon | the one sentence |
 |---|---|---|
-| 1 | **RICOCHET** | one bolt that never stops bouncing and gets faster with every wall it hits |
+| ~~1~~ | ~~RICOCHET~~ | one bolt that never stops bouncing and gets faster with every wall it hits |
 | 2 | **METRONOME** | fires only on the downbeat, for an enormous volley |
 | 3 | **DRUM FILL** | carpet-bombs random spots around you, faster the longer you hold still |
 | 4 | **THUNDERSHEET** | strikes random enemies on screen with no projectile at all |
@@ -272,3 +272,94 @@ It does not touch the music. Track M has one open fault (no musical unit longer
 than 80 seconds) and one open question (whether the bass wants to move an octave,
 which needs ears). Both are parked deliberately: this refactor is large enough,
 and the two workstreams share no files.
+
+---
+
+## 9. The roster, taken from the source material rather than invented
+
+The owner: *"i wouldnt do too many odd weapons, like literally just look at those
+games i mentioned ... shouldnt be that hard to get a lot of these in, no need to
+stop at 16 either if you can imagine a very rich item space"*.
+
+Both wikis were read in full. §2's draft roster is **withdrawn** — it was sixteen
+invented ideas, which is the third variation on the same mistake. What follows is
+taken from what those games actually ship.
+
+### 9a. What the wikis actually show
+
+**Ball x Pit: 21 base balls, 69 hand-authored fusions, ~7,921 reachable
+combinations.** And the crucial detail — **its base balls are mostly simple
+composable PROPERTIES**, not elaborate weapons: Bleed, Burn, Freeze, Poison,
+Ghost, Iron, Stone, Lightning, Wind, Time, Vampire, Cell, Egg Sac, Brood Mother,
+Charm, Dark, Light, Earthquake, Flesh, Laser. Each is one sentence. The
+INTEREST is in the 69 fusions, every one of which is a genuinely new named
+behaviour rather than a stat blend:
+
+> Nuclear Bomb, Timestop, Laser Cutter, Tumor, Banshee, Mosquito Kingdom,
+> Black Hole, Armageddon, Frozen Flame, Sandstorm, Zombie, Reaper.
+
+**It works because delivery is UNIFORM.** Every ball is launched the same way, so
+the ball's property IS the weapon, and properties compose without a combinatorial
+explosion of firing code. That is the architectural lesson and this codebase has
+been ignoring it: we have fourteen delivery shapes and no properties, which is
+exactly backwards for a combination game.
+
+**Vampire Survivors: ~70 weapons**, and its contribution is the DELIVERY
+vocabulary — attacks horizontally, fires at nearest, fires in faced direction,
+boomerangs, orbits, damages nearby, generates zones, bounces around, strikes at
+random, erases everything in sight, freezes in a line, shields, fires in four
+fixed directions, zones while moving and strikes when stopping.
+
+### 9b. The architecture that follows
+
+**A modest set of delivery shapes, ~20 composable properties, ~60 authored
+fusions.** Base weapons carry a property and a delivery; fusions are named and
+hand-authored, exactly as Ball x Pit does it.
+
+Twenty bases give `C(20,2) = 190` pairs. Author sixty of them as named results
+with real behaviour, and give the remaining 130 a systematic fallback that
+carries both parents' properties so nothing is a dead end. That is a genuinely
+rich item space and it is the shape both reference games converged on.
+
+### 9c. The twenty bases, mapped
+
+Musical names, mechanics taken from the wikis rather than invented:
+
+| base | mechanic (from source) | source |
+|---|---|---|
+| **EMBER** | adds burn stacks; damage over time | BxP Burn |
+| **GLASS** | chance to freeze; frozen take +25% | BxP Freeze |
+| **DETUNE** | poison stacks, damage per second | BxP Poison |
+| **RASP** | bleed stacks; damage per stack when hit | BxP Bleed |
+| **ARC** | chains to up to 3 nearby | BxP Lightning |
+| **SWELL** | passes through, slows 30%, less damage | BxP Wind |
+| **PHANTOM** | passes through enemies | BxP Ghost |
+| **ANVIL** | double damage, 40% slower | BxP Iron |
+| **GRAVEL** | 300% damage, erodes 40% per hit | BxP Stone |
+| **NOCTURNE** | 3x damage, destroys itself, cooldown | BxP Dark |
+| **GLARE** | blinds; blinded enemies miss half the time | BxP Light |
+| **FERMATA** | drops a snare that freezes what enters it | BxP Time |
+| **SIPHON** | chance to heal on hit | BxP Vampire |
+| **CANON** | splits into a clone on hit, twice | BxP Cell |
+| **TUTTI** | explodes into 2-4 lesser bolts | BxP Egg Sac |
+| **ENSEMBLE** | chance to spawn a helper on hit | BxP Brood Mother |
+| **TIMPANI** | damages everything in a radius | BxP Earthquake |
+| **ACCELERANDO** | speed +25% per bounce | BxP Flesh |
+| **LANCE** | damages everything in a line | BxP Laser |
+| **DUET** | chance to charm an enemy into fighting for you | BxP Charm |
+
+Delivery ideas from VS attach to these rather than multiplying them: nearest-target,
+faced-direction, orbit, boomerang, four-fixed-directions, random-strike,
+zones-while-moving, erase-in-sight.
+
+### 9d. Fusions, hand-authored
+
+Sixty named results, each a new behaviour. The source list is the model and many
+port directly:
+
+> EMBER+ANVIL → **BOMB** · BOMB+DETUNE → **FALLOUT** · FERMATA+GLASS → **TIMESTOP**
+> LANCE+GRAVEL → **CUTTER** · ARC+SWELL → **STORM** · EMBER+GLASS → **FROSTFIRE**
+> NOCTURNE+PHANTOM → **WRAITH** · SIPHON+PHANTOM → **LEECH** · CANON+TIMPANI → **OVERGROWTH**
+> GRAVEL+TIMPANI → **LANDSLIDE** · ARC+ENSEMBLE → **ROD** · DETUNE+GLASS → **VENOM**
+
+Order does not matter, per Ball x Pit. Every fusion frees a slot.
