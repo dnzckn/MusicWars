@@ -24,7 +24,40 @@
  */
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
+/*
+ * COMMENTS ARE STRIPPED FIRST, and that was a real blind spot rather than
+ * tidiness.
+ *
+ * `sizes()` below matches `selector { body }` by taking everything since the
+ * last brace as the selector. A CSS comment contains no braces, so a rule with
+ * a comment above it — which in this stylesheet is most of them, deliberately —
+ * had `/* ... *​/ .foo` as its captured "selector" and never matched the same
+ * rule's entry in another block. The pairing that finds shrinks is keyed on
+ * that string, so every commented rule was silently exempt from the whole
+ * check.
+ *
+ * Found while adding the overlay HUD: `.hud-score` shrinks 24px -> 20px on a
+ * small screen and this tool did not list it, while its uncommented neighbour
+ * `.slots li b` was listed correctly. Two rules, same block, different verdict,
+ * for no reason a reader could see.
+ *
+ * WHICH HALF THIS STRENGTHENS. The 9px floor was never affected — it reads the
+ * px value and does not care what the selector was called — and it has been
+ * fail-tested (an 8px `.hud-run` is reported and exits 1). What was blind is
+ * the SHRINK pairing, which is the informational half. Stripping comments took
+ * that list from four selectors to eight; `.hud-score`, `.eyebrow`, `.tagline`
+ * and `.controls` had been exempt the whole time.
+ *
+ * The shrink list still reports rather than fails, deliberately, and that is
+ * this file's own decision rather than an oversight: "whether any individual
+ * shrink is acceptable is a judgement that needs eyes on the layout". Making it
+ * visible is the fix; making it fatal would be a different argument.
+ *
+ * Replaced with spaces rather than removed, so line positions are unchanged if
+ * anything downstream ever wants them.
+ */
+const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
 /** Split into (mediaQuery|null, body) chunks, one level deep. */
 function chunks(src) {

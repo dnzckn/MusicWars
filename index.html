@@ -13,22 +13,166 @@
     <div id="app">
       <main id="stage">
         <!--
-          900x1120 is the VIEW, not the world.
+          900x1120 is the VIEW, not the world — and it is only the STARTING
+          view.
 
           The simulation is 3000x3000 (`src/game/field.ts`) and the camera
-          shows one 900x1120 rectangle of it. These two attributes are the
-          initial backing-store size of the canvases — `renderer.ts` resizes
-          them to `VIEW_W/VIEW_H * devicePixelRatio` on the first frame — and
-          they must track `VIEW_W`/`VIEW_H`, never `PLAYFIELD_W`/`PLAYFIELD_H`.
-          Setting them from the field would allocate a 3000x3000 bitmap per
-          canvas, 11x the pixels, to draw one screen into.
+          shows one view-sized rectangle of it. These two attributes are the
+          initial backing-store size of the canvases; `main.ts` derives the
+          real view from the window on the first layout pass and `renderer.ts`
+          resizes the backing stores to `VIEW_W/VIEW_H * devicePixelRatio`, so
+          these numbers survive for exactly one frame. They must still track
+          `VIEW_W`/`VIEW_H` rather than `PLAYFIELD_W`/`PLAYFIELD_H`: setting
+          them from the field would allocate a 3000x3000 bitmap per canvas,
+          11x the pixels, to draw one screen into.
 
-          The same pair is in `src/style.css` as `aspect-ratio: 900 / 1120`,
-          and `renderer.ts`'s canvas-scale calculation depends on that rule
-          existing. All three move together or none of them do.
+          `#stage` used to carry `aspect-ratio: 900 / 1120` in `src/style.css`
+          and that rule is gone. The stage is the window now and the VIEW is
+          derived from the stage, which is the same guarantee — that the two
+          rectangles are the same shape — reached from the other end.
         -->
         <canvas id="playfield" width="900" height="1120"></canvas>
         <canvas id="overlay" width="900" height="1120"></canvas>
+
+        <!--
+          THE HUD, over the playfield.
+
+          This replaces a 460px sidebar that took 30% of a 1512px window while
+          another 150px sat empty beside a portrait playfield: 48.7% of the
+          screen was the game. The rule for what lives here is what a player
+          ACTS ON mid-fight — how hurt they are, what they are holding and at
+          what level, how close the next level-up is, and how the run is going.
+          Everything else the sidebar carried is diagnostic and is behind the
+          gear or on the pause screen.
+
+          `pointer-events: none` on the container and `auto` on the one button,
+          so nothing here can eat a tap meant for the ship. The whole thing is
+          `hidden` until the run starts.
+        -->
+        <div id="hud" class="hud hidden">
+          <div class="hud-tl">
+            <!--
+              Vitals first, because they are the only thing here that is ever
+              urgent. Three rows of pips, unlabelled: shape and colour carry it
+              — green squares are shield, cyan circles are lives, gold squares
+              and violet circles are the two panic buttons — and that encoding
+              is what the pips were designed around. The sidebar spent 48px on
+              the words SHIELD, LIVES and BOMB / WELL.
+            -->
+            <b id="ui-hp" class="pips"></b>
+            <b id="ui-lives" class="pips"></b>
+            <b id="ui-stock" class="pips"></b>
+            <!--
+              The band, as tiles rather than as name chips.
+
+              Four instruments and four rig items is eight labels of up to
+              fourteen characters — STRING SECTION, HEARTSWALLOWER — and a row
+              of those over the playfield is a paragraph. A tile carries the
+              two things that are actually actionable in a fight: WHICH of your
+              four this is (monogram plus the ability's own character hue, the
+              same hue the offer card uses) and WHAT LEVEL it is at, which is
+              the number that decides where the next pick goes. The full name is
+              on the tile's title and on the pause screen.
+            -->
+            <ul id="ui-players" class="slots"></ul>
+            <ul id="ui-rig" class="slots rig"></ul>
+            <!-- Field-dropped surges. They EXPIRE, which is why they are here
+                 and not behind the gear: a thing with a clock on it is a thing
+                 the player is timing. -->
+            <ul id="ui-powerups" class="powerups"></ul>
+            <!-- The wave's standing rule, for as long as it holds. The banner
+                 that announces one is gone in 2.4 seconds. -->
+            <p class="movement hidden" id="ui-movement"></p>
+          </div>
+
+          <div class="hud-tr">
+            <button id="ui-gear" class="gear" type="button" title="Settings and diagnostics" aria-label="Settings">&#9881;</button>
+            <p class="hud-score"><b id="ui-score">0</b></p>
+            <p class="hud-mult" id="ui-combo">x1</p>
+            <p class="hud-run"><span>WAVE <b id="ui-wave">1</b></span><span id="ui-timer">0:00</span></p>
+          </div>
+
+          <div class="hud-foot">
+            <!--
+              THE ONE DIAGNOSTIC THAT IS ACTIONABLE.
+
+              Everything else the sidebar reported went behind the gear, and
+              `#ui-audio` went with it — which broke a real promise rather than
+              a readout: on a phone the audio context suspends and the ONLY way
+              a player learns to tap is being told. `tools/mobileaudio.mjs`
+              asserts exactly that string reaches the screen, and it was right
+              to fail. This mirrors it into the HUD and is hidden whenever the
+              audio is fine, so it costs nothing the rest of the time.
+            -->
+            <p class="resume hidden" id="ui-resume"></p>
+            <!-- A combination already assembled, or one step away. The offer
+                 screen is open for a few seconds a minute and knowing a
+                 combination is waiting changes what you do with the minute in
+                 between. -->
+            <p class="fusion-ready hidden" id="ui-fusion"></p>
+            <p class="xpline"><b id="ui-level">LV 1</b><span id="ui-xpnum">0 / 6</span></p>
+            <!--
+              The bar is LAST so it lands flush on the bottom edge of the
+              field. It used to be four canvas pixels along the TOP edge
+              (`renderer.drawXp`, now gone) and `docs/progression.md`'s spec for
+              it still holds — "thin, along an edge, not a widget" — it is just
+              the other edge, which is the one a survivor screen keeps empty.
+            -->
+            <div class="xp"><i id="ui-xp"></i></div>
+          </div>
+        </div>
+
+        <!--
+          Behind the gear.
+
+          Everything here was on the sidebar and none of it is acted on while
+          dodging: the mix readout is the product's own evidence rather than a
+          control, the enemy census repeats what is on screen, and the frame
+          counter is for whoever is measuring. Volume is the exception and the
+          reason this panel exists at all — the owner asked for it by name.
+        -->
+        <div id="settings" class="settings hidden" role="dialog" aria-label="Settings">
+          <header>
+            <span class="mark">MUSIC<b>WARS</b></span>
+            <button id="ui-gear-close" class="gear" type="button" aria-label="Close settings">&times;</button>
+          </header>
+
+          <section>
+            <h3>VOLUME</h3>
+            <div class="vol">
+              <button id="ui-mute" type="button" title="Mute (M)" aria-label="Mute">&#9835;</button>
+              <input id="ui-volume" type="range" min="0" max="100" value="75" aria-label="Master volume" />
+              <b id="ui-volnum">75</b>
+            </div>
+          </section>
+
+          <section>
+            <h3>MIX<b class="live"><i></i><span id="ui-section">intro</span></b></h3>
+            <p class="nowline"><b id="ui-key">A aeolian</b><em>&middot;</em><b id="ui-feel">four-to-the-floor</b><em>&middot;</em><b id="ui-bpm">128</b></p>
+            <p class="reason" id="ui-reason"></p>
+            <div class="meter" title="what the arrangement is running on: danger or progress, whichever is higher">
+              <label>ENERGY <em id="ui-driver"></em></label>
+              <div class="bar"><i id="ui-tension"></i></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>ON STAGE</h3>
+            <ul id="ui-ensemble" class="ensemble"><li class="empty">empty stage</li></ul>
+          </section>
+
+          <section>
+            <h3>DIAGNOSTICS</h3>
+            <p class="diag">
+              <span><b id="ui-fps">--</b>fps</span>
+              <span><b id="ui-bullets">0</b>bullets</span>
+              <span><b id="ui-best">0</b>best</span>
+              <span class="audio"><b id="ui-audio">idle</b></span>
+            </p>
+          </section>
+
+          <p class="sub">press <kbd>P</kbd> to pause &middot; <kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd> for volume</p>
+        </div>
 
         <!--
           The opening.
@@ -156,115 +300,6 @@
       </div>
 
 
-      <aside id="panel">
-        <!--
-          The panel identifies itself before it reports anything.
-
-          Every block used to be the same bordered box in the same weight, so a
-          screenshot of this product looked like a debug overlay rather than the
-          instrument it is. The masthead carries the wordmark and a transport —
-          four beat lamps and the tempo, driven by the real clock — so the first
-          thing the eye lands on says "live music", which is the whole pitch.
-        -->
-        <header id="panel-head">
-          <span class="mark">MUSIC<b>WARS</b></span>
-          <span class="transport">
-            <span id="ui-beats" class="beats" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-            <b id="ui-bpm">128</b><em>BPM</em>
-          </span>
-        </header>
-
-        <section class="block b-score">
-          <h3>SCORE<b class="wave-chip">WAVE <i id="ui-wave">1</i></b></h3>
-          <div class="scoreline">
-            <p class="big" id="ui-score">0</p>
-            <p class="mult" id="ui-combo">x1</p>
-          </div>
-          <p class="row tiny best"><span>BEST</span><b id="ui-best">0</b></p>
-          <!-- Set by the HUD only on waves that run under a named rule; the
-               banner announcing it is gone in two seconds, the rule is not. -->
-          <p class="movement hidden" id="ui-movement"></p>
-          <div class="health">
-            <div class="health-row">
-              <span>SHIELD</span>
-              <b id="ui-hp" class="pips"></b>
-            </div>
-            <div class="health-row">
-              <span>LIVES</span>
-              <b id="ui-lives" class="pips"></b>
-            </div>
-            <div class="health-row">
-              <span>BOMB / WELL</span>
-              <b id="ui-stock" class="pips"></b>
-            </div>
-          </div>
-        </section>
-
-        <section class="block b-stage">
-          <h3>ON STAGE</h3>
-          <ul id="ui-ensemble" class="ensemble"><li class="empty">empty stage</li></ul>
-        </section>
-
-        <!--
-          The band.
-
-          The loadout below is the *temporary* half — field-dropped surges that
-          expire. This is the permanent half, and after the arena conversion it
-          is the more important of the two by a wide margin: every id in here is
-          read by `audio/layers.ts`, so these two rows literally are the mix. A
-          player who cannot see their ensemble cannot tell that a level-up did
-          anything, and "the loadout is the mix" is the whole premise.
-
-          PLAYERS and RIG are separate rows because they occupy separate slot
-          pools. Confusing them is the one way to waste a level-up.
-        -->
-        <section class="block b-band">
-          <h3>THE BAND<b class="lv-chip">LV&nbsp;<i id="ui-level">1</i></b></h3>
-          <div class="xp" title="experience toward the next musician"><i id="ui-xp"></i></div>
-          <p class="row tiny xpline"><span id="ui-slots">4 players &middot; 3 rig</span><b id="ui-xpnum">0 / 6</b></p>
-          <ul id="ui-players" class="chips"></ul>
-          <ul id="ui-rig" class="chips"></ul>
-          <!-- A fusion the player has already assembled, waiting on the next
-               boss. A reward nobody can see coming cannot be played toward. -->
-          <p class="fusion-ready hidden" id="ui-fusion"></p>
-        </section>
-
-        <section class="block b-loadout">
-          <h3>LOADOUT</h3>
-          <ul id="ui-powerups" class="powerups"></ul>
-        </section>
-
-        <!--
-          The signature block. It is the reason this project exists, so it is
-          the one thing on the page allowed to look expensive: an accent rail,
-          the section badge in the header, and the roll and the generated source
-          given the room the readouts were wasting.
-        -->
-        <section class="block grow b-mix">
-          <h3>MIX<b class="live"><i></i><span id="ui-section">intro</span></b></h3>
-          <p class="nowline"><b id="ui-key">A aeolian</b><em>&middot;</em><b id="ui-feel">four-to-the-floor</b></p>
-          <p class="reason" id="ui-reason"></p>
-          <div class="meter" title="what the arrangement is running on: danger or progress, whichever is higher">
-            <label>ENERGY <em id="ui-driver"></em></label>
-            <div class="bar"><i id="ui-tension"></i></div>
-          </div>
-          <canvas id="ui-notation" class="score" width="520" height="300" aria-label="the bar currently being played, one lane per instrument"></canvas>
-          <pre id="ui-code" class="code" aria-label="the Strudel source generated for this bar"></pre>
-        </section>
-
-        <section class="block b-foot">
-          <div class="vol">
-            <button id="ui-mute" type="button" title="Mute (M)" aria-label="Mute">&#9835;</button>
-            <input id="ui-volume" type="range" min="0" max="100" value="75" aria-label="Master volume" />
-            <b id="ui-volnum">75</b>
-          </div>
-          <p class="diag">
-            <span><b id="ui-fps">--</b>fps</span>
-            <span><b id="ui-bullets">0</b>bullets</span>
-            <span class="audio"><b id="ui-audio">idle</b></span>
-          </p>
-        </section>
-      </aside>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -22,6 +22,11 @@ await page.goto(process.env.TARGET, { waitUntil: 'networkidle' });
 await page.click('#start-button');
 await page.waitForTimeout(3000);
 await page.keyboard.down('KeyZ');
+// The mix and frame readouts live behind the gear now (`docs/plan-refactor-3.md`
+// §5) and `hud.ts` does not write them while the panel is shut. Open it, or
+// every field below reads its markup default.
+await page.evaluate(() => window.__musicwars.hud.setSettings(true));
+await page.waitForTimeout(400);
 const r = await page.evaluate(async () => {
   let peak = 0, sum = 0, n = 0;
   const end = performance.now() + 9000;

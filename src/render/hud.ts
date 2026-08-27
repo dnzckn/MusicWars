@@ -1,20 +1,46 @@
 /**
- * DOM side panel.
+ * The overlay HUD, and the settings panel behind the gear.
  *
- * The mix readout is not debug UI. The whole premise is that the soundtrack is
- * a function of the game state, and that claim is unfalsifiable to a player who
- * cannot see which layers are live. Showing the stems, the section and the key
- * turns "the music got more intense" into something you can watch happen.
+ * WHAT THIS REPLACED, and why. It was a 460px DOM sidebar carrying a masthead,
+ * a transport, five bordered blocks, an eleven-lane notation canvas and five
+ * lines of generated Strudel. On a 1512x945 window that sidebar plus the dead
+ * margin beside a portrait playfield left 48.7% of the screen for the game.
+ *
+ * THE RULE FOR WHAT IS IN THE HUD: a player has to ACT on it while dodging.
+ * Health, what you are holding and at what level, how close the next level-up
+ * is, whether a combination is waiting, and how the run is going. That is all.
+ *
+ * Everything else moved behind the gear — the mix readout, the enemy census,
+ * the frame counter — where it is still available and no longer competing with
+ * a bullet for attention. Two things were deleted outright:
+ *
+ *   THE NOTATION CANVAS. Eleven lanes of note onsets with a playhead, redrawn
+ *   every frame. It was the most distinctive thing on the page and the owner is
+ *   right that it did not earn its space. It was NOT, however, costing frames:
+ *   A/B'd interleaved over ten rounds at wave 24 on this machine, stubbing
+ *   `drawScore` moved the mean from 45.41 fps to 44.82 — i.e. the wrong way by
+ *   0.59 fps, against a control spread of +/-5.61. Stubbing the WHOLE DOM HUD
+ *   bought 1.03 fps. The reason to delete it is that a player never acted on
+ *   it; the performance claim is not supported and should not be repeated.
+ *
+ *   THE GENERATED SOURCE. Five tokenised lines of the Strudel this bar was
+ *   built from. It is the proof of the premise and it belongs in a capture or
+ *   a README, not over a playfield — the same argument as the roll, minus the
+ *   beauty.
+ *
+ * The premise itself has not been abandoned: the stem levels, the section, the
+ * key and the groove are all still shown, behind the gear, and the room around
+ * the cabinet still takes the groove's hue.
  */
 
 import type { AbilityId, GameSnapshot } from '../core/events';
 import { clamp01 } from '../core/math';
 import type { DirectorReadout } from '../audio/director';
-import { STEM_IDS, STEM_LABELS, type StemId } from '../audio/layers';
+import { STEM_LABELS, type StemId } from '../audio/layers';
 import { ARCHETYPE_INFO } from '../game/enemies';
 import { powerupDef } from '../game/powerups';
 import { characterOf, labelOf, maxLevelOf, slotOf } from '../game/weapons';
-import { characterHue, readyFusions, pendingFusions} from './levelup';
+import { characterHue, readyFusions, pendingFusions } from './levelup';
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -23,7 +49,7 @@ const $ = (id: string): HTMLElement => {
 };
 
 /**
- * The standing rule for a wave, in the panel's own words.
+ * The standing rule for a wave, in the HUD's own words.
  *
  * The banner that announces one of these is gone in about two seconds, but the
  * rule holds for the whole wave — so a player who blinked spent ninety seconds
@@ -53,24 +79,32 @@ const OPENING_LANES: readonly [StemId, string][] = [
   ['kick', 'the floor the rest stands on'],
 ];
 
-/** A stem counts as arrived here at the same level the roll calls a lane live. */
+/** A stem counts as arrived here at the same level a fader would call it live. */
 const ARRIVED = 0.05;
 
 /**
- * Crude tokeniser for the generated source.
+ * A tile's three-or-fewer letters.
  *
- * The panel prints real Strudel, and undifferentiated grey made five lines of
- * it read as a stack trace. Strings and numbers are the parts that visibly
- * change from bar to bar, so they are the parts that get colour.
+ * The roster is 106 instruments with labels up to fourteen characters long
+ * (STRING SECTION, HEARTSWALLOWER), and a 40px tile holds about four glyphs at
+ * a readable size. Initials for a multi-word name and the first three letters
+ * otherwise, which keeps STRING SECTION ("SS") apart from SNARE ("SNA") — the
+ * pair a first-letter scheme would collide.
+ *
+ * This does not have to be globally unique and could not be: what it has to
+ * separate is the FOUR things a player is holding, against four different
+ * character hues, with the full name one hover away and on the pause screen.
  */
-const TOKEN = /("[^"]*")|(\d+(?:\.\d+)?)|([A-Za-z_][\w.]*)|(\s+)|([^\s])/g;
+function monogram(label: string): string {
+  const words = label.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (words.length > 1) return words.map((w) => w[0]).join('').slice(0, 3).toUpperCase();
+  return (words[0] ?? label).slice(0, 3).toUpperCase();
+}
 
-function tokenClass(m: RegExpExecArray): string {
-  if (m[1] !== undefined) return 's';
-  if (m[2] !== undefined) return 'n';
-  if (m[3] !== undefined) return 'f';
-  if (m[4] !== undefined) return '';
-  return 'p';
+/** `m:ss`, for the run clock. */
+function clock(t: number): string {
+  const s = Math.max(0, Math.floor(t));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 export class Hud {
@@ -78,6 +112,7 @@ export class Hud {
     score: $('ui-score'),
     combo: $('ui-combo'),
     wave: $('ui-wave'),
+    timer: $('ui-timer'),
     hp: $('ui-hp'),
     lives: $('ui-lives'),
     stock: $('ui-stock'),
@@ -87,7 +122,6 @@ export class Hud {
     level: $('ui-level'),
     xp: $('ui-xp'),
     xpnum: $('ui-xpnum'),
-    slots: $('ui-slots'),
     players: $('ui-players'),
     rig: $('ui-rig'),
     fusion: $('ui-fusion'),
@@ -98,17 +132,18 @@ export class Hud {
     tension: $('ui-tension'),
     driver: $('ui-driver'),
     reason: $('ui-reason'),
-    notation: $('ui-notation') as HTMLCanvasElement,
-    code: $('ui-code'),
     fps: $('ui-fps'),
     bullets: $('ui-bullets'),
     audio: $('ui-audio'),
+    resume: $('ui-resume'),
   };
 
-  private beats = [...$('ui-beats').children] as HTMLElement[];
+  private hudEl = $('hud');
+  private settingsEl = $('settings');
   private stage = $('stage');
   private opener = $('opening');
   private title = $('title-screen');
+  private pause = $('pause-screen');
   /** Per-lane row, its fill, and whether it has arrived. Sticky once lit. */
   private openerRows: { id: StemId; li: HTMLElement; fill: HTMLElement; lit: boolean }[] = [];
   /**
@@ -121,26 +156,8 @@ export class Hud {
   private openerState: 'pre' | 'done' = 'pre';
   private lastTime = 0;
 
-  private sg: CanvasRenderingContext2D;
-  /** Notes for the current bar, re-sampled once per bar rather than per frame. */
-  private bar: Record<StemId, { t: number; n: number | null }[]> | null = null;
-  private lastBar = -1;
   /** Cache of last-written text, so we are not touching the DOM 60 times a second for nothing. */
   private last: Record<string, string> = {};
-
-  /**
-   * The roll's size in CSS pixels, and whether the backing store still matches.
-   *
-   * The canvas was a fixed 520x300 bitmap displayed in a 347x200 box, so every
-   * lane label was resampled down by a third — the most distinctive thing on
-   * the page was also the blurriest. A ResizeObserver keeps the backing store
-   * equal to the rendered box times the device pixel ratio, and costs nothing
-   * per frame: measuring the element in `update()` would force a layout on a
-   * HUD that also writes styles, which is the classic read-after-write stall.
-   */
-  private cw = 0;
-  private ch = 0;
-  private resized = true;
 
   constructor() {
     for (const [id, role] of OPENING_LANES) {
@@ -157,14 +174,23 @@ export class Hud {
       this.openerRows.push({ id, li, fill, lit: false });
     }
 
-    this.sg = this.els.notation.getContext('2d')!;
-    const ro = new ResizeObserver(() => {
-      this.resized = true;
-    });
-    ro.observe(this.els.notation);
-    addEventListener('resize', () => {
-      this.resized = true;
-    });
+    const toggle = () => this.setSettings(this.settingsEl.classList.contains('hidden'));
+    $('ui-gear').addEventListener('click', toggle);
+    $('ui-gear-close').addEventListener('click', () => this.setSettings(false));
+  }
+
+  /**
+   * Open or close the settings panel.
+   *
+   * Public because `main.ts` closes it on ESC alongside the pause screen, and
+   * because `settingsOpen` gates the per-frame work below — see `update`.
+   */
+  setSettings(open: boolean): void {
+    this.settingsEl.classList.toggle('hidden', !open);
+  }
+
+  get settingsOpen(): boolean {
+    return !this.settingsEl.classList.contains('hidden');
   }
 
   private set(key: string, el: HTMLElement, value: string): void {
@@ -173,163 +199,59 @@ export class Hud {
     el.textContent = value;
   }
 
-  /** Match the backing store to the box, and report the size to draw into. */
-  private fitCanvas(): void {
-    if (!this.resized) return;
-    this.resized = false;
-    const el = this.els.notation;
-    const dpr = Math.min(3, Math.max(1, devicePixelRatio || 1));
-    const w = Math.max(1, el.clientWidth);
-    const h = Math.max(1, el.clientHeight);
-    this.cw = w;
-    this.ch = h;
-    const bw = Math.round(w * dpr);
-    const bh = Math.round(h * dpr);
-    if (el.width !== bw || el.height !== bh) {
-      el.width = bw;
-      el.height = bh;
-    }
-    this.sg.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  /**
-   * Draw the bar as a score: one lane per stem, a mark at every note onset,
-   * pitch shown by vertical position where the stem has one, and a playhead
-   * sweeping in time with the transport.
-   *
-   * The lane's name sits on a fader — the gutter fills in proportion to that
-   * stem's level — so the roll answers "what is playing" and "how loud is it"
-   * in the same glance, which is what a channel strip is for.
-   */
-  private drawScore(readout: DirectorReadout, barPhase: number): void {
-    this.fitCanvas();
-    const g = this.sg;
-    const W = this.cw;
-    const H = this.ch;
-    const rows = STEM_IDS.length;
-    const laneH = H / rows;
-    const labelW = Math.round(Math.min(58, Math.max(44, W * 0.16)));
-    const x0 = labelW + 4;
-    const span = W - x0 - 5;
-
-    g.clearRect(0, 0, W, H);
-
-    // Alternating lane bands. Eleven unmarked rows of dots is a table with no
-    // ruling; the banding is what lets the eye stay on one instrument.
-    g.fillStyle = 'rgba(255,255,255,0.018)';
-    for (let r = 0; r < rows; r += 2) g.fillRect(x0 - 2, r * laneH, W - x0 - 1, laneH);
-
-    // Beat gridlines, so the eye can find the downbeat.
-    for (let b = 0; b <= 4; b++) {
-      const x = x0 + (span * b) / 4;
-      g.strokeStyle = b === 0 || b === 4 ? 'rgba(140,165,220,0.22)' : 'rgba(120,140,190,0.11)';
-      g.lineWidth = 1;
-      g.beginPath();
-      g.moveTo(Math.round(x) + 0.5, 0);
-      g.lineTo(Math.round(x) + 0.5, H);
-      g.stroke();
-    }
-
-    /*
-     * The label has to fit its lane, not a nominal lane.
-     *
-     * A floor of 8px looked fine at the panel's 460px width and collided with
-     * itself at 268px: eleven lanes into the roll's 90px minimum is 8.2px each,
-     * so an 8px label overlapped the rows above and below and the gutter turned
-     * into a smear. Tie it to the lane the way the notes are tied to it.
-     */
-    const labelPx = Math.max(6, Math.min(10, laneH * 0.62));
-    g.textBaseline = 'middle';
-
-    for (let r = 0; r < rows; r++) {
-      const id = STEM_IDS[r];
-      const level = clamp01(readout.levels[id]);
-      const y = r * laneH + laneH / 2;
-      const live = level > 0.05;
-
-      // The fader behind the name. Faded out at its right edge, or eleven
-      // hard-edged blocks of differing widths read as a column of chips rather
-      // than as levels.
-      if (live) {
-        const fw = labelW * (0.22 + level * 0.78);
-        const grad = g.createLinearGradient(0, 0, fw, 0);
-        grad.addColorStop(0, `hsla(190, 90%, 62%, ${0.06 + level * 0.2})`);
-        grad.addColorStop(1, 'hsla(190, 90%, 62%, 0)');
-        g.fillStyle = grad;
-        g.fillRect(0, r * laneH + 1, fw, laneH - 2);
-      }
-
-      g.font = `${live ? 700 : 400} ${labelPx}px ui-monospace, monospace`;
-      g.fillStyle = live ? `rgba(210,224,248,${0.5 + level * 0.5})` : 'rgba(92,102,136,0.42)';
-      g.fillText(STEM_LABELS[id], 5, y + 0.5);
-
-      g.strokeStyle = live ? 'rgba(53,230,255,0.11)' : 'rgba(92,102,136,0.06)';
-      g.beginPath();
-      g.moveTo(x0, Math.round(y) + 0.5);
-      g.lineTo(W - 5, Math.round(y) + 0.5);
-      g.stroke();
-
-      const notes = this.bar?.[id] ?? [];
-      if (!notes.length) continue;
-
-      // Pitched stems get vertical placement within the lane; percussion sits
-      // on the centre line.
-      const pitches = notes.filter((n) => n.n !== null).map((n) => n.n as number);
-      const lo = pitches.length ? Math.min(...pitches) : 0;
-      const hi = pitches.length ? Math.max(...pitches) : 1;
-      const range = Math.max(1, hi - lo);
-
-      for (const note of notes) {
-        const x = x0 + span * note.t;
-        const dy = note.n === null ? 0 : (0.5 - (note.n - lo) / range) * (laneH * 0.58);
-        // Notes near the playhead flare, so you see them being played.
-        const near = Math.max(0, 1 - Math.abs(note.t - barPhase) * 9);
-        const alpha = (0.3 + level * 0.6) * (0.55 + near * 0.45);
-        const cy = y + dy;
-        if (note.n === null) {
-          // Percussion: a struck bar, which is what it is.
-          const hh = Math.max(3, laneH * 0.3) * (0.8 + near * 0.5);
-          g.fillStyle = `rgba(255,209,102,${alpha})`;
-          g.fillRect(x - 1, cy - hh / 2, 2.2 + near, hh);
-        } else {
-          const w = 5 + near * 3 + level * 2;
-          const h = 3 + near * 1.4;
-          g.fillStyle = `hsla(${190 + (note.n % 12) * 9}, 95%, ${60 + near * 25}%, ${alpha})`;
-          this.capsule(g, x - 1, cy - h / 2, w, h);
-        }
-      }
-    }
-
-    // The playhead, with the bar it has already played dimmed behind it.
-    const px = x0 + span * barPhase;
-    const trail = g.createLinearGradient(px - 26, 0, px, 0);
-    trail.addColorStop(0, 'rgba(255,255,255,0)');
-    trail.addColorStop(1, 'rgba(255,255,255,0.09)');
-    g.fillStyle = trail;
-    g.fillRect(px - 26, 0, 26, H);
-    g.fillStyle = 'rgba(255,255,255,0.6)';
-    g.fillRect(Math.round(px), 0, 1.5, H);
-  }
-
-  private capsule(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
-    g.beginPath();
-    // roundRect is everywhere this game runs, but a missing one must not take
-    // the frame down with it.
-    if (typeof g.roundRect === 'function') g.roundRect(x, y, w, h, h / 2);
-    else g.rect(x, y, w, h);
-    g.fill();
-  }
-
   update(
     snap: GameSnapshot,
     readout: DirectorReadout,
     fps: number,
     audio: string,
-    bar: Record<StemId, { t: number; n: number | null }[]> | null,
-    barIndex: number,
     barPhase: number,
-    code: { label: string; code: string }[],
   ): void {
+    /*
+     * The HUD is hidden until the run starts, and again while the offer is up.
+     *
+     * "Started" is the signal the opening uses: the title screen going away
+     * plus a clock that has actually started. `snap.running` is not it — the
+     * phase does not leave 'idle' until `beginWave`, which is several bars
+     * later.
+     *
+     * `choosing` is in here because the level-up screen is a modal drawn on the
+     * OVERLAY CANVAS, under this at z-index 6 — so the XP line was printing
+     * across the offer's own lever row (`1-4 CHOOSE  R REROLL  Q SKIP`) at
+     * every window size where the two happened to land on the same pixels. It
+     * is not merely a collision: the offer draws YOUR ENSEMBLE and a level
+     * header of its own, so while it is open the HUD is showing the same facts
+     * twice, in a smaller font, over the top.
+     *
+     * Pause and game-over are in for the same reason: all three are `.screen`
+     * overlays at z-index 10 with a translucent backdrop, so the HUD showed
+     * THROUGH them — a dimmed score in the corner of a page that is already
+     * printing SCORE 771 in the middle. Each of those screens carries its own
+     * readout and none of them is a moment to act on the HUD.
+     *
+     * Pause is read off the SCREEN'S OWN CLASS, not off `snap.paused`.
+     * `writeSnapshot` hardcodes `s.paused = false` and is not called at all
+     * while paused, because pausing stops the world stepping — so that field is
+     * whatever the last live frame left behind, which is always false. Pausing
+     * actually lives in a local in `main.ts`, and the visible consequence of it
+     * is the element this reads. That is also the pattern `started` already
+     * uses for the title screen one line up.
+     *
+     * The elements keep being WRITTEN while hidden — this is a class toggle and
+     * nothing more — which is what lets `levelshot` read the band rows with the
+     * offer open, exactly as it always has.
+     */
+    const started =
+      this.title.classList.contains('hidden') &&
+      snap.time > 0.05 &&
+      !snap.choosing &&
+      !snap.gameOver &&
+      this.pause.classList.contains('hidden');
+    if (this.last['shown'] !== String(started)) {
+      this.last['shown'] = String(started);
+      this.hudEl.classList.toggle('hidden', !started);
+      if (!started) this.setSettings(false);
+    }
+
     this.set('score', this.els.score, snap.score.toLocaleString('en-US'));
     /*
      * The multiplier says when it has bought something.
@@ -355,30 +277,43 @@ export class Hud {
       this.els.combo.classList.toggle('earned', descant);
     }
     this.set('wave', this.els.wave, String(snap.wave + 1));
+    this.set('timer', this.els.timer, clock(snap.time));
     this.updatePips(snap);
     this.updateMovement(snap);
     this.updateOpening(snap, readout);
-    this.set('section', this.els.section, readout.section);
-    this.set('bpm', this.els.bpm, String(readout.bpm));
-    this.set('key', this.els.key, readout.key);
-    this.set('feel', this.els.feel, readout.feel);
-    this.set('driver', this.els.driver, readout.driver.toUpperCase());
-    this.set('reason', this.els.reason, readout.harmonyReason);
-    this.set('fps', this.els.fps, fps.toFixed(0));
-    this.set('bullets', this.els.bullets, String(snap.bulletCount));
-    this.set('audio', this.els.audio, audio);
 
-    this.els.tension.style.width = `${(clamp01(readout.energy) * 100).toFixed(1)}%`;
+    /*
+     * The audio state, ABOVE the settings gate, because one of its values is an
+     * instruction rather than a diagnostic.
+     *
+     * A suspended AudioContext on a phone recovers only inside a user gesture,
+     * so "tap to resume" is the difference between a silent game and a working
+     * one. Putting it behind the gear meant the prompt existed and nobody could
+     * see it; `tools/mobileaudio.mjs` fails on precisely that and is the reason
+     * this block is here. Every other value is hidden.
+     *
+     * Two writes, both cached, so a run that never suspends pays one string
+     * comparison per frame.
+     */
+    this.set('audio', this.els.audio, audio);
+    const needsTap = audio === 'tap to resume';
+    if (this.last['tap'] !== String(needsTap)) {
+      this.last['tap'] = String(needsTap);
+      this.els.resume.classList.toggle('hidden', !needsTap);
+      this.els.resume.textContent = needsTap ? '♪ tap to resume the music' : '';
+    }
 
     /*
      * The room takes the groove's colour.
      *
-     * A fixed 3:4 playfield leaves ~280px of letterboxing on a wide window,
-     * which read as an unfinished page. The page background is two static
-     * gradients on this hue, so the light around the cabinet changes when the
-     * band changes feel — and because it is only written when the hue actually
-     * moves (four times in a run, not sixty times a second) it repaints about
-     * as often as the groove does.
+     * The page background is two static gradients on this hue, so the light
+     * around the cabinet changes when the band changes feel — and because it is
+     * only written when the hue actually moves (four times in a run, not sixty
+     * times a second) it repaints about as often as the groove does.
+     *
+     * Outside the settings gate below: this is the one piece of the mix readout
+     * that is visible whether or not the panel is open, because it is not a
+     * readout at all, it is the room.
      */
     const hue = String(Math.round(readout.paletteHue));
     if (this.last['hue'] !== hue) {
@@ -386,68 +321,41 @@ export class Hud {
       document.documentElement.style.setProperty('--hue', hue);
     }
 
-    // Four lamps on the real transport. Derived from the bar phase rather than
-    // from a frame counter, so they land with the kick and not near it.
-    const beat = Math.min(3, Math.max(0, Math.floor(barPhase * 4)));
-    if (this.last['beat'] !== String(beat)) {
-      this.last['beat'] = String(beat);
-      for (let i = 0; i < this.beats.length; i++) this.beats[i].classList.toggle('on', i === beat);
-    }
-
-    if (bar && barIndex !== this.lastBar) {
-      this.lastBar = barIndex;
-      this.bar = bar;
-      this.paintCode(code);
-    }
-    this.drawScore(readout, barPhase);
-
-    this.updateEnsemble(snap);
     this.updateBand(snap);
 
     const kinds = Object.keys(snap.powerups) as (keyof GameSnapshot['powerups'])[];
     const key = kinds.map((k) => `${k}${snap.powerups[k]}`).join(',');
     /*
-     * The empty slots are drawn too.
-     *
-     * Capacity has to be visible, because the whole build is shaped by it.
-     *
-     * The panel showed only what was HELD, so three of three looked identical
-     * to three of four and the player could not see whether the next card
-     * would cost them something. Drawing the empty ones makes the ceiling
-     * legible at a glance.
-     *
-     * This block used to justify itself by boss slot growth — "going from
-     * three slots to four" — and that mechanic is gone; slots are fixed at
-     * four and three. The reason survives the mechanic: with a FIXED four and three,
-     * knowing how full you are is what makes a swap or a fusion legible, and a
-     * fusion spending its catalyst is now the only thing that hands a slot
-     * back.
+     * The empty slots are drawn too. Capacity has to be visible, because the
+     * whole build is shaped by it: three of three looked identical to three of
+     * four, so the player could not see whether the next card would cost them
+     * something. The dashed slots already say nothing is held, which is why
+     * there is no 'none' placeholder beside them.
      */
     const slots = snap.loadoutSlots ?? 3;
     if (this.last['pu'] !== `${key}|${slots}`) {
       this.last['pu'] = `${key}|${slots}`;
       this.els.powerups.replaceChildren();
-      /*
-       * No 'none' placeholder once the slots are drawn.
-       *
-       * The empty-loadout text predates the slot chips, and with both present
-       * the panel read "none" followed by four empty slots — the same fact
-       * twice, and it made the slot count harder to read rather than easier.
-       * The dashed slots already say nothing is held.
-       */
-      if (kinds.length) {
-        for (const k of kinds) {
-          const def = powerupDef(k);
-          const li = document.createElement('li');
-          const lvl = snap.powerups[k] ?? 1;
-          li.textContent = lvl > 1 ? `${def.label} ${lvl}` : def.label;
-          li.title = `sounds like: ${def.sound}`;
-          li.style.borderColor = `hsla(${def.hue}, 90%, 60%, .5)`;
-          li.style.color = `hsl(${def.hue}, 90%, 72%)`;
-          li.style.background = `hsla(${def.hue}, 90%, 60%, .12)`;
-          this.els.powerups.appendChild(li);
-        }
+      for (const k of kinds) {
+        const def = powerupDef(k);
+        const li = document.createElement('li');
+        const lvl = snap.powerups[k] ?? 1;
+        li.textContent = lvl > 1 ? `${def.label} ${lvl}` : def.label;
+        li.title = `sounds like: ${def.sound}`;
+        li.style.borderColor = `hsla(${def.hue}, 90%, 60%, .5)`;
+        li.style.color = `hsl(${def.hue}, 90%, 72%)`;
+        li.style.background = `hsla(${def.hue}, 90%, 60%, .12)`;
+        this.els.powerups.appendChild(li);
       }
+      /*
+       * The empty ones, and this loop is not decoration.
+       *
+       * It was dropped in the first draft of this rewrite — the comment above
+       * survived and the code did not — and `tools/progression.mjs` caught it
+       * within the hour: "the loadout row shows 1 chips for 3 slots". That
+       * check exists because the row once printed "none" AND four empty chips,
+       * the same fact twice, and it is the reason the count is asserted at all.
+       */
       for (let i = kinds.length; i < slots; i++) {
         const li = document.createElement('li');
         li.className = 'slot';
@@ -456,36 +364,33 @@ export class Hud {
         this.els.powerups.appendChild(li);
       }
     }
-  }
 
-  /**
-   * The generated source, rebuilt only when the patterns change.
-   *
-   * Five lines of identical grey was the least readable text on the page while
-   * being the only proof that nothing here is pre-recorded; strings and numbers
-   * are the parts that visibly move from bar to bar, so they carry the colour.
-   */
-  private paintCode(code: { label: string; code: string }[]): void {
-    this.els.code.replaceChildren();
-    for (const line of code) {
-      const b = document.createElement('b');
-      b.textContent = line.label.padEnd(6);
-      const i = document.createElement('i');
-      TOKEN.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = TOKEN.exec(line.code)) !== null) {
-        const cls = tokenClass(m);
-        if (!cls) {
-          i.append(document.createTextNode(m[0]));
-          continue;
-        }
-        const span = document.createElement('span');
-        span.className = cls;
-        span.textContent = m[0];
-        i.append(span);
-      }
-      this.els.code.append(b, i, document.createTextNode('\n'));
-    }
+    /*
+     * EVERYTHING BELOW IS BEHIND THE GEAR, AND IS NOT WRITTEN WHILE IT IS SHUT.
+     *
+     * Eleven text nodes, a width style and a list rebuild, sixty times a
+     * second, for a panel nobody has open. The sidebar had no choice — it was
+     * always visible — and this is the one real frame saving in the rewrite,
+     * measured or not: work not done is cheaper than work done fast.
+     *
+     * The cost of the gate is that a tool reading these elements must open the
+     * panel first. `tools/verify-package.mjs` and `tools/drivercheck.mjs` do
+     * exactly that, through `window.__musicwars.hud.setSettings(true)`.
+     */
+    if (!this.settingsOpen) return;
+    this.set('section', this.els.section, readout.section);
+    this.set('bpm', this.els.bpm, `${readout.bpm} BPM`);
+    this.set('key', this.els.key, readout.key);
+    this.set('feel', this.els.feel, readout.feel);
+    this.set('driver', this.els.driver, readout.driver.toUpperCase());
+    this.set('reason', this.els.reason, readout.harmonyReason);
+    this.set('fps', this.els.fps, fps.toFixed(0));
+    this.set('bullets', this.els.bullets, String(snap.bulletCount));
+    this.els.tension.style.width = `${(clamp01(readout.energy) * 100).toFixed(1)}%`;
+    // The beat, as a breath on the LIVE dot's own section chip. It is the only
+    // thing left that says "this is running on a real clock".
+    this.els.section.style.opacity = (0.62 + 0.38 * (1 - (barPhase * 4) % 1)).toFixed(2);
+    this.updateEnsemble(snap);
   }
 
   /**
@@ -573,10 +478,17 @@ export class Hud {
   }
 
   /**
-   * Health as two rows of pips: shield points inside the current life, and
-   * spare lives. The user could not tell how hurt they were from a single row
-   * of diamonds, and in a game this busy the readout has to be parseable in
-   * peripheral vision — so quantity, position and colour all encode it.
+   * Health as three rows of pips: shield points inside the current life, spare
+   * lives, and the two panic buttons. The user could not tell how hurt they
+   * were from a single row of diamonds, and in a game this busy the readout has
+   * to be parseable in peripheral vision — so quantity, position and colour all
+   * encode it.
+   *
+   * Unlabelled over the playfield, where the sidebar spent 48px on the words
+   * SHIELD, LIVES and BOMB / WELL. Shape and colour already carry it: green
+   * squares are shield, cyan circles are lives, gold squares and violet circles
+   * are the two panic buttons, and that encoding is what the pips were designed
+   * around in the first place.
    */
   private updatePips(snap: GameSnapshot): void {
     const key = `${snap.playerHp}/${snap.playerMaxHp}|${snap.lives}/${snap.maxLives}|${snap.bombs}|${snap.wells}`;
@@ -626,14 +538,13 @@ export class Hud {
   /**
    * The band: level, XP, and the two slot rows.
    *
-   * This is the permanent loadout, and after the arena conversion it is the
-   * thing a run is actually *about* — `audio/layers.ts` reads these very ids,
-   * so the two rows below are the mix in the most literal sense available. The
-   * powerup row underneath keeps showing the temporary field-dropped surges,
-   * which are a different verb and belong in a different box.
+   * This is the permanent loadout, and it is the thing a run is actually
+   * *about* — `audio/layers.ts` reads these very ids, so the two rows are the
+   * mix in the most literal sense available. The powerup row keeps showing the
+   * temporary field-dropped surges, which are a different verb.
    *
    * Split into two cache keys on purpose. XP moves several times a second and
-   * is one style write; the chips move a few times a minute and are a full
+   * is one style write; the tiles move a few times a minute and are a full
    * rebuild of two lists. Keying them together would rebuild both lists at the
    * XP rate, on a HUD that already has to stay off the layout path.
    */
@@ -643,7 +554,7 @@ export class Hud {
       this.last['xp'] = String(pct);
       this.els.xp.style.width = `${pct}%`;
     }
-    this.set('level', this.els.level, String(snap.level));
+    this.set('level', this.els.level, `LV ${snap.level}`);
     this.set('xpnum', this.els.xpnum, `${Math.floor(snap.xp)} / ${Math.round(snap.xpToNext)}`);
 
     const held = Object.entries(snap.abilities) as [AbilityId, number][];
@@ -653,44 +564,25 @@ export class Hud {
 
     const players = held.filter(([id]) => slotOf(id) === 'instrument');
     const rig = held.filter(([id]) => slotOf(id) === 'rig');
-    this.chips(this.els.players, players, snap.instrumentSlots, 'instrument');
-    this.chips(this.els.rig, rig, snap.rigSlots, 'rig');
-    this.set('slots', this.els.slots, `${snap.instrumentSlots} players · ${snap.rigSlots} rig`);
+    this.tiles(this.els.players, players, snap.instrumentSlots, 'instrument');
+    this.tiles(this.els.rig, rig, snap.rigSlots, 'rig');
 
     /*
      * A combination the player can take on their NEXT LEVEL-UP.
      *
-     * This said "ON THE NEXT BOSS" for as long as beating a boss resolved every
-     * ready fusion in a batch. It does not any more — a fusion is a card you
-     * choose, and choosing it costs the pick — so the banner was telling the
-     * player to wait for something that would never happen. A HUD that gives a
-     * false instruction is worse than a blank one.
-     *
      * `docs/progression.md`: "A reward a player cannot see coming is a reward
-     * they cannot play toward." That is why it is here at all: the offer screen
-     * is open for a few seconds a minute, and knowing a combination is waiting
-     * changes what you do with the minute in between. It now also covers DUETs,
-     * so a generative pair announces itself the same way an authored one does.
-     */
-    /*
-     * RANK BY TIER, because the panel shows one and buries the rest.
+     * they cannot play toward." That is why it survived the cull: the offer
+     * screen is open for a few seconds a minute, and knowing a combination is
+     * waiting changes what you do with the minute in between.
      *
-     * A union is the top of the tree — two evolved instruments, each of which
-     * cost a maxed base and a maxed catalyst — and a committed run lands one
-     * in about half its attempts. A duet is routine by comparison. Sorted only
-     * by discovery order, the rarest thing a player will see all run could
-     * appear as "(+1 more)" behind a duet they could make at any time.
-     *
-     * This was harmless while unions never fired. They do now, so the order is
-     * no longer an implementation detail.
-     */
-    /*
-     * `lattice` sits with `evolution` and above `duet`. Both are AUTHORED —
-     * one of sixty-three named results for a pair — and the generic duet is
-     * the fallback for the 127 pairs nobody wrote down. Ranking a written
-     * result behind a combinatorial one is the same mistake `combinationPlan`
-     * records at length: duets are unlimited and authored content is not, so
-     * anything ordered by availability fills with `A × B`.
+     * RANK BY TIER, because the HUD shows one and buries the rest. A union is
+     * the top of the tree — two evolved instruments, each of which cost a maxed
+     * base and a maxed catalyst — and a committed run lands one in about half
+     * its attempts. A duet is routine by comparison. `lattice` sits with
+     * `evolution` and above `duet`: both are AUTHORED, one of eighty-six named
+     * results for a pair, and the generic duet is the fallback for the pairs
+     * nobody wrote down. Ranking a written result behind a combinatorial one is
+     * the mistake `combinationPlan` records at length.
      */
     const RANK = { union: 0, evolution: 1, lattice: 1, duet: 2 } as const;
     const ready = readyFusions(snap.abilities).slice()
@@ -710,16 +602,13 @@ export class Hud {
     } else if (pending.length) {
       /*
        * ONE STEP AWAY — what to build toward, shown only when nothing is
-       * already waiting.
-       *
-       * A ready combination is news and must not be buried under a plan, so
-       * these are mutually exclusive rather than stacked; the panel is one
-       * line and two golden banners fighting for it would read as neither.
+       * already waiting. A ready combination is news and must not be buried
+       * under a plan, so these are mutually exclusive rather than stacked.
        *
        * This is the half that changes play. "READY" tells you to spend your
        * next pick; this tells you which of four instruments to feed for the
-       * next two minutes, which is the actual decision a slot-limited build
-       * is made of.
+       * next two minutes, which is the actual decision a slot-limited build is
+       * made of.
        */
       const p = pending[0];
       const b = document.createElement('b');
@@ -730,36 +619,51 @@ export class Hud {
     }
   }
 
-  /** One slot row: a chip per held ability, then a dashed chip per empty slot. */
-  private chips(host: HTMLElement, held: [AbilityId, number][], slots: number, kind: string): void {
+  /**
+   * One slot row: a tile per held ability, then a dashed tile per empty slot.
+   *
+   * These were name chips and could not stay. Four instruments and four rig
+   * items is eight labels of up to fourteen characters over the playfield;
+   * `builds` and the fusion tables put 106 instruments and 86 recipes behind
+   * those eight positions, so any design that scales with the NAME does not
+   * scale at all. A tile is fixed-size by construction.
+   */
+  private tiles(host: HTMLElement, held: [AbilityId, number][], slots: number, kind: string): void {
     host.replaceChildren();
     for (const [id, level] of held) {
       const max = maxLevelOf(id);
       const hue = characterHue(characterOf(id));
+      const label = labelOf(id);
       const li = document.createElement('li');
       // A maxed instrument is half of a fusion, so it reads as gold rather than
       // as its own colour — the same rule the offer screen follows.
       const maxed = level >= max;
-      li.textContent = max > 1 ? `${labelOf(id)} ${level}` : labelOf(id);
-      li.title = `${characterOf(id)}${max > 1 ? ` — level ${level} of ${max}` : ''}`;
-      li.style.borderColor = maxed ? 'rgba(255,209,102,.75)' : `hsla(${hue}, 88%, 62%, .45)`;
+      const mono = document.createElement('b');
+      mono.textContent = monogram(label);
+      li.appendChild(mono);
+      if (max > 1) {
+        const lv = document.createElement('i');
+        lv.textContent = String(level);
+        li.appendChild(lv);
+      }
+      li.title = `${label} — ${characterOf(id)}${max > 1 ? `, level ${level} of ${max}` : ''}`;
+      li.style.borderColor = maxed ? 'rgba(255,209,102,.75)' : `hsla(${hue}, 88%, 62%, .5)`;
       li.style.color = maxed ? 'hsl(45, 95%, 78%)' : `hsl(${hue}, 90%, 76%)`;
-      li.style.background = `hsla(${maxed ? 45 : hue}, 85%, 55%, .14)`;
+      li.style.background = `hsla(${maxed ? 45 : hue}, 85%, 45%, .22)`;
       host.appendChild(li);
     }
     for (let i = held.length; i < slots; i++) {
       const li = document.createElement('li');
       li.className = 'slot';
-      li.textContent = '·';
+      const dot = document.createElement('b');
+      dot.textContent = '·';
+      li.appendChild(dot);
       /*
        * It said "beat a boss to widen the band". Slot growth was REMOVED —
        * `grantBossReward`'s own comment reads "the band does not get bigger
        * when you beat a boss, it gets better" — so the panel was telling the
        * player to do a thing that would never pay. A stale promise in a
        * tooltip is worse than no tooltip: they can act on it.
-       *
-       * What actually fills a slot is taking a card; what frees one again is a
-       * fusion, which spends its catalyst. That is what it says now.
        */
       li.title = `empty ${kind} slot — a new ${kind} fills it, and a fusion frees one again`;
       host.appendChild(li);
@@ -767,9 +671,12 @@ export class Hud {
   }
 
   /**
-   * Who is on stage. This is the same list as "which motifs are in the mix",
-   * which is the point: the panel is a mixer channel strip that happens to be
-   * populated by whatever is currently trying to kill you.
+   * Who is on stage, behind the gear.
+   *
+   * The same list as "which motifs are in the mix", which is why it survives at
+   * all: the readout is a mixer channel strip that happens to be populated by
+   * whatever is currently trying to kill you. It is not in the HUD because a
+   * player who wants to know what is on the field can look at the field.
    */
   private updateEnsemble(snap: GameSnapshot): void {
     const live = (Object.keys(snap.enemies) as (keyof GameSnapshot['enemies'])[])

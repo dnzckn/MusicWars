@@ -1,4 +1,18 @@
-/** Confirms the panel names a real driver and that it changes with the state. */
+/**
+ * Confirms the readout names a real driver and that it changes with the state.
+ *
+ * `#ui-driver` and `#ui-reason` moved out of the sidebar and behind the gear
+ * (`docs/plan-refactor-3.md` §5), and `hud.ts` does not write anything in that
+ * panel while it is shut — eleven text nodes a frame for something nobody has
+ * open is the one real frame saving in that rewrite. So the panel is opened
+ * here before the readout is read.
+ *
+ * The assertion is unchanged: at least two distinct drivers must occur while
+ * the player weaves, and the one the HUD names must be non-empty. What changed
+ * is that the check now has to ask for the readout instead of assuming it is
+ * always painted — which is a fair thing to have to do, and the alternative
+ * (writing it every frame regardless) is work the player never sees.
+ */
 import { chromium } from 'playwright';
 import { freezePage } from './lib/frozen.mjs';
 const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required','--mute-audio'] });
@@ -20,6 +34,9 @@ for (let i = 0; i < 130; i++) {
   dir = dir === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft';
 }
 await p.keyboard.up('KeyZ');
+// Open the gear panel, or `ui-driver` and `ui-reason` are never written.
+await p.evaluate(() => window.__musicwars.hud.setSettings(true));
+await p.waitForTimeout(400);
 const r = await p.evaluate(() => {
   const d = window.__drivers;
   const total = Object.values(d).reduce((a, c) => a + c, 0);

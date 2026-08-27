@@ -395,13 +395,29 @@ export class World {
   /**
    * The size of the rectangle the camera shows, in world units.
    *
-   * Equal to `width`/`height` today. Everything render-side and UI-side reads
-   * these instead of `width`/`height` so that the day the field grows, the
-   * viewport does not grow with it. See the note on `VIEW_W` above for which
-   * of the two pairs a given number belongs to.
+   * Everything render-side and UI-side reads these instead of `width`/`height`
+   * so that the field can grow without the viewport growing with it. See the
+   * note on `VIEW_W` in `field.ts` for which of the two pairs a given number
+   * belongs to.
+   *
+   * ACCESSORS, NOT FIELDS, and that is load-bearing. They used to be
+   * `readonly viewW = VIEW_W` — a value copied once at construction, which was
+   * correct while `VIEW_W` was a constant and silently wrong the moment it
+   * became a function of the window. A `World` is built before the first
+   * layout pass and survives every resize, so a copy taken in the constructor
+   * would be the size of whatever the window happened to be on the frame the
+   * run started, forever.
+   *
+   * Read per enemy per frame in `hasEntered`, so it is worth saying what it
+   * costs: a getter returning a module-level `let` is monomorphic and inlines.
    */
-  readonly viewW = VIEW_W;
-  readonly viewH = VIEW_H;
+  get viewW(): number {
+    return VIEW_W;
+  }
+
+  get viewH(): number {
+    return VIEW_H;
+  }
 
   readonly bus = new EventBus();
   readonly transport = new Transport();

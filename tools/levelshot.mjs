@@ -219,7 +219,43 @@ const { VIEW_W, VIEW_H } = await p.evaluate(() => ({
 }));
 console.log(`  view ${VIEW_W}x${VIEW_H} (field ${await p.evaluate(() => `${window.__musicwars.world.width}x${window.__musicwars.world.height}`)})`);
 
-const CARD_REGION = { x: 56, y: 200, w: 788, h: 560 };
+/*
+ * THE CARD REGION IS MEASURED, NOT WRITTEN DOWN.
+ *
+ * This was `{ x: 56, y: 200, w: 788, h: 560 }` — the card column of a 900x1120
+ * view, hardcoded. AGENTS.md §3: a tool holding its own copy of a constant will
+ * lie the day it moves, and `tools/contrast.mjs` is in this directory precisely
+ * because it did exactly this and reported a total readability failure that was
+ * its own. `VIEW_W`/`VIEW_H` are the window now, and `layout()` additionally
+ * caps the cards at `CARD_MAX_W` and centres them, so a rectangle derived even
+ * from the live view would be a second copy of a layout rule.
+ *
+ * So: open one state, ask the overlay where it actually drew, take the union of
+ * those rectangles, close, and measure the closed control over the same union.
+ * The region is now whatever the screen says it is.
+ */
+await show(STATES[0].abilities, STATES[0].offer, STATES[0].slots);
+await p.waitForTimeout(900);
+const probe = await p.evaluate(() => window.__musicwars.ui.rects());
+await p.evaluate(() => {
+  const s = window.__musicwars.world.snapshot;
+  Object.defineProperty(s, 'choosing', { configurable: true, writable: true, value: false });
+  window.__musicwars.ui.close();
+});
+await p.waitForTimeout(700);
+if (!probe.length) {
+  fail('the offer drew no cards at all, so there is no region to measure');
+}
+const CARD_REGION = {
+  x: Math.min(...probe.map((r) => r.x)),
+  y: Math.min(...probe.map((r) => r.y)),
+  w: Math.max(...probe.map((r) => r.x + r.w)) - Math.min(...probe.map((r) => r.x)),
+  h: Math.max(...probe.map((r) => r.y + r.h)) - Math.min(...probe.map((r) => r.y)),
+};
+console.log(
+  `  card region, read off the overlay: ${Math.round(CARD_REGION.w)}x${Math.round(CARD_REGION.h)}` +
+    ` at ${Math.round(CARD_REGION.x)},${Math.round(CARD_REGION.y)} of a ${VIEW_W}x${VIEW_H} view`,
+);
 const closedAlpha = await alphaOver(CARD_REGION);
 console.log(`  control: overlay alpha over the card region with nothing open = ${closedAlpha.toFixed(1)}`);
 
@@ -312,7 +348,19 @@ for (const [kind, a, c, to] of [
   await p.evaluate((v) => window.__musicwars.ui.celebrate(v.kind, v.a, v.c, v.to), { kind, a, c, to });
   // Past the 0.9s converge and the burst, into the hold.
   await p.waitForTimeout(1500);
-  const painted = await alphaOver({ x: 72, y: 420, w: 756, h: 140 });
+  /*
+   * The celebration is drawn centred on the view, so its probe is a band across
+   * the middle expressed as a FRACTION of the live view rather than the four
+   * pixel constants that used to be here. Same reason as the card region above;
+   * this one cannot be read back off the overlay because `celebrate()` has no
+   * `rects()` of its own.
+   */
+  const painted = await alphaOver({
+    x: VIEW_W * 0.08,
+    y: VIEW_H * 0.375,
+    w: VIEW_W * 0.84,
+    h: VIEW_H * 0.125,
+  });
   if (painted < closedAlpha + 40) fail(`${kind} ${to}: the celebration did not paint (alpha ${painted.toFixed(1)})`);
   else pass(`${kind} ${to}: alpha ${painted.toFixed(1)} against ${closedAlpha.toFixed(1)} closed`);
   await p.screenshot({ path: `${OUT}/levelup-fusion-${kind}.png` });
@@ -334,24 +382,45 @@ const panel = await p.evaluate(() => ({
     ? null
     : document.getElementById('ui-fusion').textContent,
   xpWidth: document.getElementById('ui-xp').style.width,
+  slots: {
+    i: window.__musicwars.world.snapshot.instrumentSlots,
+    r: window.__musicwars.world.snapshot.rigSlots,
+  },
 }));
-console.log(`    LV ${panel.level}   players ${JSON.stringify(panel.players)}`);
+console.log(`    ${panel.level}   players ${JSON.stringify(panel.players)}`);
 console.log(`    rig ${JSON.stringify(panel.rig)}   xp ${panel.xpWidth}`);
 console.log(`    fusion line: ${panel.fusion ?? '(none)'}`);
 
 /*
- * The chip count must equal the slot count.
+ * The tile count must equal the slot count.
  *
  * `tools/progression.mjs` already asserts this for the powerup row, and it was
  * written because that row once printed "none" *and* four empty chips — the
  * same fact twice. These two rows are the same shape and inherit the same risk.
+ *
+ * AGAINST THE SNAPSHOT THE HUD ACTUALLY READ, not against `STATES[2].slots`.
+ * This compared with the number `show()` wrote and it was wrong twice over.
+ * `World.writeSnapshot` rewrites `instrumentSlots`/`rigSlots` from
+ * `progression` every frame, so `show()`'s value survives one frame and the
+ * HUD never sees it — `choosing` is pinned with an accessor for exactly this
+ * reason and the slot pair was not. And the numbers it asked for, 5 and 5,
+ * stopped being reachable when slot growth was removed: `STAND_SLOTS` and
+ * `RIG_SLOTS` are both a fixed 4.
+ *
+ * So the assertion is unchanged in meaning — one tile per slot, no more and no
+ * fewer — and is now denominated in the value the HUD was handed. A floor of 1
+ * keeps it from passing on a snapshot that reported no slots at all, which
+ * would otherwise make "0 tiles for 0 slots" a green line.
  */
-if (panel.players.length !== STATES[2].slots.i) {
-  fail(`players row has ${panel.players.length} chips against ${STATES[2].slots.i} slots`);
-} else pass(`players row: ${panel.players.length} chips for ${STATES[2].slots.i} slots`);
-if (panel.rig.length !== STATES[2].slots.r) {
-  fail(`rig row has ${panel.rig.length} chips against ${STATES[2].slots.r} slots`);
-} else pass(`rig row: ${panel.rig.length} chips for ${STATES[2].slots.r} slots`);
+if (panel.slots.i < 1 || panel.slots.r < 1) {
+  fail(`the snapshot reports ${panel.slots.i}/${panel.slots.r} slots — nothing was measured`);
+}
+if (panel.players.length !== panel.slots.i) {
+  fail(`players row has ${panel.players.length} tiles against ${panel.slots.i} slots`);
+} else pass(`players row: ${panel.players.length} tiles for ${panel.slots.i} slots`);
+if (panel.rig.length !== panel.slots.r) {
+  fail(`rig row has ${panel.rig.length} tiles against ${panel.slots.r} slots`);
+} else pass(`rig row: ${panel.rig.length} tiles for ${panel.slots.r} slots`);
 if (!panel.fusion) fail('SPICCATO is assembled and waiting but the panel does not say so');
 else pass('the panel announces the waiting fusion');
 

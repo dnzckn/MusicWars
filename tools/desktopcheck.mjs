@@ -225,6 +225,9 @@ await page.keyboard.up('KeyZ');
 
 const sinkState = havePulseTools ? pactl('list', 'short', 'sinks').replace(/\s+/g, ' ') : '';
 const sinkInputs = havePulseTools ? pactl('list', 'short', 'sink-inputs') : '';
+// `ui-fps` is behind the gear now and is not written while it is shut.
+await page.evaluate(() => window.__musicwars?.hud?.setSettings(true));
+await new Promise((r) => setTimeout(r, 400));
 const fps = await page.evaluate(() => Number(document.getElementById('ui-fps')?.textContent) || 0);
 const readout = await page.evaluate(() => {
   const r = window.__musicwars?.readout?.();

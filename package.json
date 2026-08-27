@@ -134,7 +134,7 @@
     "flash": "node tools/flash.mjs",
     "brain": "node tools/brain.mjs",
     "difficulty": "node tools/difficulty.mjs",
-    "builds": "node tools/builds.mjs",
+    "builds": "node --experimental-transform-types tools/builds.mjs",
     "texture": "node tools/texture.mjs",
     "legibility": "node tools/legibility.mjs",
     "typescale": "node tools/typescale.mjs",

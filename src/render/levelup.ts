@@ -600,6 +600,19 @@ export class LevelUpOverlay {
   /** Bottom of the last card, written by `layout`, read by the ensemble rows. */
   private bodyBottom = 0;
 
+  /**
+   * The column `layout()` chose: left edge and width, in view units.
+   *
+   * Everything below the cards — YOUR ENSEMBLE, the two chip rows, the fusion
+   * line — has to sit in the same column as the cards, and the cards stopped
+   * being `W` minus a percentage the moment `CARD_MAX_W` and centring arrived.
+   * Recorded rather than recomputed, so there is exactly one place that decides
+   * where the page's body is.
+   */
+  private bodyX = 0;
+
+  private bodyW = 0;
+
   /** Seconds the current offer has been open, for the staggered entry. */
   private age = 0;
   /**
@@ -639,6 +652,14 @@ export class LevelUpOverlay {
   private static readonly ENTRY = 0.26;
   private static readonly STAGGER = 0.07;
   private static readonly EXIT = 0.55;
+  /**
+   * The widest a card is allowed to get, in view units. See `layout`.
+   *
+   * A reading-measure bound rather than a taste one, and it only ever bites on
+   * a window wide enough that `VIEW_W * 0.876` exceeds it — roughly 1130px and
+   * up. It exists because `VIEW_W` stopped being the constant 900.
+   */
+  private static readonly CARD_MAX_W = 1000;
 
   /* ---------------------------------------------------------------- state */
 
@@ -1004,7 +1025,7 @@ export class LevelUpOverlay {
       this.drawCard(g, cards[i], i, page, exit, pulse);
     }
 
-    this.drawEnsemble(g, snap, W, H, page);
+    this.drawEnsemble(g, snap, H, page);
     this.drawControls(g, W, H, page);
 
     g.restore();
@@ -1077,8 +1098,27 @@ export class LevelUpOverlay {
    */
   private layout(cards: Card[], W: number, H: number): void {
     const padX = Math.round(W * 0.062);
-    const x = padX;
-    const w = W - padX * 2;
+    /*
+     * THE CARDS STOP GROWING, AND THEN CENTRE.
+     *
+     * `W` is `VIEW_W`, which used to be the constant 900 and is now the window.
+     * Without a cap a 1512px window gave four 1306x134 cards: a line of 13px
+     * text starting at the left rail with 900px of empty plate after it, which
+     * reads as a table that failed to load rather than as a card. An ultrawide
+     * made it 1580.
+     *
+     * MEASURE_MAX is a reading-length bound, not a taste one. The longest note
+     * a rig rule authors is COMPRESSOR's, which is why `drawCard` wraps notes
+     * to two lines at all; at 13px monospace that sentence needs ~700px, and
+     * the widest card that keeps a single line of body text inside a
+     * comfortable measure is around a thousand. Below the cap nothing changes,
+     * so every window narrower than ~1130 lays out exactly as it did.
+     *
+     * Centred rather than left-aligned, because the offer is a modal page and
+     * the eye should not have to travel to a corner for it.
+     */
+    const w = Math.min(W - padX * 2, LevelUpOverlay.CARD_MAX_W);
+    const x = Math.round((W - w) / 2);
     const top = H * 0.175;
     // Room reserved at the bottom for the ensemble rows and the lever line.
     const bottom = H - Math.max(190, H * 0.2);
@@ -1097,6 +1137,8 @@ export class LevelUpOverlay {
     // there is slack, and a block pinned to the bottom edge left a 140px hole
     // in the middle of the page.
     this.bodyBottom = top + n * h + (n - 1) * gap;
+    this.bodyX = x;
+    this.bodyW = w;
   }
 
   private drawCard(
@@ -1441,10 +1483,20 @@ export class LevelUpOverlay {
    * because the two inventories compete for different slots and confusing them
    * is the one way to waste a level.
    */
-  private drawEnsemble(g: CanvasRenderingContext2D, snap: GameSnapshot, W: number, H: number, page: number): void {
+  private drawEnsemble(g: CanvasRenderingContext2D, snap: GameSnapshot, H: number, page: number): void {
     const a = page * clamp01((this.age - 0.18) / 0.32);
     if (a <= 0.01) return;
-    const padX = Math.round(W * 0.062);
+    /*
+     * ALIGNED TO THE CARDS, not to the field.
+     *
+     * This computed its own `padX` from `W` and was right for as long as the
+     * cards did too. They stop at `CARD_MAX_W` and centre now, so on a wide
+     * window a field-derived pad put YOUR ENSEMBLE and both chip rows several
+     * hundred pixels to the left of the column they belong to. `layout()`
+     * records the column it chose; this reads it.
+     */
+    const padX = this.bodyX;
+    const bodyRight = this.bodyX + this.bodyW;
     // Below the last card, but never so far down that it collides with the
     // lever line at H - 30.
     const y0 = Math.min(this.bodyBottom + 34, H - 145);
@@ -1461,14 +1513,14 @@ export class LevelUpOverlay {
     g.lineWidth = 1;
     g.beginPath();
     g.moveTo(padX + 108, Math.round(y0) + 0.5);
-    g.lineTo(W - padX, Math.round(y0) + 0.5);
+    g.lineTo(bodyRight, Math.round(y0) + 0.5);
     g.stroke();
 
     const held = Object.entries(snap.abilities) as [AbilityId, number][];
     const instruments = held.filter(([id]) => slotOf(id) === 'instrument');
     const rig = held.filter(([id]) => slotOf(id) === 'rig');
-    this.chipRow(g, 'PLAYERS', instruments, snap.instrumentSlots, padX, y0 + 26, W - padX * 2);
-    this.chipRow(g, 'RIG', rig, snap.rigSlots, padX, y0 + 54, W - padX * 2);
+    this.chipRow(g, 'PLAYERS', instruments, snap.instrumentSlots, padX, y0 + 26, this.bodyW);
+    this.chipRow(g, 'RIG', rig, snap.rigSlots, padX, y0 + 54, this.bodyW);
 
     const ready = readyFusions(snap.abilities);
     if (ready.length) {
@@ -1484,7 +1536,7 @@ export class LevelUpOverlay {
       const tailX = padX + 8 + g.measureText(head).width;
       g.font = '400 11px ui-monospace, monospace';
       g.fillStyle = `hsla(${GOLD}, 60%, 74%, 0.6)`;
-      g.fillText(this.fit(g, `— ${r.line}`, W - padX - tailX), tailX, y0 + 84);
+      g.fillText(this.fit(g, `— ${r.line}`, bodyRight - tailX), tailX, y0 + 84);
     }
 
     g.restore();

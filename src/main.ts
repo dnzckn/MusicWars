@@ -53,6 +53,7 @@ import { abilityLevels } from './game/progression';
 import { instrumentDef, labelOf } from './game/weapons';
 import { Renderer } from './render/renderer';
 import { World } from './game/world';
+import { setView, stageBox, viewForStage } from './game/field';
 
 const playfield = document.getElementById('playfield') as HTMLCanvasElement;
 const overlay = document.getElementById('overlay') as HTMLCanvasElement;
@@ -137,6 +138,63 @@ const input = new Input();
 
 const touchControls = document.getElementById('touch-controls')!;
 const stage = document.getElementById('stage')!;
+const app = document.getElementById('app')!;
+
+// ---------------------------------------------------------------------------
+// layout — the view is a function of the window
+// ---------------------------------------------------------------------------
+
+/**
+ * Size the stage to the window and set `VIEW_W/VIEW_H` from it.
+ *
+ * THIS FUNCTION IS "GIVE THE SCREEN BACK". Everything else in the change is
+ * consequence. `VIEW_W/VIEW_H` were hardcoded at 900x1120 beside a sidebar
+ * that took 30% of the window; here the playfield takes all of it and the view
+ * is derived from what it got.
+ *
+ * The order matters and is the reason this is one function rather than a
+ * resize listener per interested party:
+ *
+ *   1. measure the box the stage may have — `#app`'s content area, LESS the
+ *      touch button row when one is showing. The row is a sibling below the
+ *      stage, so on a phone the playfield has to shrink to make room for it;
+ *      `touchcheck` asserts the buttons never overlap the field and this
+ *      subtraction is what keeps that true.
+ *   2. clamp that box's ASPECT (`stageBox`) and write it as an explicit
+ *      width/height. Explicit, not `flex: 1`, because a clamp expressed in CSS
+ *      would need the other axis's used value and CSS cannot see it.
+ *   3. derive the view from the stage box (`viewForStage`) so the two
+ *      rectangles are the same shape by construction.
+ *   4. tell the renderer, which owns the bloom bitmap and the starfield.
+ *
+ * Idempotent and cheap enough to call from a `resize` listener directly: two
+ * `getBoundingClientRect` reads and at most four style writes, and step 4 is
+ * skipped entirely when the view did not actually move.
+ */
+function layout(): void {
+  const cs = getComputedStyle(app);
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const availW = app.clientWidth - padX;
+  let availH = app.clientHeight - padY;
+  if (!touchControls.classList.contains('hidden')) {
+    const gap = parseFloat(cs.rowGap) || 0;
+    availH -= touchControls.getBoundingClientRect().height + gap;
+  }
+  const box = stageBox(availW, availH);
+  stage.style.width = `${box.w}px`;
+  stage.style.height = `${box.h}px`;
+  const v = viewForStage(box.w, box.h);
+  // Only when it MOVED. A stage box that changed without moving the view is
+  // already covered — `Renderer` keeps a `ResizeObserver` on the canvas for
+  // exactly that case, and reallocating the bloom bitmap and rescaling 140
+  // stars on every pixel of a window drag would be work for nothing.
+  if (setView(v.w, v.h)) renderer.viewChanged();
+}
+
+addEventListener('resize', layout);
+addEventListener('orientationchange', layout);
+layout();
 
 /*
  * ONE POINTER, TWO COORDINATE SYSTEMS.
@@ -226,7 +284,13 @@ stage.addEventListener('pointerdown', (e) => {
     return;
   }
   if (e.pointerType === 'mouse') return;
-  touchControls.classList.remove('hidden');
+  if (touchControls.classList.contains('hidden')) {
+    touchControls.classList.remove('hidden');
+    // The row is a sibling below the stage, so revealing it takes height away
+    // from the playfield. Without this the stage keeps its old box and the
+    // buttons are pushed off the bottom of the window on the very first touch.
+    layout();
+  }
   const pt = toWorld(e);
   input.setPointerTarget(pt.x, pt.y);
   try {
@@ -311,9 +375,6 @@ let paused = false;
 let inRun = false;
 /** Set on the frame the audio clock should be re-read. */
 let needsSync = true;
-let lastScoredBar = -1;
-let scoreBar: ReturnType<MusicDirector['sampleBar']> | null = null;
-let codeLines: ReturnType<MusicDirector['sourceLines']> = [];
 
 // ---------------------------------------------------------------------------
 // game -> music routing
@@ -683,23 +744,22 @@ const loop = new Loop({
     renderer.targetHue = readout.paletteHue;
     renderer.render(paused || !inRun ? 1 : alpha, frameDt, world.transport, readout.tension, loop.fps);
 
-    // Re-sample the score only when the bar turns over; querying eleven
-    // patterns every frame would be pure waste.
-    const barIndex = Math.floor(world.transport.bar);
-    if (barIndex !== lastScoredBar) {
-      lastScoredBar = barIndex;
-      scoreBar = director.sampleBar(world.transport);
-      codeLines = director.sourceLines();
-    }
+    /*
+     * `sampleBar` and `sourceLines` are no longer called from here.
+     *
+     * They fed the notation canvas and the generated-source block, and both are
+     * gone with the sidebar — see the header of `render/hud.ts` for what was
+     * deleted and what the frame-rate A/B actually said about it. The director
+     * still exposes both methods and `tools/capture.mjs` still uses them; this
+     * frame hook simply no longer asks once a bar for eleven patterns and five
+     * lines of formatted source that nothing renders.
+     */
     hud.update(
       world.snapshot,
       readout,
       loop.fps,
       audioSuspended() ? 'tap to resume' : audioStatus(),
-      scoreBar,
-      barIndex,
       world.transport.barPhase,
-      codeLines,
     );
     /*
      * Nothing touches the input here any more. `input.endFrame()` used to be

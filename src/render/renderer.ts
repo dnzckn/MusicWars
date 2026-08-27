@@ -236,6 +236,59 @@ export class Renderer {
         z: 0.25 + Math.random() * 0.75,
       });
     }
+    this.starW = world.viewW;
+    this.starH = world.viewH;
+  }
+
+  /**
+   * The view the starfield was laid out against, so a resize can carry it.
+   *
+   * Not `world.viewW` at read time: the stars are the one thing here that is
+   * STATE rather than a function of the current size, and the wrap in
+   * `drawStars` requires them to be inside `[0, viewW)`. After the view grows
+   * they would all be crowded into the left of the new rectangle; after it
+   * shrinks they would be outside it and the wrap arithmetic would pull the
+   * whole field into one column. Rescaling needs the old size, which is this.
+   */
+  private starW = 0;
+
+  private starH = 0;
+
+  /**
+   * The view size changed. Rebuild everything sized from it.
+   *
+   * Called by `main.ts` after `setView`, which is the only place the view
+   * moves. Three things are derived from `VIEW_*` and none of them can notice
+   * on their own:
+   *
+   *   - the backing store and the context scale (`fitCanvases`, via `resized`)
+   *   - the bloom bitmap, a quarter of the view in each axis
+   *   - the starfield, whose positions are view coordinates
+   *
+   * The grid is NOT in that list and must not be: `WarpGrid` is allocated from
+   * the FIELD and clipped to the view at draw time, which is the arrangement
+   * `tools/gridview.mjs` exists to defend. Reallocating it here would be the
+   * silent revert that check is watching for.
+   */
+  viewChanged(): void {
+    const w = this.world;
+    this.resized = true;
+    const bw = Math.max(1, Math.round(w.viewW / 4));
+    const bh = Math.max(1, Math.round(w.viewH / 4));
+    if (this.bloom.width !== bw || this.bloom.height !== bh) {
+      this.bloom.width = bw;
+      this.bloom.height = bh;
+    }
+    if (this.starW > 0 && this.starH > 0) {
+      const sx = w.viewW / this.starW;
+      const sy = w.viewH / this.starH;
+      for (const s of this.stars) {
+        s.x *= sx;
+        s.y *= sy;
+      }
+    }
+    this.starW = w.viewW;
+    this.starH = w.viewH;
   }
 
   /**
@@ -376,19 +429,30 @@ export class Renderer {
      * instead.
      */
     const cssH = this.canvasEl.clientHeight;
-    if (cssH <= 0) return;
+    const cssW = this.canvasEl.clientWidth;
+    if (cssH <= 0 || cssW <= 0) return;
     this.resized = false;
     const dpr = Math.min(3, Math.max(1, devicePixelRatio || 1));
     /*
-     * Height alone is enough ONLY because `#stage` carries
-     * `aspect-ratio: 900 / 1120` in `style.css`, so the box can never have a
-     * different shape from the view. If that rule is ever removed this must
-     * take the smaller of the two ratios instead, or the playfield will
-     * stretch. That CSS rule describes the VIEW, which is why the scale and
-     * the backing store below come from `viewW`/`viewH` and not from the
-     * field — a bigger arena must not mean a bigger bitmap.
+     * BOTH AXES, taking the smaller ratio.
+     *
+     * This used to read the height alone, and said so: it was correct only
+     * because `#stage` carried `aspect-ratio: 900 / 1120` and so could never
+     * have a different shape from the view. That rule is gone — the stage is
+     * the window now and the VIEW is derived FROM the stage (`field.ts`
+     * `viewForStage`), which is the same guarantee arrived at from the other
+     * end. The two should therefore agree to within a rounding error, and
+     * taking the smaller of the two ratios is the belt to that braces: if they
+     * ever disagree the playfield is letterboxed rather than stretched, which
+     * is a bug you can see instead of one you cannot.
+     *
+     * The scale and the backing store come from `viewW`/`viewH` and not from
+     * the field — a bigger arena must not mean a bigger bitmap.
      */
-    const scale = Math.min(1.5, Math.max(0.6, (cssH * dpr) / w.viewH));
+    const scale = Math.min(
+      1.5,
+      Math.max(0.6, Math.min((cssH * dpr) / w.viewH, (cssW * dpr) / w.viewW)),
+    );
     this.scale = scale;
     const bw = Math.round(w.viewW * scale);
     const bh = Math.round(w.viewH * scale);
@@ -1631,54 +1695,29 @@ export class Renderer {
     g.fillStyle = v;
     g.fillRect(0, 0, w.viewW, w.viewH);
 
-    // After the vignette, not before. The vignette is a world effect and the XP
-    // bar is a readout; drawn underneath it, a full-width bar has both its ends
-    // dimmed by the corners of the gradient, which is precisely where the bar
-    // is when it is nearly empty or nearly full.
-    this.drawXp(g);
-
+    /*
+     * THE XP BAR MOVED OUT OF THE CANVAS.
+     *
+     * `drawXp` used to be here: four pixels along the TOP edge with `LV n` at
+     * the left end, written to `docs/progression.md`'s spec — "thin, along an
+     * edge, not a widget". That spec is still met; the bar is now `#ui-xp` in
+     * the overlay HUD, full width along the BOTTOM edge, with the level and the
+     * count centred above it.
+     *
+     * It moved because the overlay HUD has an XP bar of its own by the owner's
+     * brief ("bottom-centre: XP bar") and two of them is worse than either. The
+     * top edge lost the argument for two reasons: the HUD's vitals and slot
+     * tiles are anchored top-left and `LV 1` was drawing underneath the shield
+     * pips, and the bottom edge of a survivor screen is the emptiest part of
+     * it — the ship lives near the middle and the threat arrives on the ring.
+     *
+     * The DOM version is also strictly cheaper: one style write when the
+     * fraction changes by a tenth of a percent, against four `fillRect`s and a
+     * `fillText` every frame.
+     */
     this.attachHook();
     // Last, so the level-up screen sits over the vignette, the boss bar and the
     // banner rather than under them.
     this.levelUp.draw(g, w.snapshot, dt, w.viewW, w.viewH, beat, this.pulse);
-  }
-
-  /**
-   * XP, along the very top edge of the field.
-   *
-   * `docs/progression.md` asks for this specifically: "It is the most
-   * frequently-changing number in the game and it has to be readable without
-   * looking away from the bullets — thin, along an edge, not a widget." So it
-   * is four pixels of the top edge and nothing else. The level number sits at
-   * the left end, where it changes once every thirty seconds or so and can
-   * therefore afford to be text.
-   *
-   * It is deliberately NOT beat-reactive. This is the one readout a player
-   * glances at mid-fight, and a bar that pulses is a bar whose length is harder
-   * to judge — the whole complaint this pass exists to answer.
-   */
-  private drawXp(g: CanvasRenderingContext2D): void {
-    const s = this.world.snapshot;
-    if (!s.running && s.level <= 1 && s.xp <= 0) return;
-    const w = this.world;
-    const frac = s.xpToNext > 0 ? clamp01(s.xp / s.xpToNext) : 0;
-
-    g.fillStyle = 'rgba(8,10,20,0.72)';
-    g.fillRect(0, 0, w.viewW, 5);
-    g.fillStyle = 'hsl(168, 92%, 56%)';
-    g.fillRect(0, 0, w.viewW * frac, 4);
-    // A brighter cap on the leading edge, so a small gain is still visible.
-    if (frac > 0.004) {
-      g.fillStyle = 'rgba(220,255,248,0.85)';
-      g.fillRect(Math.max(0, w.viewW * frac - 2), 0, 2, 4);
-    }
-
-    g.save();
-    g.textAlign = 'left';
-    g.textBaseline = 'middle';
-    g.font = '800 11px ui-monospace, monospace';
-    g.fillStyle = 'hsla(168, 80%, 72%, 0.85)';
-    g.fillText(`LV ${s.level}`, 8, 14);
-    g.restore();
   }
 }

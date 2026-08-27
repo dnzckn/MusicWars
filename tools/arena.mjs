@@ -1,7 +1,22 @@
 /**
  * The arena, measured without a browser.
  *
- * `node tools/arena.mjs [minutes] [runs]`
+ * `node tools/arena.mjs [minutes] [runs]`, and `ARENA_VIEW=1492x925` to run it
+ * at a viewport other than the default.
+ *
+ * THE VIEW IS AN INPUT NOW, and it has to be, because it stopped being a
+ * constant. Six things in `world.ts` are defined against the view rectangle —
+ * the spawn ring, the population census `targetOnScreen` is a floor for, the
+ * bullet cull, the player-bullet wall rectangle, `hasEntered`, and the drop
+ * magnet horizon — so "how much of the world the player can see" is a balance
+ * parameter, not a display setting.
+ *
+ * Nothing in Node calls `field.setView`, so before this argument existed this
+ * file measured 900x1120 whatever the game shipped, and would have gone on
+ * printing identical numbers while the shipped viewport changed underneath it.
+ * That is `docs/research-camera.md` §7b's "reads the live value, so it will not
+ * crash — and that is the danger", arrived at from the other direction: the
+ * live value simply never moved here.
  *
  * The conversion from vertical shmup to survivor arena changed four things that
  * every balance number in this repository was calibrated against — where
@@ -65,6 +80,23 @@ const DT = 1 / 120;
 
 const { World } = await import('../src/game/world.ts');
 const W = await import('../src/game/weapons.ts');
+const field = await import('../src/game/field.ts');
+
+/*
+ * `ARENA_VIEW=WxH`, applied before the first `World` is built.
+ *
+ * Unset leaves `field.ts`'s own default, so every number this file has ever
+ * printed is still reproducible by running it with no environment at all.
+ */
+if (process.env.ARENA_VIEW) {
+  const m = /^(\d+)\s*[xX]\s*(\d+)$/.exec(process.env.ARENA_VIEW.trim());
+  if (!m) {
+    console.error(`ARENA_VIEW must look like 1492x925, not ${JSON.stringify(process.env.ARENA_VIEW)}`);
+    process.exit(2);
+  }
+  field.setView(Number(m[1]), Number(m[2]));
+}
+const VIEW_LABEL = `${field.VIEW_W}x${field.VIEW_H}`;
 
 /**
  * The same policy as `tools/lib/driver.mjs`, in-process.
@@ -351,6 +383,11 @@ const f1 = (x) => x.toFixed(1);
 const f2 = (x) => x.toFixed(2);
 
 console.log(`\nARENA — ${RUNS} runs of up to ${MINUTES} min, headless, no browser`);
+console.log(
+  `View ${VIEW_LABEL} of a ${field.PLAYFIELD_W}x${field.PLAYFIELD_H} field` +
+    ` — ${((field.VIEW_W * field.VIEW_H) / (900 * 1120)).toFixed(2)}x the area the fixed 900x1120 layout showed.` +
+    ' Set ARENA_VIEW to change it.',
+);
 console.log('Every table and every gate below is the CARD-0 bot. The builder is reported at the end.\n');
 console.log('  run   survived  wave  lvl   kills  kills/min  hits   nominal dps  inst/rig');
 for (const [i, r] of rows.entries()) {

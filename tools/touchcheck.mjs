@@ -24,12 +24,28 @@ const moved = await p.evaluate(async () => {
   const r = document.getElementById('playfield').getBoundingClientRect();
   const send = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
   send('pointerdown', r.left + r.width * 0.2, r.top + r.height * 0.6);
+  /*
+   * The bullet count is a HIGH-WATER MARK over the whole drag, not the value at
+   * the instant the drag ends.
+   *
+   * It was the instant, and that made this check flaky in a way that looked
+   * like a real failure: instruments are beat-locked, so `playerBullets.count`
+   * is legitimately 0 between volleys, and one run in four sampled a gap and
+   * reported "touch controls incomplete" on a game that was firing perfectly.
+   * Measured 3 passes and 1 failure across four consecutive runs with no code
+   * change between them.
+   *
+   * "Did the ship fire while the finger was down" is the question the check
+   * means to ask, and a maximum over the second the finger was down answers it
+   * without depending on where in the bar the shutter fell.
+   */
+  let firing = 0;
   for (let i = 0; i < 60; i++) {
     send('pointermove', r.left + r.width * 0.2, r.top + r.height * 0.6);
+    firing = Math.max(firing, mw.world.playerBullets.count);
     await new Promise((res) => setTimeout(res, 16));
   }
   const pos = { x: mw.world.player.x, y: mw.world.player.y };
-  const firing = mw.world.playerBullets.count;
   send('pointerup', r.left + r.width * 0.2, r.top + r.height * 0.6);
   return { pos, firing, controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden') };
 });

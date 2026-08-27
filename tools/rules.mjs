@@ -6,14 +6,20 @@
  * by `world.announce(label, sub, 'wave')` — the same centre-screen treatment,
  * in the same blue, as the wave counter — drawn in `renderer.drawBanner`. Both
  * of those are outside the UI workstream, so what this captures is the part
- * that is inside it: the light around the cabinet, and the rule strip in the
- * panel, which last the whole wave rather than 2.4 seconds.
+ * that is inside it: the light around the cabinet, and the rule strip, which
+ * last the whole wave rather than 2.4 seconds.
  *
- * The last frame is a stress case rather than a rule: a seven-figure score
- * beside x50 and the descant tag, at the panel's 268px floor, which is where
- * the score line runs out of room. Powerup uptime went from ~41% to ~95% and
- * multipliers from a peak of x7 to x50+, so the crowded case is now the
- * ordinary one. Asserts nothing — this is for looking at.
+ * The last frames are a stress case rather than a rule: a seven-figure score
+ * beside x50 and the descant tag, which is where the score group runs out of
+ * room. Powerup uptime went from ~41% to ~95% and multipliers from a peak of x7
+ * to x50+, so the crowded case is now the ordinary one. Asserts nothing — this
+ * is for looking at.
+ *
+ * The score group used to be a `.block` inside a 268-460px sidebar and the
+ * spill was measured against that block's right edge. The sidebar is gone
+ * (`docs/plan-refactor-3.md` §5); the equivalent bound is now the playfield,
+ * because `.hud-tr` is anchored to its top-right corner and there is nothing
+ * to the right of it to spill into.
  */
 import { chromium } from 'playwright';
 import { freezePage } from './lib/frozen.mjs';
@@ -66,14 +72,17 @@ for (const [w, h] of [[1000, 800], [1440, 900]]) {
   });
   await p.waitForTimeout(1200);
   const over = await p.evaluate(() => {
-    const el = document.getElementById('ui-score').parentElement;
-    const block = el.closest('.block').getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    return { spill: Math.round(r.right - block.right), lines: Math.round(r.height) };
+    const g = document.querySelector('.hud-tr').getBoundingClientRect();
+    const field = document.getElementById('playfield').getBoundingClientRect();
+    return {
+      spillRight: Math.round(g.right - field.right),
+      spillLeft: Math.round(field.left - g.left),
+      w: Math.round(g.width),
+      h: Math.round(g.height),
+    };
   });
-  const box = await p.locator('#panel').boundingBox();
-  await p.screenshot({ path: `/tmp/wide-${w}.png`, clip: { x: box.x - 6, y: box.y - 6, width: box.width + 12, height: box.height + 12 } });
-  console.log(`${w}x${h} score line spill=${over.spill}px height=${over.lines}px -> /tmp/wide-${w}.png`);
+  await p.screenshot({ path: `${process.env.OUT ?? '/tmp'}/wide-${w}.png` });
+  console.log(`${w}x${h} score group ${over.w}x${over.h}px, spill right=${over.spillRight}px left=${over.spillLeft}px -> wide-${w}.png`);
   await p.close();
 }
 await b.close();
