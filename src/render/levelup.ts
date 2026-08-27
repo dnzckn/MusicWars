@@ -160,6 +160,21 @@ interface Card {
   completes: EvolvedId | null;
   /** What this card brings closer, when it does not finish it. See `advancesToward`. */
   toward: { to: EvolvedId | string; away: number } | null;
+  /**
+   * Which COMBINING tier this card is, or null for an ordinary recruit.
+   *
+   * Drawn where an ordinary card prints INSTRUMENT or RIG, and it exists
+   * because the lattice made that corner dishonest. A fusion card and a
+   * recruit card are laid out identically; while every pairing was generic
+   * that cost nothing, but 63 of the 190 pairs now have an AUTHORED result and
+   * the other 127 fall through to `synthesiseDuet`. Screenshotted before this
+   * field existed, EMBER + ANVIL -> BOMB and the generic EMBER x SIPHON both
+   * read "INSTRUMENT", so the card could not tell the player whether they were
+   * being offered one of sixty-three written results or the fallback for a
+   * pair nobody wrote down — which is the single most useful thing it could
+   * say about that pick.
+   */
+  tier: 'evolution' | 'union' | 'lattice' | 'duet' | null;
   /** The held passive this card spends to make room. See `OfferOption.replaces`. */
   replaces: AbilityId | string | null;
   hue: number;
@@ -171,7 +186,7 @@ interface Card {
 }
 
 interface Celebration {
-  kind: 'evolution' | 'union' | 'duet';
+  kind: 'evolution' | 'union' | 'lattice' | 'duet';
   a: string;
   b: string;
   to: string;
@@ -332,8 +347,8 @@ export function fusionLine(to: string): string {
  */
 export function readyFusions(
   abilities: Readonly<Partial<Record<AbilityId, number>>>,
-): { to: EvolvedId | string; line: string; kind: 'evolution' | 'union' | 'duet' }[] {
-  const out: { to: EvolvedId | string; line: string; kind: 'evolution' | 'union' | 'duet' }[] = [];
+): { to: EvolvedId | string; line: string; kind: 'evolution' | 'union' | 'lattice' | 'duet' }[] {
+  const out: { to: EvolvedId | string; line: string; kind: 'evolution' | 'union' | 'lattice' | 'duet' }[] = [];
   const named = new Set<string>();
   for (const f of FUSIONS) {
     named.add(duetId(f.base, f.catalyst));
@@ -419,8 +434,8 @@ export function readyFusions(
 export function combinationPlan(
   abilities: Readonly<Partial<Record<AbilityId, number>>>,
   known: ReadonlySet<string> = new Set(),
-): { to: EvolvedId | string; label: string; kind: 'evolution' | 'union' | 'duet'; ready: boolean; needs: string; away: number }[] {
-  const rows: { to: EvolvedId | string; label: string; kind: 'evolution' | 'union' | 'duet'; ready: boolean; needs: string; away: number }[] = [];
+): { to: EvolvedId | string; label: string; kind: 'evolution' | 'union' | 'lattice' | 'duet'; ready: boolean; needs: string; away: number }[] {
+  const rows: { to: EvolvedId | string; label: string; kind: 'evolution' | 'union' | 'lattice' | 'duet'; ready: boolean; needs: string; away: number }[] = [];
   for (const r of readyFusions(abilities)) {
     rows.push({ to: r.to, label: labelOf(r.to as AbilityId), kind: r.kind, ready: true, needs: r.line, away: 0 });
   }
@@ -497,8 +512,19 @@ export function combinationPlan(
     || String(a.to).localeCompare(String(b.to)));
 }
 
+/**
+ * What each tier is CALLED on a card. One table, so the card, the celebration
+ * and the workbench cannot end up using three different words for one thing.
+ */
+export const TIER_WORD: Record<'evolution' | 'union' | 'lattice' | 'duet', string> = {
+  union: 'UNION',
+  lattice: 'ARRANGEMENT',
+  evolution: 'EVOLUTION',
+  duet: 'DUET',
+};
+
 /** Which tier a result belongs to, from the id alone. */
-function kindOf(to: EvolvedId | string): 'evolution' | 'union' | 'duet' {
+function kindOf(to: EvolvedId | string): 'evolution' | 'union' | 'lattice' | 'duet' {
   const named = FUSIONS.find((f) => f.result === to);
   if (named) return named.kind;
   const parents = duetParents(String(to));
@@ -662,6 +688,7 @@ export class LevelUpOverlay {
         isNew: false,
         completes: null,
         toward: null,
+        tier: null,
         replaces: null,
         hue: GRACE_HUE,
         x: 0,
@@ -699,6 +726,8 @@ export class LevelUpOverlay {
       isNew: from === 0,
       completes: completesFusion(id as AbilityId, level, snap.abilities),
       toward: advancesToward(id, level, snap.abilities),
+      // Only a fusion RESULT has a tier; everything else is a plain recruit.
+      tier: instrumentDef(id)?.fused === true ? kindOf(id) : null,
       replaces,
       hue: characterHue(character),
       x: 0,
@@ -769,21 +798,39 @@ export class LevelUpOverlay {
    * "PIZZICATO × SNARE ROLL" without any special case here.
    */
   celebrate(
-    kind: 'evolution' | 'union' | 'duet',
+    kind: 'evolution' | 'union' | 'lattice' | 'duet',
     a: AbilityId,
     b: AbilityId,
     to: EvolvedId | string,
     line: string,
   ): void {
+    /*
+     * THE TIER COMES FROM THE RECIPE TABLE, NOT FROM THE EVENT, and that is a
+     * defect this screen had until somebody looked at it.
+     *
+     * `core/events.ts` carries three fusion events and a lattice fires
+     * `ability:evolve` — it is an authored, collectable, named result, so it
+     * belongs on the path that records a discovery and swells the arrangement.
+     * The caller therefore hands this method 'evolution', and the plate
+     * announced BOMB as an EVOLUTION while the offer card two seconds earlier
+     * had called it an ARRANGEMENT. Screenshotted; no gate could see it,
+     * because both strings are legal and neither is empty.
+     *
+     * `kindOf` reads the same `FUSIONS` table the card read, so the two cannot
+     * disagree again without the table itself being wrong. The parameter is
+     * kept for the ids `FUSIONS` cannot contain — a synthesised duet or union
+     * — where `kindOf` falls back to the parents and agrees anyway.
+     */
+    const tier = kindOf(to) ?? kind;
     this.celebrations.push({
-      kind,
+      kind: tier,
       a: labelOf(a),
       b: labelOf(b),
       to: labelOf(to),
       line,
-      hue: kind === 'union' ? GOLD : characterHue(characterOf(to)),
+      hue: tier === 'union' ? GOLD : characterHue(characterOf(to)),
       age: 0,
-      life: kind === 'union' ? 6.2 : 3.6,
+      life: tier === 'union' ? 6.2 : 3.6,
     });
   }
 
@@ -1227,9 +1274,23 @@ export class LevelUpOverlay {
     g.fillStyle = `hsla(${hue}, 55%, 72%, 0.62)`;
     g.fillText(this.fit(g, c.character, sw - 8), sx, cy + h * 0.05);
 
-    // Slot, so "this competes for an instrument slot" is legible before the
-    // player has to learn which names are instruments.
-    if (c.slot) {
+    /*
+     * Slot, so "this competes for an instrument slot" is legible before the
+     * player has to learn which names are instruments — EXCEPT on a card that
+     * is a combination, where the tier is the more useful word. See `Card.tier`.
+     *
+     * ARRANGEMENT is the word this file already used in prose for an authored
+     * recipe over a pair, and DUET is the generic pairing it shadows. Both
+     * still take an instrument slot and both still hand one back, so nothing
+     * is being hidden by the swap: a combining card is never a rig card, and
+     * the level staff below it already shows it arriving at its ceiling.
+     */
+    if (c.tier) {
+      g.textAlign = 'right';
+      g.font = '700 10px ui-monospace, monospace';
+      g.fillStyle = `hsla(${hue}, 70%, 78%, 0.72)`;
+      g.fillText(TIER_WORD[c.tier], x + w - 16, top);
+    } else if (c.slot) {
       g.textAlign = 'right';
       g.font = '700 10px ui-monospace, monospace';
       g.fillStyle = `hsla(${hue}, 50%, 70%, 0.5)`;
@@ -1614,7 +1675,20 @@ export class LevelUpOverlay {
        * for both, so the tiers the whole tree is built on were indistinguishable
        * at the one moment they are most visible.
        */
-      const tier = c.kind === 'union' ? '◈ UNION ◈' : c.kind === 'duet' ? 'DUET' : 'EVOLUTION';
+      /*
+       * ARRANGEMENT is the word this file already used for "an authored recipe
+       * over a pair" (see the note on `combinationPlan`), and the distinction
+       * it draws is the one the lattice makes real: DUET is the generic
+       * pairing every combination falls back to, ARRANGEMENT is one of the
+       * sixty-three somebody wrote. Saying EVOLUTION here would repeat the
+       * exact defect the DUET branch was added to fix.
+       *
+       * Through `TIER_WORD` so the banner and the offer card cannot end up
+       * calling one thing two names — the diamonds are this screen's own
+       * emphasis and are added around it rather than baked into it.
+       */
+      const word = TIER_WORD[c.kind];
+      const tier = c.kind === 'union' || c.kind === 'lattice' ? `◈ ${word} ◈` : word;
       g.fillText(tier, cx, cy - plateH / 2 + 20);
 
       if (merge < 1) {

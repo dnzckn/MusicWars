@@ -2963,9 +2963,13 @@ export class MusicDirector {
    * the drop already holds 52.6% of every run (`tools/sections.mjs`), and the
    * comment in `arrangement.ts` calls a drop that never ends the volume knob.
    */
-  onFusion(kind: 'evolution' | 'union' | 'duet'): void {
-    const swell = kind === 'union' ? 0.5 : kind === 'evolution' ? 0.3 : 0.2;
-    const lift = kind === 'union' ? -1.5 : kind === 'evolution' ? -0.8 : -0.4;
+  onFusion(kind: 'evolution' | 'union' | 'lattice' | 'duet'): void {
+    // A lattice is an AUTHORED result, so it swells like an evolution rather
+    // than like the generic duet it replaces. Same tier of achievement, same
+    // size of moment.
+    const authored = kind === 'evolution' || kind === 'lattice';
+    const swell = kind === 'union' ? 0.5 : authored ? 0.3 : 0.2;
+    const lift = kind === 'union' ? -1.5 : authored ? -0.8 : -0.4;
     this.tensionModel.jolt(swell);
     // Brightening ACCUMULATES onto whatever the last wave earned rather than
     // replacing it, so fusing during a good run compounds instead of resetting.

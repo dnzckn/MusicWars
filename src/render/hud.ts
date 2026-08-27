@@ -684,7 +684,15 @@ export class Hud {
      * This was harmless while unions never fired. They do now, so the order is
      * no longer an implementation detail.
      */
-    const RANK = { union: 0, evolution: 1, duet: 2 } as const;
+    /*
+     * `lattice` sits with `evolution` and above `duet`. Both are AUTHORED —
+     * one of sixty-three named results for a pair — and the generic duet is
+     * the fallback for the 127 pairs nobody wrote down. Ranking a written
+     * result behind a combinatorial one is the same mistake `combinationPlan`
+     * records at length: duets are unlimited and authored content is not, so
+     * anything ordered by availability fills with `A × B`.
+     */
+    const RANK = { union: 0, evolution: 1, lattice: 1, duet: 2 } as const;
     const ready = readyFusions(snap.abilities).slice()
       .sort((a, b) => RANK[a.kind] - RANK[b.kind]);
     const pending = ready.length ? [] : pendingFusions(snap.abilities);

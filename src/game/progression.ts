@@ -1146,7 +1146,7 @@ export interface FusionResult {
    * by `weapons.ts`. See the DUETS block there for why both exist — a table of
    * recipes alone strands any build nobody wrote a recipe for.
    */
-  kind: 'evolution' | 'union' | 'duet';
+  kind: 'evolution' | 'union' | 'lattice' | 'duet';
   base: AbilityId;
   catalyst: AbilityId;
   /** For a duet this is a synthesised id (`a+b`), not a member of EvolvedId. */

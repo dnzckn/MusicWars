@@ -81,7 +81,13 @@ export function codex(seen: ReadonlySet<string>): CodexRow[] {
       label: found ? labelOf(f.result) : '???',
       // The kind is safe to show either way: it says how deep in the tree a
       // thing sits without saying what it is or what makes it.
-      recipe: found ? `${labelOf(f.base)} + ${labelOf(f.catalyst)}` : f.kind === 'union' ? 'a union of two evolutions' : 'an evolution',
+      recipe: found
+        ? `${labelOf(f.base)} + ${labelOf(f.catalyst)}`
+        : f.kind === 'union'
+          ? 'a union of two evolutions'
+          : f.kind === 'lattice'
+            ? 'an arrangement of two instruments'
+            : 'an evolution',
       found,
     };
   });

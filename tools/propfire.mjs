@@ -125,12 +125,50 @@ for (const def of W.INSTRUMENTS) {
   }
 }
 
+/*
+ * FUSION-ONLY PROPERTIES ARE A DECLARED CATEGORY NOW, AND THAT IS A DESIGN
+ * CHANGE RATHER THAN A RELAXATION. Say which, because the two look identical
+ * in a diff (AGENTS.md §3).
+ *
+ * The rule was "every property has a BASE carrier", on the grounds that a
+ * property only a fusion can reach is one most runs never see. That is right
+ * for the twenty and wrong for the lattice: Ball x Pit's fusion tier
+ * introduces mechanics its base balls do not have — radiation stacks, an
+ * instant kill, damage as a share of what is LEFT — and a lattice whose every
+ * result is a re-mix of twenty base effects is exactly the "property merge"
+ * the sixty-three authored rows exist to avoid.
+ *
+ * So ONE assertion becomes TWO, and the list is imported rather than restated:
+ *
+ *   here      a fusion-only property must still be installed by SOMEBODY, and
+ *             anything NOT on the declared list must still have a base carrier
+ *             — so a base property silently losing its last carrier is caught
+ *             exactly as before.
+ *   fusefire  each fusion-only property must FIRE, with a denominator, in a
+ *             run holding a fusion that installs it. That is the check this
+ *             file's DYNAMIC section performs for the other twenty, and the
+ *             one a fusion-only property could not have here because no
+ *             forced base loadout can reach it.
+ */
+const FUSION_ONLY = new Set(W.FUSION_ONLY_PROPERTIES);
+{
+  const bogus = [...FUSION_ONLY].filter((n) => !NAMES.includes(n));
+  if (bogus.length) fail(`FUSION_ONLY_PROPERTIES names properties that do not exist: ${bogus.join(', ')}`);
+}
 for (const n of NAMES) {
   const who = carriers.get(n);
   const bases = who.filter((id) => !W.instrumentDef(id).fused);
-  console.log(`  ${n.padEnd(8)} ${String(who.length).padStart(2)} weapons   bases: ${bases.join(', ') || 'NONE'}`);
+  const only = FUSION_ONLY.has(n);
+  console.log(
+    `  ${n.padEnd(8)} ${String(who.length).padStart(2)} weapons   bases: ${bases.join(', ') || (only ? 'none — fusion-only, see fusefire' : 'NONE')}`,
+  );
   if (!who.length) fail(`property '${n}' is declared and no instrument installs it — dead on arrival`);
-  if (!bases.length) fail(`property '${n}' is only ever reachable through a fusion — no base weapon carries it`);
+  if (!bases.length && !only) {
+    fail(`property '${n}' is only ever reachable through a fusion and is not declared FUSION_ONLY — no base weapon carries it`);
+  }
+  if (only && bases.length) {
+    fail(`property '${n}' is declared FUSION_ONLY and base weapon(s) ${bases.join(', ')} carry it — the list is stale`);
+  }
 }
 for (const f of PROP_FIELDS) {
   if (!fieldOwners.get(f).length) fail(`Props.${f} is declared and nobody sets it`);
@@ -337,8 +375,18 @@ for (const n of NAMES) {
   rows.push({ n, ids, fired, chances, ticks, dmg, w });
 }
 
-if (rows.length !== NAMES.length) {
-  fail(`only ${rows.length} of ${NAMES.length} properties had a base carrier to measure`);
+/*
+ * The denominator is the BASE properties, printed, and the fusion-only ones
+ * are named as belonging to the other tool rather than silently dropped —
+ * "zero and clean look identical unless you print the count".
+ */
+const BASE_NAMES = NAMES.filter((n) => !FUSION_ONLY.has(n));
+console.log(
+  `\n  ${rows.length} of ${BASE_NAMES.length} base properties measured here; ` +
+    `${W.FUSION_ONLY_PROPERTIES.length} fusion-only (${W.FUSION_ONLY_PROPERTIES.join(', ')}) are measured by tools/fusefire.mjs`,
+);
+if (rows.length !== BASE_NAMES.length) {
+  fail(`only ${rows.length} of ${BASE_NAMES.length} base properties had a base carrier to measure`);
 }
 
 for (const r of rows) {
@@ -534,6 +582,15 @@ console.log('PROPFIRE HOLDS — every property is installed, wired, applies, tic
  *         in it carries 'poison'"
  *   H  set `PROP.blindMiss` to 0
  *      -> exit 1, "blind: 44 attacks by blinded bodies and not one missed"
+ *
+ * TWO MORE FOR THE FUSION-ONLY SPLIT, which is the assertion that changed:
+ *
+ *   I  removed 'execute' from `FUSION_ONLY_PROPERTIES`
+ *      -> exit 1, "property 'execute' is only ever reachable through a fusion
+ *         and is not declared FUSION_ONLY"
+ *   J  added 'burn' to `FUSION_ONLY_PROPERTIES`, which EMBER carries
+ *      -> exit 1, "property 'burn' is declared FUSION_ONLY and base weapon(s)
+ *         ember carry it — the list is stale"
  *
  * TWO MORE WERE SEEN RED WITHOUT BEING PLANTED, which is better evidence than
  * a plant because neither was anticipated:

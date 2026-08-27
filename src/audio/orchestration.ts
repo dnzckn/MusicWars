@@ -462,6 +462,83 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
   consort: 'lead',
   requiem: 'chords',
   stringsection: 'chords',
+
+  /* ------------------ the lattice - sixty-three authored instrument pairs
+   *
+   * EVERY ONE TAKES A LANE, and no lane was added. `tools/wiring.mjs` and
+   * `tools/instruments.mjs` both read 0 unmapped abilities, which is the
+   * assertion that matters: an unmapped id is SILENT to the ensemble, and a
+   * player who spends two maxed instruments to get one back would be trading
+   * two musicians for none. `abilityStems`' duet fallback cannot cover these
+   * - it only resolves synthesised `a+b` ids - so each row is written out.
+   *
+   * The lane is the DOMINANT parent's, chosen by what the result IS rather
+   * than by which parent came first alphabetically: BOMB is a kick because a
+   * detonation is a kick, whichever half of it came from EMBER.
+   */
+  detonate: 'kick',
+  frostfire: 'lead',
+  inferno: 'fx',
+  magma: 'kick',
+  brimstone: 'sub',
+  sun: 'kick',
+  fireworks: 'arp',
+  timestop: 'sub',
+  frostray: 'lead',
+  blizzard: 'clap',
+  glacier: 'kick',
+  venom: 'motifs',
+  wraith: 'motifs',
+  swamp: 'motifs',
+  virus: 'motifs',
+  noxious: 'chords',
+  radiation: 'chords',
+  hemorrhage: 'kick',
+  sacrifice: 'chords',
+  heartswallower: 'motifs',
+  vampirelord: 'chords',
+  berserk: 'arp',
+  storm: 'clap',
+  flash: 'fx',
+  rod: 'kick',
+  lightningbug: 'fx',
+  sandstorm: 'clap',
+  erosion: 'clap',
+  shade: 'chords',
+  assassin: 'motifs',
+  soulsucker: 'chords',
+  temper: 'kick',
+  drill: 'kick',
+  sforzando: 'arp',
+  cutter: 'sub',
+  catapult: 'sub',
+  petrify: 'sub',
+  landslide: 'sub',
+  flicker: 'chords',
+  incubus: 'lead',
+  warp: 'sub',
+  succubus: 'lead',
+  zombie: 'chords',
+  mosquitoswarm: 'arp',
+  mosquitoking: 'sub',
+  offspring: 'clap',
+  clutch: 'fx',
+  overgrowth: 'kick',
+  maggot: 'fx',
+  spiderqueen: 'sub',
+  leeches: 'arp',
+  fleshmound: 'clap',
+  lovestruck: 'lead',
+  beam: 'chords',
+  fallout: 'kick',
+  timebomb: 'sub',
+  armageddon: 'fx',
+  banshee: 'chords',
+  reaper: 'motifs',
+  eventhorizon: 'sub',
+  xray: 'chords',
+  sniper: 'arp',
+  diabolus: 'lead',
 };
 
 /**

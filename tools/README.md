@@ -2283,6 +2283,72 @@ above. `tempo` is per step at 120Hz against a drop every 60-80px, so a low
 single-digit percentage is the design working. **The assertion is non-zero, not
 a threshold** — a threshold here would be a number nobody could defend.
 
+## `fusefire` — an authored fusion that is secretly the generic fallback
+
+    node --experimental-transform-types tools/fusefire.mjs [seconds]
+
+`synthesiseDuet` already merges both parents' properties, so ANY two maxed
+instruments produce something that burns and freezes if its parents burned and
+froze. That is the fallback and it is deliberately good. It is also why an
+authored fusion can be written, typed, drawn on a card, announced with a banner
+and earned in a run while being EXACTLY that fallback wearing a name — and
+`levelup`, `mirror`, `discovery`, `combine` and `propfire` would every one of
+them stay green, because each is true of the fallback too. Sixty-three names
+over sixty-three property merges is the third rejected roster in a new costume.
+
+So it asks the one question none of the others can: **what does this fusion do
+that its own parents do not, and does that thing fire?**
+
+Nine checks:
+
+1. **Order does not matter.** Every recipe is SWAPPED IN PLACE — `FUSIONS` is
+   `readonly` to the type system and a plain mutable object at runtime — and
+   the whole readiness surface is compared, every recipe against every
+   combination of levels its two inputs can hold.
+2. **Every fusion frees a slot.** `applyFusion` is run for real; the instrument
+   count must drop by one and both inputs must be spent.
+3. One recipe per unordered pair, and every authored pair SHADOWS its generic
+   duet — taking the duet would burn the better result invisibly.
+4. A result inherits both parents' properties, never weaker. `heavy` and `dark`
+   are the only two fields a row may drop, and only because their damage
+   multiplier applies on every shape while their cost is paid in the bullet
+   path.
+5. A result is never weaker in nominal dps than the duet it hides. `readyDuets`
+   refuses a named pair, so the player CANNOT take the fallback instead.
+6. **Every result is distinct from its own merge** — a property neither parent
+   carries (`P`), or a delivery shape the fallback would not have used (`S`).
+   Anything else is a property merge with a name on it.
+7. **Every distinctive property FIRES in a real run**, with a denominator. This
+   is what catches a fusion whose identity sits on a shape that cannot express
+   it: an `aura` cannot chain, a `strike` has no bolt to burst.
+8. Every result has an `ENSEMBLE_MIX` lane and a character family `audio/sfx.ts`
+   can voice. An unmapped id is silent to the band, so combining would trade
+   two musicians for none.
+9. No pair is a dead end. All `C(20,2)` pairs resolve to something that carries
+   properties and deals damage.
+
+TWO THINGS THE HARNESS DOES, both of which were forced by measurement rather
+than chosen. It holds fourteen bodies in the ring the weapons reach, because a
+fusion arrives at 2.5x a maxed base with no rig and clears a wave faster than
+the wave curve refills it — every row read 0/0 without it. And three in four of
+those bodies get enough health to survive four hits of the weapon under test,
+because `collidePlayerBullets` calls `hurt` before `applyStatus` and
+`applyStatus` returns on `!e.alive`: five of the strongest results one-shot
+everything they touched and reported zero chances on the property that makes
+them distinct. That is a real finding about overkill, and it is worth saying
+that this file therefore does NOT prove those statuses matter against trash.
+
+THE HISTORY WORTH KEEPING is that the check found four defects nobody planted:
+all sixty-three rows failed the dps floor at once (the authoring script targeted
+1.6x the better parent against `synthesiseDuet`'s stated 1.5x, and a duet then
+runs its own two level steps and lands at 2.31x); eight rows had their identity
+on a delivery shape that cannot fire it; five more were one-shotting their own
+test bed; and FLICKER changed shape and fired nothing at all on the new one.
+And **two versions of the order check were vacuous before the third**, both
+staying green under a planted asymmetric requirement — AGENTS.md §3 twice in
+one file.
+
+
 ## `propfire` — a weapon property that is installed and never applies, or applies and never ticks
 
     node --experimental-transform-types tools/propfire.mjs [seconds]
@@ -2312,8 +2378,14 @@ other number in the game stays healthy.
 Six questions:
 
 1. Every `Props` field is owned by some weapon, and every property has a BASE
-   carrier. A property only a fusion can reach is a property most runs never
-   meet.
+   carrier — **unless it is declared `FUSION_ONLY_PROPERTIES`**. A property
+   only a fusion can reach is a property most runs never meet, which is right
+   for the twenty and wrong for the lattice: `vuln`, `rend` and `execute` are
+   introduced BY the fusion tier, exactly as Ball x Pit's radiation stacks and
+   instant kills are. One assertion became two rather than being relaxed —
+   anything not on the declared list must still have a base carrier, the list
+   itself must not name a property a base does carry, and `fusefire` proves
+   each fusion-only property fires and deals with a denominator.
 2. **Every draftable instrument carries a property.** This is the architecture
    assertion. "The property is the weapon" is what the roster is organised on,
    and a base weapon with no property is a delivery shape wearing a name —

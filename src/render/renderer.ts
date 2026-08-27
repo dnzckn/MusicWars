@@ -63,6 +63,11 @@ export class Renderer {
     [Status.Slow, 168, 0.7],    // wind
     [Status.Blind, 52, 0.8],    // glare
     [Status.Charm, 300, 0.95],  // it is yours now
+    [Status.Vuln, 275, 0.9],    // irradiated — the fusion tier's own colour,
+                                //   and violet because nothing else in the
+                                //   table is: a softened body has to be
+                                //   readable next to a burning one, since the
+                                //   whole play is "soften here, cash there"
   ];
 
   private g: CanvasRenderingContext2D;

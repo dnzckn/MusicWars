@@ -173,6 +173,18 @@ export interface Enemy {
   blindTime: number;
   /** Seconds fighting for the player instead of against them. */
   charmTime: number;
+  /**
+   * Vuln stacks held, how long until they lapse, and the extra damage each
+   * one is worth as a fraction.
+   *
+   * The only status whose whole payoff is paid by SOMETHING ELSE: it removes
+   * no hit points on its own clock, it makes every other source hit harder.
+   * That is why it is a fusion-tier property — it is worth nothing to a player
+   * holding one weapon and a great deal to one holding four.
+   */
+  vulnStacks: number;
+  vulnTime: number;
+  vulnPer: number;
 }
 
 /**
@@ -704,6 +716,9 @@ function blank(): Enemy {
     slowFactor: 0,
     blindTime: 0,
     charmTime: 0,
+    vulnStacks: 0,
+    vulnTime: 0,
+    vulnPer: 0,
   };
 }
 

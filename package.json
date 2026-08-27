@@ -164,6 +164,7 @@
     "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs",
     "rulefire": "node --experimental-transform-types tools/rulefire.mjs",
     "propfire": "node --experimental-transform-types tools/propfire.mjs",
+    "fusefire": "node --experimental-transform-types tools/fusefire.mjs",
     "offerpool": "node --experimental-transform-types tools/offerpool.mjs",
     "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs",
     "gridcost": "node --experimental-transform-types tools/gridcost.mjs",

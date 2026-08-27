@@ -1172,3 +1172,139 @@ The ~60 authored fusions of §9d. `mergeProps` is the joint they hang off and a
 generic duet already inherits both parents' properties, so no pair is a dead
 end in the meantime. The elite/two-currency economy of §3, the HUD of §5 and
 the enemy-fire removal of §1b are all untouched.
+
+---
+
+## Refactor 3, PHASE B — the fusion lattice: 63 authored results over 190 pairs
+
+`docs/plan-refactor-3.md` §9d asked for "~60 hand-authored fusions" over the
+`C(20,2) = 190` pairs the twenty properties make, ported from Ball x Pit rather
+than invented. Sixty-three landed. Fifty-four are base pairs; nine are TIER-TWO
+CHAINS, because the source's depth is part of why its space feels rich —
+BOMB → FALLOUT and → TIMEBOMB, SHADE + WRAITH → BANSHEE, SOUL SUCKER + HEART
+SWALLOWER → REAPER, SUN + NOCTURNE → EVENT HORIZON, BEAM + CUTTER → X-RAY,
+SFORZANDO + ASSASSIN → SNIPER, INCUBUS + SUCCUBUS → DIABOLUS, INFERNO + STORM →
+ARMAGEDDON.
+
+**They cost nothing in the offer, which is the only reason there can be
+sixty-three.** `progression.ts` skips `def.fused` when it builds the draft pool,
+so not one of these is ever a card. AGENTS.md §5 names that as the system's one
+free move; this is it spent in full. The offer arithmetic is unchanged from
+Phase A and `offerpool` still holds.
+
+**A new `FusionDef.kind`, `lattice`, and nothing else moved.** An `evolution` is
+instrument + rig catalyst, a `union` is two evolved instruments at possession, a
+`lattice` is TWO INSTRUMENTS both at their own ceiling. `readyFusions` already
+asked both sides for `maxLevelOf`, so the requirement is symmetric by
+construction and `applyFusion` already spent both inputs — which is why the
+whole tier cost one type widening in five files rather than a second code path.
+
+### The three things that made them behaviours rather than blends
+
+**PROPERTIES ARE INHERITED, THEN ADDED TO.** Every row's set is
+`mergeProps(parentA@3, parentB@3)` with an authored DELTA on top. That makes "an
+arrangement is never weaker than the duet it shadows" true by construction, and
+it means a row only writes what is NEW — which is exactly the thing that makes
+it distinct. `readyDuets` refuses a pair that has a named recipe, so a weaker
+authored result would be a trap the player cannot see.
+
+**THREE FUSION-ONLY PROPERTIES.** `vuln` (radiation, frostburn and curse are one
+mechanic under three names: a stack that makes the body softer for everything
+else you own), `rend` (a share of what is LEFT) and `execute` (a non-boss is
+simply gone). No base weapon carries any of them, which is the design: Ball x
+Pit's fusion tier introduces mechanics its base balls do not have, and a lattice
+whose every result is a re-mix of twenty base effects is the property merge this
+phase exists to avoid. Twelve of the sixty-three would have collapsed without
+them. `propfire`'s "every property has a base carrier" became TWO assertions
+rather than being relaxed — see `FUSION_ONLY_PROPERTIES`.
+
+**`tools/fusefire.mjs`**, which asks the question no other gate can: what does
+this fusion do that its own parents do not, and does that thing FIRE? Every row
+is classified `P` (a property neither parent installs) or `S` (a delivery shape
+the fallback would not have used), and then a run per fusion proves the
+distinctive property fires with a denominator. 20 P, 17 P+S, 26 S, **0 bare
+merges**; 39 distinctive properties, 0 never rolled, 0 rolled and never fired.
+
+### What the measurements CONTRADICTED
+
+- **All sixty-three rows were weaker than their own fallback**, at the first
+  run. The authoring script targeted 1.6x the better parent because
+  `synthesiseDuet` rescales to 1.5x — and a duet then runs its own two level
+  steps and lands at **2.31x**. That is the "tool holding its own copy of a
+  constant" trap; the factor is measured off a real duet's stat block now.
+- **Eight fusions had their whole identity on a delivery shape that cannot
+  express it.** Read off `world.ts`: bullets get `applyStatus` + `onHit` +
+  `propHitEffects`, a `strike` gets the first two, and an `aura`, a `field` and
+  a `lance` get statuses ONLY. LIGHTNING BUG, CATAPULT, SPIDER QUEEN, FLESH
+  MOUND, ROD and LANDSLIDE all changed shape because of it, and FLICKER changed
+  shape and then fired nothing at all on the new one.
+- **`heavy` and `dark` are free damage on four of the seven shapes.** Both
+  multiply damage inside `fireInstruments` for every shape while heavy's cost
+  (slower bolts) and dark's cost (the weapon goes silent) are paid in the bullet
+  path. Six results on an aura, a field or a strike drop them; `fusefire`
+  asserts those are the only two fields any row may drop.
+- **Five fusions one-shot their own test bed and reported zero chances on the
+  property that makes them distinct.** `collidePlayerBullets` calls `hurt`
+  before `applyStatus`, and `applyStatus` returns on `!e.alive`. A fusion
+  arrives at ~2.5x a maxed base; there is nothing in the early field it does not
+  delete. This is a real finding about OVERKILL rather than about the
+  properties — a fusion's statuses are for heavies and bosses — and it is what
+  `fusefire`'s durable dummies exist for.
+- **The screen called one thing two names.** Screenshotted in a browser: the
+  offer card said `INSTRUMENT` where it should have named the tier, and the
+  celebration plate announced BOMB as an `EVOLUTION` two seconds after the card
+  had called it an `ARRANGEMENT` — because a lattice fires `ability:evolve` (it
+  is authored and collectable, so it belongs on the path that records a
+  discovery). Both read the `FUSIONS` table through one `TIER_WORD` now.
+- **The generic DUET card said nothing about itself.** `stepNote(id, 3)` on a
+  synthesised duet returned its second level step — "and again, tighter" —
+  while the authored BOMB beside it printed its whole mechanic, purely because
+  one has level steps and the other does not. A fused instrument arrives at its
+  ceiling and can never be levelled, so "what this rung buys" is not a question
+  about it; `stepNote` returns the blurb for anything fused, and a duet's blurb
+  is now generated after the damage rescale so it can quote real numbers:
+  *"25 dmg x4 every 0.30s · EMBER's delivery carrying BOTH property sets: burn,
+  leech. No written arrangement for this pair."*
+
+### Two cuts, stated rather than fudged
+
+**Five source fusions were not ported.** Holy Laser needs two laser
+orientations and this engine has one LANCE. Tumor's "enemies die after 40s"
+needs a per-body death clock. Elemental takes FOUR inputs and `FusionDef` takes
+two. Mosquito Kingdom's recipe is not in the source material. Steel's "+10% per
+hit to 300%" is a per-weapon ramp with no state to hold it — TEMPER keeps the
+double damage and the halved speed and expresses the ramp on the TARGET
+instead, as `vuln`, which changes what carries the escalation but not what the
+fight feels like. Time Bomb's delay, Zombie's on-death trigger and Assassin's
+facing-dependent backstab are each ported to the nearest thing the engine has,
+and each is named in the row.
+
+### Worst case, in objects
+
+`_latticeperf`, 60s per loadout with 24 bodies held: spawn-heavy (MAGGOT,
+SPIDER QUEEN, CLUTCH, SFORZANDO) peaks at 38 player bullets of 700 and 13
+summons — one over `MAX_SUMMONS`, because `summonsLive` is refreshed once a
+frame while `onHit` can fire several times inside one. Splash-heavy (X-RAY,
+FLASH, ARMAGEDDON, LANDSLIDE) **saturates `MAX_EFFECTS` at 96**, so some chain
+arcs and lance lines are silently not drawn. They carry `dps: 0`, so no damage
+is lost — but it is a picture the player is not getting, and it is the one
+number in this pass sitting on its cap.
+
+### Gates
+
+Green: tsc, vite build, levelup, mirror (13,420 workbench rows, 0 wrong),
+discovery (86 arrangements, all obtainable), wiring, combine, aimcheck,
+offerchurn, rulefire, beatlock, propfire, offerpool, deadhunt-ranges (0 of 40
+dead level steps), effectsdraw, levelupdraw, openers (96%), **fusefire**.
+`builds` divergence 0.72 → **0.88**; `arena` encirclement p90 0.46 → **0.52**.
+Known red and untouched: leadfreeze, wellcheck, registercheck, counterpoint,
+subcheck, attackfloor, touchcheck, four levelshot assertions.
+
+### What no gate here can say
+
+Whether sixty-three is INTERESTING, or whether the twenty-six `S`-class rows —
+distinct only because they deliver differently — read as new weapons rather
+than as the same pair with a new silhouette. Every gate was green through two
+rejected rosters. What is measurable is that none of the sixty-three is the
+merge of its parents, that each one's distinctive property fires in a real run,
+and that all 190 pairs produce something.

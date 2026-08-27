@@ -274,6 +274,13 @@ export const Status = {
   Slow: 1 << 4,
   Blind: 1 << 5,
   Charm: 1 << 6,
+  /**
+   * Softened: takes `vulnStacks * vulnPer` more from everything.
+   *
+   * The eighth bit, and the first one that belongs to the FUSION tier rather
+   * than to a base weapon. `hurt` reads it; nothing else has to know.
+   */
+  Vuln: 1 << 7,
 } as const;
 
 /** A fresh per-property counter set, one entry per name in `PROPERTIES`. */
@@ -3981,6 +3988,23 @@ export class World {
       dmg += extra;
       this.propDamage.freeze += extra;
     }
+    /*
+     * VULN IS THE GENERAL FORM OF THE LINE ABOVE, and it sits beside it rather
+     * than replacing it: freeze's +25% is a property of being frozen, vuln's
+     * stacks are a property of having been irradiated, cursed or frostburnt,
+     * and a body can be both. Both are credited to their own column, so a
+     * report can say which of the two did the softening.
+     *
+     * Computed off `amount` rather than off the running `dmg`, so the two do
+     * not multiply into each other — a frozen body at five stacks takes
+     * +25% +50%, not +87.5%. Additive is the honest reading of "takes 10% more
+     * per stack" and it is the one that stays bounded.
+     */
+    if (e.vulnStacks > 0) {
+      const extra = amount * e.vulnStacks * e.vulnPer;
+      dmg += extra;
+      this.propDamage.vuln += extra;
+    }
     if (discrete && e.bleedStacks > 0) {
       const bled = e.bleedStacks * e.bleedDmg;
       dmg += bled;
@@ -4076,6 +4100,22 @@ export class World {
         e.status |= Status.Charm;
         this.propFires.charm++;
       }
+    }
+    /*
+     * VULN. No roll — a radiation stack is not a chance, it is what the hit
+     * leaves. A CONDUCTOR IS NOT EXEMPT: this is the one fusion-tier status a
+     * boss can carry, and deliberately so, because "soften the boss with one
+     * weapon and cash it with the other three" is the whole reason the
+     * property exists and a boss is the only target that lives long enough for
+     * a twelve-second window to matter.
+     */
+    if (p.vuln > 0 && p.vulnStack > 0) {
+      this.propChances.vuln++;
+      e.vulnStacks = Math.min(PROP.vulnMax, e.vulnStacks + p.vulnStack);
+      e.vulnTime = PROP.vulnTime;
+      if (p.vuln > e.vulnPer) e.vulnPer = p.vuln;
+      e.status |= Status.Vuln;
+      this.propFires.vuln++;
     }
   }
 
@@ -4269,6 +4309,50 @@ export class World {
       }
     }
 
+    /*
+     * REND — a share of what is LEFT, taken off the body that was hit.
+     *
+     * Here rather than in `hurt` for two reasons. It must be attributable to
+     * its own column, and `hurt` cannot separate "the bolt's damage" from "the
+     * rend" once they are summed; and it must be paid ONCE per discrete hit,
+     * where `hurt` is also called by every continuous source at 120 Hz. A pool
+     * that removed 6% of current health per step would kill anything standing
+     * in it in under a second, which is not a property, it is a floor trap.
+     *
+     * `discrete: false` on the inner call so the rend does not also cash the
+     * body's bleed stacks — the hit that carried it already did.
+     */
+    if (p.rend > 0 && e.alive) {
+      this.propChances.rend++;
+      const bite = e.hp * p.rend;
+      const dealt = this.hurt(e, bite, false);
+      if (dealt > 0) {
+        this.propDamage.rend += dealt;
+        this.propFires.rend++;
+      }
+    }
+
+    /*
+     * EXECUTE — Ball x Pit's Black Hole and Reaper, which simply delete a
+     * non-boss.
+     *
+     * Credited with the hit points it actually removed rather than with a
+     * count alone, so a run can say what the roll was WORTH: an execute that
+     * only ever lands on a body already at 2 hp is a fire count that looks
+     * healthy and a mechanic that does nothing.
+     */
+    if (p.execute > 0 && e.alive && e.archetype !== 'conductor') {
+      this.propChances.execute++;
+      if (this.rng.next() < p.execute) {
+        const left = e.hp;
+        e.hp = 0;
+        e.alive = false;
+        this.propDamage.execute += Math.max(0, left);
+        this.propFires.execute++;
+        this.particles.emit(e.x, e.y, 0, 0, 0.4, 10, 280, ParticleShape.Ring, 1);
+      }
+    }
+
     if (p.brood > 0) {
       this.propChances.brood++;
       if (this.rng.next() < p.brood && this.summonsLive < World.MAX_SUMMONS) {
@@ -4365,6 +4449,15 @@ export class World {
       this.propTicks.blind++;
       e.blindTime -= dt;
       if (e.blindTime <= 0) e.status &= ~Status.Blind;
+    }
+    if (st & Status.Vuln) {
+      this.propTicks.vuln++;
+      e.vulnTime -= dt;
+      if (e.vulnTime <= 0) {
+        e.vulnStacks = 0;
+        e.vulnPer = 0;
+        e.status &= ~Status.Vuln;
+      }
     }
     if (st & Status.Charm) {
       this.propTicks.charm++;

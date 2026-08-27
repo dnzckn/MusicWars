@@ -784,6 +784,52 @@ export interface Props {
   dark: number;
   /** Seconds a dark weapon is silent after its bolt lands. */
   darkCooldown: number;
+
+  /* ---------------------------------------------------------------------- *
+   * THE THREE FUSION-ONLY PROPERTIES.
+   *
+   * No base weapon carries any of these and that is the design: Ball x Pit's
+   * fusion tier introduces mechanics its base balls do not have — radiation
+   * stacks, an instant kill, damage as a share of what is left — and a lattice
+   * whose every result is a re-mix of twenty base effects is the "property
+   * merge" this phase exists to avoid. Three fields buy back twelve of the
+   * source's fusions that would otherwise have collapsed into their parents.
+   *
+   * `FUSION_ONLY_PROPERTIES` names them so `tools/propfire.mjs` can hold its
+   * "every property has a BASE carrier" assertion for the twenty and hand
+   * these to `tools/fusefire.mjs`, which proves each one fires in a run
+   * holding the fusion that installs it. Neither tool keeps its own copy.
+   * ---------------------------------------------------------------------- */
+  /**
+   * VULN. Extra damage taken per stack, as a fraction. Ball x Pit's radiation
+   * (Nuclear Bomb, X Ray, Radiation Beam), frostburn (Frozen Flame) and curse
+   * (Phantom, Sacrifice) are one mechanic wearing three names: a stack that
+   * makes the body softer for everything else you own.
+   *
+   * `PROP.freezeVuln` is the same idea hard-coded on one status, and this is
+   * the general form of it. They compose: a frozen, irradiated body takes both.
+   */
+  vuln: number;
+  /** Vuln stacks a hit applies. */
+  vulnStack: number;
+  /**
+   * REND. Fraction of the target's CURRENT health a hit removes, on top of its
+   * damage. Ball x Pit Erosion and Hemorrhage.
+   *
+   * Percent-of-current is the one damage shape a flat number cannot imitate:
+   * it is enormous against a full-health heavy and nearly nothing against the
+   * chaff a bolt would have killed anyway, which is why it is the answer to a
+   * boss and not to a wave.
+   */
+  rend: number;
+  /**
+   * EXECUTE. 0..1 chance a hit simply kills a non-boss outright. Ball x Pit
+   * Black Hole (kills the first thing it touches) and Reaper (10% instant).
+   *
+   * Never against a conductor, for the reason freeze and charm are not: a boss
+   * removed by a dice roll is not a fight.
+   */
+  execute: number;
 }
 
 export function noProps(): Props {
@@ -816,6 +862,10 @@ export function noProps(): Props {
     heavy: 0,
     dark: 0,
     darkCooldown: 0,
+    vuln: 0,
+    vulnStack: 0,
+    rend: 0,
+    execute: 0,
   };
 }
 
@@ -849,9 +899,27 @@ export const PROPERTIES = {
   hold: ['hold'],
   heavy: ['heavy'],
   dark: ['dark', 'darkCooldown'],
+  vuln: ['vuln', 'vulnStack'],
+  rend: ['rend'],
+  execute: ['execute'],
 } as const satisfies Record<string, readonly (keyof Props)[]>;
 
 export type PropName = keyof typeof PROPERTIES;
+
+/**
+ * Properties no BASE weapon carries, only fusion results.
+ *
+ * `tools/propfire.mjs` asserts that every property has a base carrier, on the
+ * grounds that a property only a fusion can reach is one most runs never see.
+ * That assertion is right for the twenty and wrong for these three, and the
+ * difference is a design decision rather than a convenience — so it is named
+ * here rather than quietly excused there, and it is not a weakening: propfire
+ * still fails a fusion-only property that no instrument at all installs, and
+ * `tools/fusefire.mjs` additionally requires each one to FIRE, with a
+ * denominator, in a run holding the fusion that declares it. Two assertions
+ * replace one. AGENTS.md 3.
+ */
+export const FUSION_ONLY_PROPERTIES: readonly PropName[] = ['vuln', 'rend', 'execute'];
 
 /** Every property name, in table order. */
 export const PROPERTY_NAMES = Object.keys(PROPERTIES) as PropName[];
@@ -912,6 +980,15 @@ export const PROP = {
    * bolt, which is not a stronger weapon, it is a pool overflow with a card.
    */
   burstCooldown: 3,
+  /**
+   * Seconds a vuln stack lasts. Long, because it is a SET-UP: the payoff is
+   * whatever your other three weapons do to the body while it is soft, and a
+   * two-second window would only ever be cashed by the weapon that applied it.
+   * Ball x Pit's frostburn runs 20s and this is that shape kept.
+   */
+  vulnTime: 12,
+  /** Vuln stacks a body may carry. Five at 10% each is +50% at the ceiling. */
+  vulnMax: 5,
 } as const;
 
 /**
@@ -1887,6 +1964,781 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     props: { slow: 0.7, lance: 44, lanceRange: 520 },
     steps: [],
   },
+
+  /* ------------------------------------------------------------------ *
+   * THE LATTICE - sixty-three authored results for INSTRUMENT PAIRS.
+   *
+   * See the note above `FUSIONS` for the recipes and for what was cut. Two
+   * things about the rows themselves:
+   *
+   * EVERY ONE INHERITS BOTH PARENTS' PROPERTIES AND THEN ADDS. The sets
+   * below were generated as `mergeProps(parentA@3, parentB@3)` plus an
+   * authored delta, so an arrangement is never weaker than the generic duet
+   * it shadows - and since `readyDuets` refuses a pair that has a named
+   * recipe, a weaker result would be a trap the player could not see. The
+   * DELTA is the fusion: it is the property the pair does not already have,
+   * and `tools/fusefire.mjs` proves each delta actually fires.
+   *
+   * DAMAGE IS 1.6x THE BETTER PARENT (1.5x for the tier-two chains), for the
+   * same reason: `synthesiseDuet` rescales to 1.5x, so this clears the
+   * fallback by a margin at every pair.
+   * ------------------------------------------------------------------ */
+  {
+    id: 'detonate',
+    label: 'BOMB',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '170 dmg x2, weighted 2.75x by the iron · every hit blows a 250px ring for 95 and leaves 2 burn stacks.',
+    character: 'heavy — a bass drum with a fuse in it',
+    base: stats({ interval: 1, count: 2, speed: 820, range: 700, damage: 170 }),
+    props: { burn: 14, burnStack: 2, quake: 95, quakeRadius: 250, heavy: 2.75 },
+    steps: [],
+  },
+  {
+    id: 'frostfire',
+    label: 'FROSTFIRE',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '37 dmg x3 · frostburn: every hit stacks +10% damage taken, to five, and it still burns and freezes.',
+    character: 'shimmering — struck glass over a live coal',
+    base: stats({ interval: 0.3, count: 3, speed: 1000, range: 620, damage: 37 }),
+    props: { burn: 14, burnStack: 2, freeze: 0.14, vuln: 0.1, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'inferno',
+    label: 'INFERNO',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '171 dmg in a 330px ring around you, twice a second · everything in it burns at 14/s a stack and is slowed 60%.',
+    character: 'aggressive — a wall of fire, roaring',
+    base: stats({ interval: 0.45, count: 1, area: 330, linger: 0.5, damage: 171 }),
+    props: { burn: 14, burnStack: 2, slow: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'magma',
+    label: 'MAGMA',
+    shape: 'field',
+    fused: true,
+    weight: 0,
+    blurb: '212 dmg per gout, three of them, lying where they fall for 4s · anything wading takes 2 burn stacks, 14/s each.',
+    character: 'heavy — lava, dropped in gouts',
+    base: stats({ interval: 1.3, count: 3, area: 150, linger: 4, damage: 212 }),
+    props: { burn: 14, burnStack: 2, quake: 96, quakeRadius: 330 },
+    steps: [],
+  },
+  {
+    id: 'brimstone',
+    label: 'BRIMSTONE',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '176 dmg in a 290px ring · everything caught takes BOTH burn and poison stacks, 14/s and 12/s a stack.',
+    character: 'eerie — sulphur, hissing',
+    base: stats({ interval: 0.5, count: 1, area: 290, linger: 0.45, damage: 176 }),
+    props: { burn: 14, burnStack: 2, poison: 12, poisonStack: 2, erode: 0.25, erodeFloor: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'sun',
+    label: 'SUN',
+    shape: 'field',
+    fused: true,
+    weight: 0,
+    blurb: '2134 dmg where it is dropped, and it hangs for 6s · everything inside 520px of it is blinded and burning.',
+    character: 'shimmering — one unbearable sustained chord',
+    base: stats({ interval: 2.6, count: 1, area: 520, linger: 6, damage: 2134 }),
+    props: { burn: 14, burnStack: 2, blind: 1 },
+    steps: [],
+  },
+  {
+    id: 'fireworks',
+    label: 'FIREWORKS',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '76 dmg x4 lobbed in a spread · wherever one lands 6 more go out from it, and each sets 2 burn stacks.',
+    character: 'shimmering — rockets, and then the report',
+    base: stats({ interval: 0.9, count: 4, arc: 1.4, speed: 900, range: 600, damage: 76 }),
+    props: { burn: 14, burnStack: 2, burst: 6 },
+    steps: [],
+  },
+  {
+    id: 'timestop',
+    label: 'TIMESTOP',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '2240 dmg, and EVERYTHING within 640px stops dead for 5s · once every six seconds, and never a boss.',
+    character: 'eerie — everything stops, and one note hangs',
+    base: stats({ interval: 6, count: 1, area: 640, linger: 1.2, damage: 2240 }),
+    props: { freeze: 1, hold: 5 },
+    steps: [],
+  },
+  {
+    id: 'frostray',
+    label: 'FROSTRAY',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: '75 dmg/s in two held beams reaching 820px · a quarter of everything the line touches freezes solid.',
+    character: 'shimmering — a glass rod drawn out',
+    base: stats({ interval: 0.4, count: 2, area: 16, linger: 0.8, range: 820, damage: 75 }),
+    props: { freeze: 0.25, lance: 46, lanceRange: 680 },
+    steps: [],
+  },
+  {
+    id: 'blizzard',
+    label: 'BLIZZARD',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '266 dmg in a 420px whiteout · half of everything caught freezes outright, and the rest is slowed 60%.',
+    character: 'shimmering — a whiteout, all noise and no pitch',
+    base: stats({ interval: 0.7, count: 1, area: 420, linger: 0.6, damage: 266 }),
+    props: { freeze: 0.5, slow: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'glacier',
+    label: 'GLACIER',
+    shape: 'field',
+    fused: true,
+    weight: 0,
+    blurb: '359 dmg x3 in spikes standing for 6s · whatever touches one is HELD where it stands, no roll needed.',
+    character: 'heavy — ice, grinding',
+    base: stats({ interval: 2.2, count: 3, area: 210, linger: 6, damage: 359 }),
+    props: { freeze: 0.6, quake: 96, quakeRadius: 330, hold: 1.5 },
+    steps: [],
+  },
+  {
+    id: 'venom',
+    label: 'VENOM',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '44 dmg x3 · venom stacks that BOTH rot at 14/s and take 55% of the speed. Five stacks, six seconds.',
+    character: 'eerie — a slow chromatic slide downward',
+    base: stats({ interval: 0.35, count: 3, speed: 950, range: 640, damage: 44 }),
+    props: { poison: 14, poisonStack: 2, freeze: 0.12, slow: 0.55 },
+    steps: [],
+  },
+  {
+    id: 'wraith',
+    label: 'WRAITH',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '62 dmg x3 passing through everything · anything the wraith crosses is HELD where it stands, no roll.',
+    character: 'mournful — a cold breath crossing the room',
+    base: stats({ interval: 0.5, count: 3, speed: 1000, pierce: 99, range: 1200, damage: 62 }),
+    props: { freeze: 0.3, ghost: 1, hold: 0.9 },
+    steps: [],
+  },
+  {
+    id: 'swamp',
+    label: 'SWAMP',
+    shape: 'field',
+    fused: true,
+    weight: 0,
+    blurb: '261 dmg x3 tar pools lying for 5.5s · anything wading takes 2 poison stacks at 16/s AND loses half its speed.',
+    character: 'eerie — tar, bubbling',
+    base: stats({ interval: 1.6, count: 3, area: 190, linger: 5.5, damage: 261 }),
+    props: { poison: 16, poisonStack: 2, slow: 0.5, quake: 96, quakeRadius: 330 },
+    steps: [],
+  },
+  {
+    id: 'virus',
+    label: 'VIRUS',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '48 dmg x3 · the disease SPREADS — every hit jumps to 4 more bodies for 22 and infects each of them too.',
+    character: 'eerie — one voice infecting the next',
+    base: stats({ interval: 0.3, count: 3, speed: 920, range: 640, damage: 48 }),
+    props: { poison: 10, poisonStack: 1, bleed: 4, bleedStack: 2, chain: 4, chainDamage: 22 },
+    steps: [],
+  },
+  {
+    id: 'noxious',
+    label: 'NOXIOUS',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '905 dmg in a 400px cloud · everything in it takes 2 poison stacks at 18/s, and 70% of it is blinded.',
+    character: 'eerie — a low cloud that will not lift',
+    base: stats({ interval: 0.9, count: 1, area: 400, linger: 0.6, damage: 905 }),
+    props: { poison: 18, poisonStack: 2, blind: 0.7 },
+    steps: [],
+  },
+  {
+    id: 'radiation',
+    label: 'RADIATION',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: '71 dmg/s in two held beams · every touch is a radiation stack, +10% damage taken, to five. And it rots.',
+    character: 'eerie — a sustained cluster, humming',
+    base: stats({ interval: 0.45, count: 2, area: 16, linger: 0.85, range: 860, damage: 71 }),
+    props: { poison: 14, poisonStack: 2, lance: 46, lanceRange: 680, vuln: 0.1, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'hemorrhage',
+    label: 'HEMORRHAGE',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '80 dmg x3, weighted by the iron · every hit also takes 6% of whatever health is LEFT, and leaves 3 bleeds.',
+    character: 'aggressive — a saw drawn across a wound',
+    base: stats({ interval: 0.5, count: 3, speed: 850, range: 620, damage: 80 }),
+    props: { bleed: 7, bleedStack: 3, heavy: 2.75, rend: 0.06 },
+    steps: [],
+  },
+  {
+    id: 'sacrifice',
+    label: 'SACRIFICE',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '352 dmg x2, tripled by the dark · bleeds AND curses: +12% damage taken a stack. Then it goes quiet 1.8s.',
+    character: 'mournful — a chord struck once and left to ring',
+    base: stats({ interval: 0.7, count: 2, speed: 950, range: 780, damage: 352 }),
+    props: { bleed: 7, bleedStack: 3, dark: 3.6, darkCooldown: 1.8, vuln: 0.12, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'heartswallower',
+    label: 'HEARTSWALLOWER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '48 dmg x4 passing through everything · 12% of hits take a point of health off them and give it to you.',
+    character: 'mournful — something drawing breath through you',
+    base: stats({ interval: 0.4, count: 4, speed: 980, pierce: 99, range: 1200, damage: 48 }),
+    props: { bleed: 6, bleedStack: 3, leech: 0.12, ghost: 1 },
+    steps: [],
+  },
+  {
+    id: 'vampirelord',
+    label: 'VAMPIRELORD',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '27 dmg x5, very fast · a quarter of hits heal you, and 7% simply CONSUME a non-boss outright.',
+    character: 'aggressive — a fast, hungry ostinato',
+    base: stats({ interval: 0.28, count: 5, speed: 950, range: 640, damage: 27 }),
+    props: { bleed: 8, bleedStack: 3, leech: 0.25, execute: 0.07 },
+    steps: [],
+  },
+  {
+    id: 'berserk',
+    label: 'BERSERK',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '239 dmg in a 300px ring · 30% of everything caught turns and fights its own neighbours for 5s.',
+    character: 'aggressive — a march that turns on itself',
+    base: stats({ interval: 0.5, count: 1, area: 300, linger: 0.4, damage: 239 }),
+    props: { bleed: 6, bleedStack: 2, charm: 0.3 },
+    steps: [],
+  },
+  {
+    id: 'storm',
+    label: 'STORM',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '66 dmg x4 strikes landing ON things, unaimed · each arcs to 6 more for 40 and slows all of them 60%.',
+    character: 'mechanical — thunder, arriving in sheets',
+    base: stats({ interval: 0.7, count: 4, area: 130, range: 900, damage: 66 }),
+    props: { slow: 0.6, chain: 6, chainDamage: 40 },
+    steps: [],
+  },
+  {
+    id: 'flash',
+    label: 'FLASH',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '246 dmg x2 · every hit blinds and damages EVERYTHING within 900px for 55, then arcs to 8 more for 46.',
+    character: 'shimmering — a cymbal choke and a white flash',
+    base: stats({ interval: 0.6, count: 2, speed: 1200, range: 760, damage: 246 }),
+    props: { blind: 1, chain: 8, chainDamage: 46, quake: 55, quakeRadius: 900 },
+    steps: [],
+  },
+  {
+    id: 'rod',
+    label: 'ROD',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '183 dmg x2 rods driven into whatever is out there · every strike arcs to 8 nearby for 44.',
+    character: 'mechanical — a rod struck on the three',
+    base: stats({ interval: 1.4, count: 2, area: 180, range: 900, damage: 183 }),
+    props: { chain: 8, chainDamage: 44 },
+    steps: [],
+  },
+  {
+    id: 'lightningbug',
+    label: 'LIGHTNINGBUG',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '38 dmg x5 sprayed wide · half of what they touch sends a hunter out, and every hit arcs to 4 more.',
+    character: 'mechanical — small sparks, everywhere at once',
+    base: stats({ interval: 0.5, count: 5, arc: 2, speed: 900, range: 620, damage: 38 }),
+    props: { chain: 5, chainDamage: 28, brood: 0.5 },
+    steps: [],
+  },
+  {
+    id: 'sandstorm',
+    label: 'SANDSTORM',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '82 dmg x3 passing through everything · 60% of what it crosses is blinded, all of it slowed and shocked.',
+    character: 'mechanical — grit in the mechanism',
+    base: stats({ interval: 0.5, count: 3, speed: 880, pierce: 99, range: 1100, damage: 82 }),
+    props: { blind: 0.6, slow: 0.6, quake: 96, quakeRadius: 330, ghost: 1 },
+    steps: [],
+  },
+  {
+    id: 'erosion',
+    label: 'EROSION',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '70 dmg x3 passing through everything · each pass also takes 8% of the health a body has LEFT.',
+    character: 'mournful — a long decay that never quite ends',
+    base: stats({ interval: 0.55, count: 3, speed: 900, pierce: 99, range: 1200, damage: 70 }),
+    props: { slow: 0.6, ghost: 1, hold: 1.2, rend: 0.08 },
+    steps: [],
+  },
+  {
+    id: 'shade',
+    label: 'SHADE',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '377 dmg x2, tripled by the dark, passing through everything · every body it crosses is cursed, +14% a stack.',
+    character: 'mournful — a curse, whispered',
+    base: stats({ interval: 0.75, count: 2, speed: 1000, pierce: 99, range: 1200, damage: 377 }),
+    props: { ghost: 1, dark: 3.6, darkCooldown: 1.8, vuln: 0.14, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'assassin',
+    label: 'ASSASSIN',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '156 dmg x2, weighted by the iron, passing through everything · 7% of hits kill a non-boss outright.',
+    character: 'mechanical — one note, precisely placed',
+    base: stats({ interval: 0.9, count: 2, speed: 1150, pierce: 99, range: 1300, damage: 156 }),
+    props: { ghost: 1, heavy: 2.75, execute: 0.07 },
+    steps: [],
+  },
+  {
+    id: 'soulsucker',
+    label: 'SOULSUCKER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '54 dmg x3 passing through everything · 30% of hits heal you, and half of what it crosses is blinded.',
+    character: 'mournful — breath drawn out of the room',
+    base: stats({ interval: 0.45, count: 3, speed: 900, pierce: 99, range: 1200, damage: 54 }),
+    props: { blind: 0.5, leech: 0.3, ghost: 1 },
+    steps: [],
+  },
+  {
+    id: 'temper',
+    label: 'TEMPER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '212 dmg x2, 3.2x and a third of the speed · each blow leaves the metal softer: +12% damage taken a stack.',
+    character: 'heavy — struck steel, enormous',
+    base: stats({ interval: 1.2, count: 2, speed: 700, pierce: 99, range: 900, damage: 212 }),
+    props: { erode: 0.15, erodeFloor: 0.75, heavy: 3.2, vuln: 0.12, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'drill',
+    label: 'DRILL',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '245 dmg x2, weighted by the iron, pierces everything · it also cuts a 300px line through each body it enters.',
+    character: 'heavy — a drum roll boring through',
+    base: stats({ interval: 1, count: 2, speed: 760, pierce: 99, range: 1000, damage: 245 }),
+    props: { quake: 96, quakeRadius: 330, lance: 40, lanceRange: 300, heavy: 2.75 },
+    steps: [],
+  },
+  {
+    id: 'sforzando',
+    label: 'SFORZANDO',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '78 dmg x3 in a heavy close spread, weighted by the iron · wherever one lands, 7 more go out from it.',
+    character: 'aggressive — one enormous accent, then shrapnel',
+    base: stats({ interval: 1.1, count: 3, arc: 1.1, speed: 900, bounces: 2, range: 560, damage: 78 }),
+    props: { burst: 7, heavy: 2.75 },
+    steps: [],
+  },
+  {
+    id: 'cutter',
+    label: 'CUTTER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '97 dmg x2, weighted 2.4x and slow with it · every body it enters is cut 700px through, front and back.',
+    character: 'mechanical — a cutting head, never lifting',
+    base: stats({ interval: 0.55, count: 2, speed: 640, pierce: 99, range: 900, damage: 97 }),
+    props: { lance: 70, lanceRange: 700, erode: 0.25, erodeFloor: 0.6, heavy: 2.4 },
+    steps: [],
+  },
+  {
+    id: 'catapult',
+    label: 'CATAPULT',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '129 dmg x3 stones lobbed in a spread · each shocks 170px on contact and throws 6 more out of the impact.',
+    character: 'heavy — stones thrown, and landing',
+    base: stats({ interval: 1.1, count: 3, arc: 1.3, speed: 620, pierce: 99, range: 700, damage: 129 }),
+    props: { quake: 45, quakeRadius: 170, burst: 6, erode: 0.25, erodeFloor: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'petrify',
+    label: 'PETRIFY',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: '159 dmg/s in two held beams · everything standing in the line is HELD, no roll, for as long as it is lit.',
+    character: 'heavy — everything in the line stops',
+    base: stats({ interval: 0.9, count: 2, area: 20, linger: 0.9, range: 760, damage: 159 }),
+    props: { erode: 0.25, erodeFloor: 0.6, accel: 0.45, hold: 1.4 },
+    steps: [],
+  },
+  {
+    id: 'landslide',
+    label: 'LANDSLIDE',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '196 dmg x3 landing across the field, unaimed · each one shocks everything within 300px for 130 more.',
+    character: 'heavy — the whole low end coming down',
+    base: stats({ interval: 1.2, count: 3, area: 200, range: 900, damage: 196 }),
+    props: { quake: 130, quakeRadius: 330, erode: 0.25, erodeFloor: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'flicker',
+    label: 'FLICKER',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '235 dmg x6 landing across the whole screen at once, unaimed · everything they touch is blinded outright.',
+    character: 'eerie — a lamp failing, over and over',
+    base: stats({ interval: 1.4, count: 6, area: 150, range: 1100, damage: 235 }),
+    props: { blind: 1 },
+    steps: [],
+  },
+  {
+    id: 'incubus',
+    label: 'INCUBUS',
+    shape: 'field',
+    fused: true,
+    weight: 0,
+    blurb: '754 dmg x2 shadows lying for 5s · 28% of whatever walks into one walks back out fighting for you.',
+    character: 'eerie — a seductive minor line',
+    base: stats({ interval: 1.5, count: 2, area: 200, linger: 5, damage: 754 }),
+    props: { charm: 0.28 },
+    steps: [],
+  },
+  {
+    id: 'warp',
+    label: 'WARP',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '903 dmg in a 380px bubble · time drags in it: everything is HELD and blinded, and slowed 50% on the way out.',
+    character: 'shimmering — a bar that will not end',
+    base: stats({ interval: 1.1, count: 1, area: 380, linger: 0.7, damage: 903 }),
+    props: { blind: 1, slow: 0.5, hold: 1.6 },
+    steps: [],
+  },
+  {
+    id: 'succubus',
+    label: 'SUCCUBUS',
+    shape: 'orbit',
+    fused: true,
+    weight: 0,
+    blurb: '44 dmg from four attendants circling you · 26% of what they touch turns, and their hits keep healing you.',
+    character: 'shimmering — two voices, one of them lying',
+    base: stats({ interval: 0.4, count: 4, area: 140, speed: 940, range: 660, damage: 44 }),
+    props: { charm: 0.26, leech: 0.12 },
+    steps: [],
+  },
+  {
+    id: 'zombie',
+    label: 'ZOMBIE',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '40 dmg x4, faster off every wall · 35% of what it hits gets back up and fights on your side for 5s.',
+    character: 'eerie — a shuffling figure that will not stop repeating',
+    base: stats({ interval: 0.45, count: 4, speed: 700, bounces: 6, range: 0, damage: 40 }),
+    props: { charm: 0.35, leech: 0.12, accel: 0.45 },
+    steps: [],
+  },
+  {
+    id: 'mosquitoswarm',
+    label: 'MOSQUITOSWARM',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '98 dmg x4 in a spraying swarm · seven more come out of wherever one lands, and hits still heal you.',
+    character: 'mechanical — a cloud of small fast things',
+    base: stats({ interval: 1.1, count: 4, arc: 1.6, speed: 880, range: 620, damage: 98 }),
+    props: { leech: 0.12, burst: 7 },
+    steps: [],
+  },
+  {
+    id: 'mosquitoking',
+    label: 'MOSQUITOKING',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '63 dmg x3 · 55% of hits send a hunter out after something else, and the hits still heal you.',
+    character: 'mechanical — a swarm with a leader',
+    base: stats({ interval: 0.5, count: 3, speed: 920, range: 700, damage: 63 }),
+    props: { leech: 0.12, brood: 0.55 },
+    steps: [],
+  },
+  {
+    id: 'offspring',
+    label: 'OFFSPRING',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '37 dmg x3 splitting FIVE times instead of twice · and every one of them is faster off every wall.',
+    character: 'eerie — a figure answering itself, faster each time',
+    base: stats({ interval: 0.4, count: 3, speed: 760, bounces: 8, range: 0, damage: 37 }),
+    props: { split: 5, accel: 0.5 },
+    steps: [],
+  },
+  {
+    id: 'clutch',
+    label: 'CLUTCH',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '49 dmg x3 that split, scatter AND hatch · 40% of hits send a hunter out on top of the burst.',
+    character: 'eerie — a cell dividing, wetly',
+    base: stats({ interval: 0.7, count: 3, speed: 880, range: 700, damage: 49 }),
+    props: { split: 4, burst: 6, brood: 0.4 },
+    steps: [],
+  },
+  {
+    id: 'overgrowth',
+    label: 'OVERGROWTH',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '131 dmg x3 landing ON things, unaimed · each one shocks everything within 360px for 130 more.',
+    character: 'heavy — growth, and then a collapse',
+    base: stats({ interval: 0.8, count: 3, area: 170, range: 820, damage: 131 }),
+    props: { quake: 130, quakeRadius: 360, split: 4 },
+    steps: [],
+  },
+  {
+    id: 'maggot',
+    label: 'MAGGOT',
+    shape: 'orbit',
+    fused: true,
+    weight: 0,
+    blurb: '34 dmg from five circling pods · hits split, send hunters, AND scatter 5 lesser bolts out of the body.',
+    character: 'eerie — something small, multiplying',
+    base: stats({ interval: 0.45, count: 5, area: 130, speed: 880, range: 660, damage: 34 }),
+    props: { split: 4, burst: 5, brood: 0.5 },
+    steps: [],
+  },
+  {
+    id: 'spiderqueen',
+    label: 'SPIDERQUEEN',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '76 dmg x3 · 60% of hits birth a hunter, and 6 lesser bolts go out of the same body with it.',
+    character: 'eerie — a nest, waking',
+    base: stats({ interval: 0.6, count: 3, speed: 880, range: 680, damage: 76 }),
+    props: { burst: 6, brood: 0.6 },
+    steps: [],
+  },
+  {
+    id: 'leeches',
+    label: 'LEECHES',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '48 dmg x4 · 55% of hits attach a hunter, and every hit leaves 3 bleed stacks costing 7 more each.',
+    character: 'aggressive — many small mouths',
+    base: stats({ interval: 0.4, count: 4, speed: 900, range: 660, damage: 48 }),
+    props: { bleed: 7, bleedStack: 3, brood: 0.55 },
+    steps: [],
+  },
+  {
+    id: 'fleshmound',
+    label: 'FLESHMOUND',
+    shape: 'orbit',
+    fused: true,
+    weight: 0,
+    blurb: '38 dmg from five circling pods, faster off every wall · 60% of what they touch sends a hunter out.',
+    character: 'eerie — a heap that keeps producing',
+    base: stats({ interval: 0.5, count: 5, area: 150, speed: 820, range: 620, damage: 38 }),
+    props: { brood: 0.6, accel: 0.5 },
+    steps: [],
+  },
+  {
+    id: 'lovestruck',
+    label: 'LOVESTRUCK',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '574 dmg in a 430px ring · everything caught is blinded, and 30% of it turns and fights its own side.',
+    character: 'shimmering — a love duet, badly timed',
+    base: stats({ interval: 0.7, count: 1, area: 430, linger: 0.6, damage: 574 }),
+    props: { blind: 1, charm: 0.3 },
+    steps: [],
+  },
+  {
+    id: 'beam',
+    label: 'BEAM',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: '164 dmg/s in two held beams reaching 880px · everything the line touches is blinded outright.',
+    character: 'shimmering — one blinding sustained line',
+    base: stats({ interval: 0.4, count: 2, area: 18, linger: 0.85, range: 880, damage: 164 }),
+    props: { blind: 1, lance: 46, lanceRange: 680 },
+    steps: [],
+  },
+  {
+    id: 'fallout',
+    label: 'FALLOUT',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '425 dmg x2, weighted by the iron · a 330px blast for 140, and 2 radiation stacks: +12% damage taken each.',
+    character: 'heavy — the low end of the world falling out',
+    base: stats({ interval: 1, count: 2, speed: 800, range: 720, damage: 425 }),
+    props: { burn: 14, burnStack: 2, poison: 10, poisonStack: 1, quake: 140, quakeRadius: 330, heavy: 2.75, vuln: 0.12, vulnStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'timebomb',
+    label: 'TIMEBOMB',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '340 dmg x3 shells landing ON things · each blows 300px for 130 and HOLDS everything left in the crater.',
+    character: 'heavy — a fuse, and then the one',
+    base: stats({ interval: 1.2, count: 3, area: 160, range: 900, damage: 340 }),
+    props: { burn: 14, burnStack: 2, quake: 130, quakeRadius: 300, hold: 1.2 },
+    steps: [],
+  },
+  {
+    id: 'armageddon',
+    label: 'ARMAGEDDON',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '111 dmg x3 landing three times a second · each shocks 220px, arcs to 6 more, and sets 3 burn stacks.',
+    character: 'aggressive — a meteor shower with no gaps in it',
+    base: stats({ interval: 0.35, count: 3, area: 150, range: 1000, damage: 111 }),
+    props: { burn: 24, burnStack: 3, slow: 0.6, chain: 6, chainDamage: 40, quake: 80, quakeRadius: 220 },
+    steps: [],
+  },
+  {
+    id: 'banshee',
+    label: 'BANSHEE',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '3265 dmg in a 700px scream · EVERYTHING in it is cursed twice over, blinded, and 40% of it freezes solid.',
+    character: 'mournful — a scream that curses the whole room',
+    base: stats({ interval: 1.3, count: 1, area: 700, linger: 0.8, damage: 3265 }),
+    props: { freeze: 0.4, blind: 1, ghost: 1, hold: 0.9, vuln: 0.16, vulnStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'reaper',
+    label: 'REAPER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '126 dmg x4 passing through everything · 12% of hits simply take a non-boss, and 35% of them heal you.',
+    character: 'mournful — the last chord, and nothing after it',
+    base: stats({ interval: 0.42, count: 4, speed: 980, pierce: 99, range: 1300, damage: 126 }),
+    props: { bleed: 6, bleedStack: 3, blind: 0.5, leech: 0.35, ghost: 1, execute: 0.12 },
+    steps: [],
+  },
+  {
+    id: 'eventhorizon',
+    label: 'EVENTHORIZON',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '1230 dmg x2, tripled by the dark · 30% of what they touch is simply gone. Then the weapon goes quiet.',
+    character: 'eerie — a single note that swallows the bar',
+    base: stats({ interval: 1.2, count: 2, speed: 900, range: 800, damage: 1230 }),
+    props: { burn: 14, burnStack: 2, blind: 1, dark: 3.6, darkCooldown: 1.8, execute: 0.3 },
+    steps: [],
+  },
+  {
+    id: 'xray',
+    label: 'XRAY',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '256 dmg x4 cutting 640px through every body they enter · each touch is 2 radiation stacks, +24% taken.',
+    character: 'shimmering — four lines crossing, all of them lit',
+    base: stats({ interval: 0.5, count: 4, speed: 1100, pierce: 99, range: 1100, damage: 256 }),
+    props: { blind: 1, lance: 80, lanceRange: 700, erode: 0.25, erodeFloor: 0.6, heavy: 2.4, vuln: 0.12, vulnStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'sniper',
+    label: 'SNIPER',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '433 dmg x2, weighted by the iron · each shot cuts 700px through everything, and 12% of hits end a body.',
+    character: 'mechanical — one shot, and a very long silence',
+    base: stats({ interval: 1, count: 2, speed: 1600, pierce: 99, range: 1500, damage: 433 }),
+    props: { lance: 70, lanceRange: 700, burst: 7, ghost: 1, heavy: 2.75, execute: 0.12 },
+    steps: [],
+  },
+  {
+    id: 'diabolus',
+    label: 'DIABOLUS',
+    shape: 'seek',
+    fused: true,
+    weight: 0,
+    blurb: '460 dmg x3 · 45% of hits turn a body against its own side, and the rest take +30% from everything.',
+    character: 'eerie — the tritone, held',
+    base: stats({ interval: 0.55, count: 3, speed: 950, range: 700, damage: 460 }),
+    props: { charm: 0.45, leech: 0.12, vuln: 0.15, vulnStack: 2 },
+    steps: [],
+  },
 ];
 
 /* ------------------------------------------------------------------------ *
@@ -2437,13 +3289,20 @@ export const RIG: readonly RigDef[] = [
  * ------------------------------------------------------------------------ */
 
 export interface FusionDef {
-  kind: 'evolution' | 'union';
+  /**
+   * `evolution` — instrument + its RIG catalyst, both maxed.
+   * `union`     — two evolved instruments, possession only.
+   * `lattice`   — TWO INSTRUMENTS, both at their own ceiling. The Ball x Pit
+   *               tier: an authored result for a pair that would otherwise
+   *               fall through to a generic duet. See `LATTICE` below.
+   */
+  kind: 'evolution' | 'union' | 'lattice';
   /** The instrument that must be at max level. */
   base: InstrumentId | EvolvedId;
-  /** Rig item (evolution) or second instrument (union), also at max level. */
+  /** Rig item (evolution) or second instrument (union/lattice), also at max level. */
   catalyst: AbilityId;
   result: EvolvedId;
-  /** One line for the announcement banner. */
+  /** One line for the announcement banner and the offer card. Mechanic first. */
   line: string;
 }
 
@@ -2492,6 +3351,73 @@ export const FUSIONS: readonly FusionDef[] = [
 
   { kind: 'union', base: 'chorale', catalyst: 'cathedral', result: 'requiem', line: 'the choir and the room become one' },
   { kind: 'union', base: 'harmonics', catalyst: 'crossstrung', result: 'stringsection', line: 'the section takes the whole line' },
+
+  /* ------------------------------------------------------------------ *
+   * THE LATTICE. Sixty-three instrument PAIRS with an authored result.
+   * ------------------------------------------------------------------ */
+  { kind: 'lattice', base: 'ember', catalyst: 'anvil', result: 'detonate', line: 'every hit detonates a 250px ring for 95, and the coals go on burning' },
+  { kind: 'lattice', base: 'ember', catalyst: 'chime', result: 'frostfire', line: 'frostburn — every hit leaves +10% damage taken, and it still burns and freezes' },
+  { kind: 'lattice', base: 'ember', catalyst: 'snare', result: 'inferno', line: 'the fire stops being a bolt and becomes a room you carry with you' },
+  { kind: 'lattice', base: 'ember', catalyst: 'timpani', result: 'magma', line: 'it stops throwing coals and starts pouring — three gouts that lie where they land' },
+  { kind: 'lattice', base: 'ember', catalyst: 'gravel', result: 'brimstone', line: 'burning AND poisoning everything in 290px — the stone was full of it all along' },
+  { kind: 'lattice', base: 'ember', catalyst: 'nova', result: 'sun', line: 'a 520px sun left hanging for six seconds; nothing near it can see or stop burning' },
+  { kind: 'lattice', base: 'ember', catalyst: 'harp', result: 'fireworks', line: 'four rockets in a spread, each one bursting into six more, all of them burning' },
+  { kind: 'lattice', base: 'blackhole', catalyst: 'chime', result: 'timestop', line: 'everything within 640px stops for five seconds — once every six, which is the whole cost' },
+  { kind: 'lattice', base: 'chime', catalyst: 'bow', result: 'frostray', line: 'the shards become a held beam, and a quarter of what it crosses freezes solid' },
+  { kind: 'lattice', base: 'chime', catalyst: 'snare', result: 'blizzard', line: 'a 420px whiteout: half of what it touches freezes, the rest can barely move' },
+  { kind: 'lattice', base: 'chime', catalyst: 'timpani', result: 'glacier', line: 'spikes that stand for six seconds and hold whatever touches them — no roll, just held' },
+  { kind: 'lattice', base: 'chime', catalyst: 'tremolo', result: 'venom', line: 'venom, not poison — it rots at 14/s a stack AND takes 55% of the legs away' },
+  { kind: 'lattice', base: 'chime', catalyst: 'phantom', result: 'wraith', line: 'it passes through everything, and everything it passes through stops where it stands' },
+  { kind: 'lattice', base: 'tremolo', catalyst: 'timpani', result: 'swamp', line: 'the pools turn to tar: poison as before, and half the speed of anything standing in it' },
+  { kind: 'lattice', base: 'tremolo', catalyst: 'pizzicato', result: 'virus', line: 'the poison spreads: every hit jumps to four more and stacks on all of them' },
+  { kind: 'lattice', base: 'tremolo', catalyst: 'nocturne', result: 'noxious', line: 'a 400px cloud nothing can see through, poisoning everything standing in it' },
+  { kind: 'lattice', base: 'tremolo', catalyst: 'bow', result: 'radiation', line: 'the beam irradiates: +10% damage taken per stack, on top of the rot' },
+  { kind: 'lattice', base: 'pizzicato', catalyst: 'anvil', result: 'hemorrhage', line: 'each hit takes 6% of what is LEFT — worthless on chaff, enormous on a boss' },
+  { kind: 'lattice', base: 'pizzicato', catalyst: 'nocturne', result: 'sacrifice', line: 'bleeds and curses at once — three stacks of the wound, one of +12% damage taken' },
+  { kind: 'lattice', base: 'pizzicato', catalyst: 'phantom', result: 'heartswallower', line: 'it passes through them and takes something with it — 12% of hits heal you' },
+  { kind: 'lattice', base: 'pizzicato', catalyst: 'siphon', result: 'vampirelord', line: 'a quarter of hits heal you and 7% consume the body entirely, whatever its health was' },
+  { kind: 'lattice', base: 'pizzicato', catalyst: 'charm', result: 'berserk', line: 'a 300px ring of rage — a third of what it catches attacks its own side' },
+  { kind: 'lattice', base: 'feedback', catalyst: 'snare', result: 'storm', line: 'the lightning stops being aimed — four strikes land wherever the bodies are' },
+  { kind: 'lattice', base: 'feedback', catalyst: 'nova', result: 'flash', line: 'the whole screen takes 55 and is blinded, every single time it lands' },
+  { kind: 'lattice', base: 'feedback', catalyst: 'anvil', result: 'rod', line: 'rods driven into the field and struck — eight arcs out of every one' },
+  { kind: 'lattice', base: 'feedback', catalyst: 'drones', result: 'lightningbug', line: 'sparks sprayed across the arc — half of what they touch hatches a hunter' },
+  { kind: 'lattice', base: 'snare', catalyst: 'timpani', result: 'sandstorm', line: 'it passes through the whole line, blinding and shocking everything on the way' },
+  { kind: 'lattice', base: 'snare', catalyst: 'blackhole', result: 'erosion', line: 'it passes through and takes 8% of what is left — nothing on chaff, everything on a boss' },
+  { kind: 'lattice', base: 'phantom', catalyst: 'nocturne', result: 'shade', line: 'it crosses the whole line and curses everything on it: +14% damage taken a stack' },
+  { kind: 'lattice', base: 'phantom', catalyst: 'anvil', result: 'assassin', line: 'seven percent of its hits simply end a non-boss, wherever its health happened to be' },
+  { kind: 'lattice', base: 'phantom', catalyst: 'siphon', result: 'soulsucker', line: 'it draws through the line: 30% of hits heal you, and half of them cannot aim after' },
+  { kind: 'lattice', base: 'anvil', catalyst: 'gravel', result: 'temper', line: 'triple damage at a third the speed, and every blow makes the next one land harder' },
+  { kind: 'lattice', base: 'anvil', catalyst: 'timpani', result: 'drill', line: 'it does not stop at the first — it bores, cutting a line through everything behind' },
+  { kind: 'lattice', base: 'anvil', catalyst: 'harp', result: 'sforzando', line: 'a close, heavy spread — and seven more bolts out of wherever it lands' },
+  { kind: 'lattice', base: 'gravel', catalyst: 'bow', result: 'cutter', line: 'a cutting head rather than a bolt: heavy, slow, and 700px of line out of every body' },
+  { kind: 'lattice', base: 'gravel', catalyst: 'harp', result: 'catapult', line: 'stones lobbed in a spread, each shocking 170px and scattering six more' },
+  { kind: 'lattice', base: 'gravel', catalyst: 'accelerando', result: 'petrify', line: 'everything in the sightline is held where it stands, for as long as the line is on it' },
+  { kind: 'lattice', base: 'gravel', catalyst: 'timpani', result: 'landslide', line: 'the ground goes: three unaimed landings, each shocking 300px for 130' },
+  { kind: 'lattice', base: 'nocturne', catalyst: 'nova', result: 'flicker', line: 'six strikes across the whole screen at once, and everything they touch is blinded' },
+  { kind: 'lattice', base: 'nocturne', catalyst: 'charm', result: 'incubus', line: 'shadows left on the ground — what walks into one walks out on your side' },
+  { kind: 'lattice', base: 'blackhole', catalyst: 'nova', result: 'warp', line: 'a 380px bubble where time drags — everything inside it is held and blinded' },
+  { kind: 'lattice', base: 'siphon', catalyst: 'charm', result: 'succubus', line: 'four attendants circling; a quarter of what they touch changes sides' },
+  { kind: 'lattice', base: 'siphon', catalyst: 'accelerando', result: 'zombie', line: 'a third of what it hits gets back up on your side' },
+  { kind: 'lattice', base: 'siphon', catalyst: 'harp', result: 'mosquitoswarm', line: 'a swarm rather than a bolt — seven more out of every landing, all of them feeding you' },
+  { kind: 'lattice', base: 'siphon', catalyst: 'drones', result: 'mosquitoking', line: 'over half its hits send out a hunter, and every one of them still feeds you' },
+  { kind: 'lattice', base: 'echoes', catalyst: 'accelerando', result: 'offspring', line: 'five splits instead of two, and each one comes off the walls faster than the last' },
+  { kind: 'lattice', base: 'echoes', catalyst: 'harp', result: 'clutch', line: 'it splits, it scatters, and two in five of its hits hatch something that hunts' },
+  { kind: 'lattice', base: 'echoes', catalyst: 'timpani', result: 'overgrowth', line: 'it stops travelling and starts landing — three unaimed strikes, each shocking 360px' },
+  { kind: 'lattice', base: 'echoes', catalyst: 'drones', result: 'maggot', line: 'it splits, it hatches, and it bursts — five lesser bolts out of every body it opens' },
+  { kind: 'lattice', base: 'drones', catalyst: 'harp', result: 'spiderqueen', line: 'three in five of its hits birth a hunter, and a burst of six goes out with each one' },
+  { kind: 'lattice', base: 'drones', catalyst: 'pizzicato', result: 'leeches', line: 'over half its hits attach something that keeps feeding, on top of three bleed stacks' },
+  { kind: 'lattice', base: 'drones', catalyst: 'accelerando', result: 'fleshmound', line: 'five pods throwing hunters out at whatever comes near, all of them speeding up' },
+  { kind: 'lattice', base: 'charm', catalyst: 'nova', result: 'lovestruck', line: 'a 430px ring: everything in it is blinded and a third of it changes sides' },
+  { kind: 'lattice', base: 'bow', catalyst: 'nova', result: 'beam', line: 'the bolt becomes a held beam, and nothing it touches can aim afterwards' },
+  { kind: 'lattice', base: 'detonate', catalyst: 'tremolo', result: 'fallout', line: 'the bomb goes nuclear: 330px, and everything left standing takes 24% more from everything' },
+  { kind: 'lattice', base: 'detonate', catalyst: 'blackhole', result: 'timebomb', line: 'the bombs are lobbed now, and everything left in the crater is held where it stood' },
+  { kind: 'lattice', base: 'inferno', catalyst: 'storm', result: 'armageddon', line: 'a meteor shower: three strikes a second, shocking, arcing and setting the ground alight' },
+  { kind: 'lattice', base: 'shade', catalyst: 'wraith', result: 'banshee', line: 'it curses every enemy on the screen at once: +32% damage taken, blinded, and held' },
+  { kind: 'lattice', base: 'soulsucker', catalyst: 'heartswallower', result: 'reaper', line: 'twelve percent of its hits end a body outright, and a third give you the health back' },
+  { kind: 'lattice', base: 'sun', catalyst: 'nocturne', result: 'eventhorizon', line: 'thirty percent of what it touches is gone — not damaged, gone' },
+  { kind: 'lattice', base: 'beam', catalyst: 'cutter', result: 'xray', line: 'four crossed cuts, and everything they touch takes 24% more from everything else you own' },
+  { kind: 'lattice', base: 'sforzando', catalyst: 'assassin', result: 'sniper', line: 'one shot down the whole line: 12% of what it touches is finished where it stands' },
+  { kind: 'lattice', base: 'incubus', catalyst: 'succubus', result: 'diabolus', line: 'nearly half of what it touches changes sides, and the rest of it is condemned' },
 ];
 
 /* ------------------------------------------------------------------------ *
@@ -2615,7 +3541,8 @@ function synthesiseDuet(id: string): InstrumentDef | undefined {
     id: id as InstrumentDef['id'],
     label: `${a.label} × ${b.label}`,
     shape: a.shape,
-    blurb: `${a.blurb.replace(/\.$/, '')}, carrying ${b.label.toLowerCase()}.`,
+    // Rewritten below, once the damage rescale has run — see `describeDuet`.
+    blurb: '',
     /*
      * The tail names the TIER, because the two are not the same event.
      *
@@ -2684,7 +3611,43 @@ function synthesiseDuet(id: string): InstrumentDef | undefined {
   const raw = dpsOf(def.base);
   if (raw > 0 && target > 0) def.base.damage *= target / raw;
 
+  /*
+   * NAMED HONESTLY, WHICH THE LATTICE MADE NECESSARY, and written here rather
+   * than in the literal above so it can quote the damage the rescale settled on.
+   *
+   * While every pairing was generic, "…, carrying glass" was an adequate
+   * description of the only thing on offer. Sixty-three of the 190 pairs now
+   * have an AUTHORED result and the other 127 land here, and the two arrive on
+   * cards laid out identically — so the card has to say which it is. The tier
+   * word does half of it (`ARRANGEMENT` against `DUET`, drawn by
+   * `render/levelup.ts` from `TIER_WORD`); this says the mechanical half,
+   * which is the part a player can act on: a generic pairing is `a`'s DELIVERY
+   * carrying BOTH property sets, which is exactly what the `mergeProps` above
+   * produces.
+   *
+   * It is deliberately not apologetic. A duet is a real result — at least as
+   * good as either parent at everything, and 2.3x the better one — so calling
+   * it "no recipe" would misrepresent the fallback as a punishment for a pair
+   * nobody wrote down, which is the failure mode `docs/plan-refactor-3.md`
+   * §9b asks the fallback to avoid.
+   *
+   * The property NAMES are listed rather than described, because there are 190
+   * pairs and no sentence can be written for each: `PROPERTIES` is the same
+   * table `propfire` and `fusefire` read, so a name here cannot drift from what
+   * the hit actually carries.
+   */
+  const carried = PROPERTY_NAMES.filter((n) => PROPERTIES[n].some((k) => def.props![k] !== 0));
+  /*
+   * CACHED BEFORE THE BLURB IS WRITTEN, and the order is load-bearing:
+   * `instrumentStats` resolves through `instrumentDef`, which would re-enter
+   * this function for the same id and recurse until the stack gave out. Seen,
+   * as `RangeError: Maximum call stack size exceeded`.
+   */
   DUET_CACHE.set(id, def);
+  const top = instrumentStats(def.id, FUSED_MAX_LEVEL);
+  def.blurb =
+    `${Math.round(top.damage)} dmg x${Math.round(top.count)} every ${top.interval.toFixed(2)}s · `
+    + `${a.label}'s delivery carrying BOTH property sets: ${carried.join(', ')}. No written arrangement for this pair.`;
   return def;
 }
 
@@ -2756,6 +3719,19 @@ export function characterOf(id: string): string {
 export function stepNote(id: string, level: number): string {
   const inst = instrumentDef(id);
   if (inst) {
+    /*
+     * A FUSED INSTRUMENT ALWAYS DESCRIBES ITSELF, whatever level is asked for.
+     *
+     * `applyFusion` seats a result at its ceiling and `availableOptions` offers
+     * it at `maxLevelOf`, so the only `stepNote` a fusion card ever asks for is
+     * the TOP one — and for a synthesised duet, which does carry steps, that
+     * returned "and again, tighter". Screenshotted: the generic EMBER x SIPHON
+     * card said nothing whatever about what it does, while the authored BOMB
+     * beside it printed its whole mechanic, purely because one has level steps
+     * and the other does not. "What this rung buys" is not a question about a
+     * thing that arrives finished and can never be levelled.
+     */
+    if (inst.fused) return inst.blurb;
     if (level <= 1) return inst.blurb;
     return inst.steps[level - 2]?.note ?? inst.blurb;
   }

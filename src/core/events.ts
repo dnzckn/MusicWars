@@ -161,7 +161,84 @@ export type EvolvedId =
   | 'adagio'
   | 'interlude'
   | 'fugue'
-  | 'consort';
+  | 'consort'
+  /*
+   * THE LATTICE. Sixty-three authored results for INSTRUMENT PAIRS, which is
+   * the tier `docs/plan-refactor-3.md` 9d asks for and the one Ball x Pit
+   * actually spends its variety on: 21 base balls, 69 hand-authored fusions.
+   *
+   * THEY COST NOTHING IN THE OFFER, which is the only reason there can be
+   * sixty-three of them. `progression.ts` skips `def.fused` when it builds
+   * the draft pool, so not one of these is ever a card — AGENTS.md 5 names
+   * that as the system's one free move and this is it spent in full.
+   *
+   * `C(20,2)` is 190 pairs. Sixty-three are named here; the other 127 fall
+   * through to the generic DUET, which merges both parents' properties, so
+   * no pair is a dead end. See `synthesiseDuet` in `weapons.ts`.
+   */
+  | 'detonate'
+  | 'frostfire'
+  | 'inferno'
+  | 'magma'
+  | 'brimstone'
+  | 'sun'
+  | 'fireworks'
+  | 'timestop'
+  | 'frostray'
+  | 'blizzard'
+  | 'glacier'
+  | 'venom'
+  | 'wraith'
+  | 'swamp'
+  | 'virus'
+  | 'noxious'
+  | 'radiation'
+  | 'hemorrhage'
+  | 'sacrifice'
+  | 'heartswallower'
+  | 'vampirelord'
+  | 'berserk'
+  | 'storm'
+  | 'flash'
+  | 'rod'
+  | 'lightningbug'
+  | 'sandstorm'
+  | 'erosion'
+  | 'shade'
+  | 'assassin'
+  | 'soulsucker'
+  | 'temper'
+  | 'drill'
+  | 'sforzando'
+  | 'cutter'
+  | 'catapult'
+  | 'petrify'
+  | 'landslide'
+  | 'flicker'
+  | 'incubus'
+  | 'warp'
+  | 'succubus'
+  | 'zombie'
+  | 'mosquitoswarm'
+  | 'mosquitoking'
+  | 'offspring'
+  | 'clutch'
+  | 'overgrowth'
+  | 'maggot'
+  | 'spiderqueen'
+  | 'leeches'
+  | 'fleshmound'
+  | 'lovestruck'
+  | 'beam'
+  | 'fallout'
+  | 'timebomb'
+  | 'armageddon'
+  | 'banshee'
+  | 'reaper'
+  | 'eventhorizon'
+  | 'xray'
+  | 'sniper'
+  | 'diabolus';
 
 /**
  * Passive items. Global multipliers, so their honest voicing is to MODIFY an

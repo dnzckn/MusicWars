@@ -221,6 +221,36 @@ console.log('\nTABLE');
         if (n.length > BUDGET) fail(`${d.id} note is ${n.length} chars, over the ${BUDGET} the card can draw`);
       }
     }
+    /*
+     * AND THE TWO STRINGS A FUSION CARD ACTUALLY DRAWS, which this block did
+     * not measure while every fusion was an evolution and there were
+     * twenty-three of them.
+     *
+     * There are eighty-six now, and both of their strings are prose. A fused
+     * instrument has no level steps, so `stepNote` returns its BLURB at every
+     * level — that is the card's note. And `FusionDef.line` is what
+     * `availableOptions` puts on the offer card and what the celebration plate
+     * prints underneath the result's name. Neither was inside any budget, and
+     * an over-long one is silently truncated at exactly the clause that says
+     * what the thing does — which is the defect this whole block exists for.
+     *
+     * Both halves seen red: BOMB's blurb lengthened to 160 chars reported
+     * "detonate blurb is 160 chars, over the 131 the card can draw", and its
+     * recipe line to 155 reported "detonate's line is 155 chars". Both edits
+     * were undone by their inverse. AGENTS.md §3.
+     */
+    for (const d of W.INSTRUMENTS) {
+      if (!d.fused || !d.blurb) continue;
+      checked++;
+      if (d.blurb.length > longest) { longest = d.blurb.length; longestId = d.id; }
+      if (d.blurb.length > BUDGET) fail(`${d.id} blurb is ${d.blurb.length} chars, over the ${BUDGET} the card can draw`);
+    }
+    for (const f of W.FUSIONS) {
+      if (!f.line) continue;
+      checked++;
+      if (f.line.length > longest) { longest = f.line.length; longestId = `${f.result} line`; }
+      if (f.line.length > BUDGET) fail(`${f.result}'s line is ${f.line.length} chars, over the ${BUDGET} the card can draw`);
+    }
     if (checked === 0) fail('no notes were measured against the card width — this check proved nothing');
     console.log(`  ${checked} notes measured against a ${BUDGET}-char card; longest ${longest} (${longestId})`);
   }
