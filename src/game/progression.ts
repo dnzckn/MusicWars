@@ -186,7 +186,25 @@ export const OFFER_SIZE = 4;
  * resolution; see `onBossDefeated`.
  */
 export const STAND_SLOTS = 4;
-export const RIG_SLOTS = 3;
+/*
+ * THREE BECAME FOUR, AND THE OWNER ASKED FOR IT: four weapons and four
+ * passives.
+ *
+ * `docs/plan-refactor-3.md` §3 states it in one line — "`STAND_SLOTS` is
+ * already 4. `RIG_SLOTS` is 3 and becomes 4" — and it is worth writing down
+ * what that costs, because AGENTS.md §5 records a standing objection to
+ * widening the rig: a thirteenth PASSIVE breaks the deliberate 12x12 symmetry
+ * and is preferentially spent by `sacrificeFor`, which protects catalysts. A
+ * fourth SLOT is a different change. It adds no card, displaces nothing in the
+ * zero-sum offer, and the twelve items stay twelve.
+ *
+ * What it does move is `docs/plan-passives.md` §4's LOCKED measurement — 46% of
+ * offers could not deal the catalyst a fusion needed, because the rig was full
+ * and a passive you do not hold cannot be offered. A fourth chair is the
+ * cheapest available answer to that, and it is the one the brief asks for.
+ * `tools/combine.mjs` is where the LOCKED rate is read.
+ */
+export const RIG_SLOTS = 4;
 
 export const REROLLS_START = 2;
 export const BANISHES_START = 1;
@@ -502,7 +520,18 @@ export interface ProgressionState {
 }
 
 /** The instrument a run starts holding when nothing else is chosen. */
-export const STARTING_INSTRUMENT = 'pizzicato';
+/*
+ * THE OPENER IS EMBER NOW, AND THE CHOICE IS PEDAGOGICAL RATHER THAN
+ * BALANCED.
+ *
+ * A run's first second is the only moment the game gets to teach its own
+ * organising idea, and the idea after this pass is that a weapon is a
+ * PROPERTY: a hit leaves something behind. EMBER is the plainest possible
+ * statement of it — you shoot a thing, the thing keeps taking damage, and the
+ * card says exactly that in numbers. Every previous default taught a delivery
+ * geometry, which is the axis the roster just stopped being organised on.
+ */
+export const STARTING_INSTRUMENT = 'ember';
 
 /**
  * The openers a player may choose between, and why these three.
@@ -580,7 +609,26 @@ export const STARTING_INSTRUMENT = 'pizzicato';
  * in SPICCATO. ROSIN BOW remains what it has always been — a strong mid-run
  * pick and a poor opener.
  */
-export const STARTERS: readonly string[] = ['pizzicato', 'snare', 'timpani'];
+/*
+ * THREE OPENERS, ONE PER KIND OF PROPERTY, AND THREE DIFFERENT LANES.
+ *
+ *   EMBER    burn — a status that keeps working after the hit      (fx)
+ *   LANCE    a line of damage through whatever it hits             (chords)
+ *   TIMPANI  quake — a splash that reaches what you did not hit    (kick)
+ *
+ * RASP WAS THE THIRD AND IS NOT, and the reason is measured rather than
+ * aesthetic: `tools/openers.mjs` read it at 61% of the best opener's wave
+ * against a 70% floor. Its reach was inside `Enemy.standoff` (see its row in
+ * `weapons.ts`), which is fixed — but even at 300px a weapon that has to be
+ * flown into a pack is a poor thing to hand somebody in their first ten
+ * seconds, and a starter that measures as a trap is worse than one less idea
+ * on the opening menu.
+ *
+ * `tools/openers.mjs` asserts all three are playable within 70% of each other
+ * and that they lift different stems, so this list cannot quietly become three
+ * spellings of the same run.
+ */
+export const STARTERS: readonly string[] = ['ember', 'bow', 'timpani'];
 
 export function createProgression(seed = 1, starter?: string): ProgressionState {
   return {

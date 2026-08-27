@@ -163,6 +163,8 @@
     "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs",
     "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs",
     "rulefire": "node --experimental-transform-types tools/rulefire.mjs",
+    "propfire": "node --experimental-transform-types tools/propfire.mjs",
+    "offerpool": "node --experimental-transform-types tools/offerpool.mjs",
     "deadhunt-ranges": "node --experimental-transform-types tools/deadhunt-ranges.mjs",
     "gridcost": "node --experimental-transform-types tools/gridcost.mjs",
     "gridraster": "node tools/gridraster.mjs",

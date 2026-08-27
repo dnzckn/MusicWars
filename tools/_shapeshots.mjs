@@ -147,7 +147,7 @@ for (const [id, shape, wave, key, want] of CASES) {
       effects: w.effects.length,
       novas: w.novas.length,
       wells: w.wells.length,
-      shells: w.shells.length,
+      shells: 0 /* shells: the `mortar` shape was cut with the twenty-weapon roster */,
       summons: w.summonsLive,
       held: Object.keys(w.progression.instruments).join(','),
     };

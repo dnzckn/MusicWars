@@ -1076,3 +1076,99 @@ fusion is always on the table" is false one time in eight. That is pre-existing
 and applies to every fusion, not just this branch (snap appeared 1,289 times
 against spiccato's 1,224 — no bias between them). Worth fixing; not fixed hours
 before a demo.
+
+---
+
+## Refactor 3, PHASE A — the property substrate and the twenty bases
+
+`docs/plan-refactor-3.md` §9 is the specification and it was followed. What
+landed, and what each measurement said.
+
+**The architecture.** `Props` in `weapons.ts` is a flat record of 28 numbers
+folded the way `Rules` and `Modifiers` are, covering twenty named properties.
+`Enemy` carries fourteen status numbers behind a `status` bitmask so the
+per-step tick is one integer test on a body carrying nothing. A bolt carries a
+one-byte index into `World.propSets` — interning, because a structure-of-arrays
+cannot hold an object and a per-bullet copy of a 28-field record is not a cost
+anyone should pay. Every damage site the player owns now goes through
+`World.hurt`, which is where a frozen target's +25% and a bleed's stacks are
+cashed; before this there were seven separate `e.hp -= x` lines and a property
+could only ever have reached the ones somebody remembered.
+
+**Twenty bases, twelve of them re-pointed ids.** `pizzicato` is RASP, `snare` is
+SWELL, `chime` is GLASS, and so on. Every re-pointed id keeps its
+`ENSEMBLE_MIX` lane and its `layers.ts` signature; eight ids are new and take
+existing lanes. All twenty have their own entry in `SHOT_VOICES`, so sharing a
+stem lane does not mean sharing the sound of firing.
+
+**Fourteen delivery geometries became seven.** `beam`, `cone`, `spray`, `trail`,
+`mortar` were variants of survivors; `chain` and `spawn` became PROPERTIES,
+which is strictly more general than a shape one instrument could wear. The six
+non-damage shapes (`rest`, `drag`, `ghost`, `counterpoint`, `unison`, `tacet`)
+are `plan-items-v2.md`'s second axis and are a separate decision; they survive
+as fusion results rather than as picks, so the code stays reachable and
+`builds`' damage-taken spread keeps its contributors.
+
+### Measured
+
+**The offer pool did not collapse, and this was the risk worth naming.**
+AGENTS.md §5 records a change that added no card type and still cost 31% of a
+building player's designed fusions. This adds EIGHT draftable instruments.
+`tools/offerpool.mjs` runs both arms inside one build (the eight new ids
+banished in the narrow arm), 300 model runs each:
+
+    designed fusions per run, builder   3.50 at 20 draftable   3.50 at 12
+    offers containing a fusion card    10.3%                  10.3%
+    offers before TIMPANI is dealt      8.0                    6.0
+
+Fusions are UNMOVED. What the wider pool costs is WAITING: 33% longer before a
+named instrument is dealt. `levelup`'s own model agrees — builder fusions/run
+6.24 → 5.94, ratio against a random picker 1.7x either side. The reason the
+fusion rate held is that rig cards are 54% of the deal and `RIG_SLOTS` went 3 →
+4 at the same time, and that the recipe table went 15 → 23.
+
+**The roster separates builds better than the one it replaces.** `builds`, 900s
+x 8 seeds x 7 policies: divergence 0.38 → 0.72, damage taken across policies
+1.5x → 2.2x. That column had been the open complaint in `weapons.ts`' own
+header — "two gates now want opposite things" — and it is over 2x again without
+anybody widening a bar. `arena` holds at the same time: encirclement p90 0.43 →
+0.46 against a 0.25 floor.
+
+**The opener menu got better, not worse.** `openers`: weakest reaches 76% → 96%
+of the strongest.
+
+**The substrate's frame cost is below this machine's noise floor.** Measured in
+a real browser at wave 24, same seed, same wave: 48.7 fps holding SNAP (which
+carries no property) against 48.1 fps holding four property weapons with 36
+statused bodies on the field. A repeat of the SNAP arm read 54.1, so run-to-run
+drift is ±5 fps and the property cost is 0.6.
+
+### What the measurements CONTRADICTED
+
+- **RASP's reach was inside `Enemy.standoff`.** At 210px it could not reach the
+  majority of the roster at all, because everything that is not a rammer holds a
+  ring at 240. `openers` found it from the outside — 61% of the best opener's
+  wave against a 70% floor — and it read as a balance problem rather than as a
+  weapon that physically could not connect. 300px now, and it is not a starter.
+- **The simulation delivered and the screen did not.** Driven in a browser with
+  each of the twenty forced in turn, every property fired and ticked and NOT ONE
+  was visible: a burning body, a poisoned one and an untouched one were the same
+  orange teardrop. That is this codebase's own recurring defect inverted, and
+  it makes a substrate a number in a log. `Renderer.STATUS_RINGS` draws one
+  stroked arc per live status now, and freeze stops the body swaying.
+- **Three effects were too short-lived to see.** A chain arc at 0.14s and a
+  lance line at 0.16s were gone inside two frames; TIMPANI's shock crossed its
+  own 330px radius in 0.2s and screenshotted as a 40px spark. All three are
+  `dps: 0` pictures, so lengthening them changes no outcome.
+- **`wellcheck` is red for a reason older than this pass.** `player.wells` is
+  banked in exactly one place, inside `fireField`, at HEAD and here alike — a
+  `blackhole` POWERUP pickup has never granted a charge, which is what that
+  check asserts. What DID change is that `fieldSwallows` is `downbeat` alone, so
+  the throw is now an evolution's verb rather than a base weapon's.
+
+### Not done, deliberately
+
+The ~60 authored fusions of §9d. `mergeProps` is the joint they hang off and a
+generic duet already inherits both parents' properties, so no pair is a dead
+end in the meantime. The elite/two-currency economy of §3, the HUD of §5 and
+the enemy-fire removal of §1b are all untouched.

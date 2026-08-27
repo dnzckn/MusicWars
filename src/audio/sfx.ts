@@ -162,6 +162,48 @@ const SHOT_VOICES: Partial<Record<string, ShotVoice>> = {
   timpani: { s: 'sine', decay: 0.34, hpf: 40, lpf: 700, gain: 0.055, octave: -24, room: 0.24 },
   // A ring on the beat — short, wide open, no low end to fight the kick.
   nova: { s: 'square', decay: 0.12, hpf: 500, lpf: 8000, gain: 0.034, octave: 0, room: 0.3 },
+
+  /* ---------------------------------------------------------------------- *
+   * THE TWELVE ROWS THE TWENTY-WEAPON ROSTER NEEDED, so that every base has
+   * its OWN firing sound rather than falling back to its character family.
+   *
+   * The family table below is the floor and it guarantees coverage; a family
+   * covers six words across twenty weapons, so without these twelve rows a
+   * run holding EMBER and NOCTURNE would hear one voice for both. Sharing an
+   * `ENSEMBLE_MIX` stem lane is fine — that is an arrangement decision and
+   * `ensembleLift` sums it — but sharing the sound of pulling the trigger is
+   * the thing the `player:shoot` fix was for in the first place.
+   *
+   * Eight of the twenty already had a row (`pizzicato`, `snare`, `bow`,
+   * `chime`, `harp`, `drones`, `timpani`, `nova`) and keep it unchanged, even
+   * where the weapon on that id has moved: the voices were written for the
+   * TIMBRE the id names, and GLASS on `chime` still wants a struck bell.
+   * ---------------------------------------------------------------------- */
+  // Coals: short, dirty, no tail. Fire has no pitch.
+  ember: { s: 'sawtooth', decay: 0.06, hpf: 900, lpf: 5200, gain: 0.036, octave: 0, room: 0.16 },
+  // A body that is not there: soft attack, long room, nothing in the middle.
+  phantom: { s: 'sine', decay: 0.3, hpf: 300, lpf: 2400, gain: 0.026, octave: -12, room: 0.42 },
+  // Struck metal. Low, loud, and gone.
+  anvil: { s: 'square', decay: 0.16, hpf: 60, lpf: 1400, gain: 0.052, octave: -24, room: 0.18 },
+  // Grit. Wide noise band, no fundamental worth hearing.
+  gravel: { s: 'sawtooth', decay: 0.12, hpf: 140, lpf: 1100, gain: 0.044, octave: -24, room: 0.2 },
+  // One low held tone with nothing above it.
+  nocturne: { s: 'triangle', decay: 0.38, hpf: 70, lpf: 900, gain: 0.04, octave: -24, room: 0.34 },
+  // A breath drawn in: quiet, dark, slightly late.
+  siphon: { s: 'sine', decay: 0.2, hpf: 180, lpf: 2000, gain: 0.028, octave: -12, room: 0.3 },
+  // A click track pulling ahead — hard, bright, very short.
+  accelerando: { s: 'square', decay: 0.035, hpf: 1200, lpf: 9000, gain: 0.03, octave: 12, room: 0.1 },
+  // Two voices agreeing: the only entry with any sweetness in it.
+  charm: { s: 'triangle', decay: 0.24, hpf: 600, lpf: 6000, gain: 0.03, octave: 12, room: 0.36 },
+  // The three re-pointed ids whose old timbre no longer fits the weapon.
+  // A poisoned pool: slow, beating, unresolved.
+  tremolo: { s: 'sawtooth', decay: 0.26, hpf: 240, lpf: 1800, gain: 0.03, octave: -12, room: 0.3 },
+  // Lightning: a crack with a squeal on top.
+  feedback: { s: 'square', decay: 0.07, hpf: 1500, lpf: 11000, gain: 0.032, octave: 12, room: 0.22 },
+  // The echo unit answering itself: bright, short, a lot of room.
+  echoes: { s: 'triangle', decay: 0.1, hpf: 700, lpf: 7000, gain: 0.03, octave: 0, room: 0.46 },
+  // A suspension that will not resolve: low, held, no attack.
+  blackhole: { s: 'sine', decay: 0.44, hpf: 40, lpf: 600, gain: 0.046, octave: -24, room: 0.3 },
 };
 
 /**

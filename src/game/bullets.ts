@@ -116,6 +116,35 @@ export interface BulletSpawn {
    * the player pool alone — enemy fire has never wanted to come back.
    */
   bounces?: number;
+  /**
+   * Index into `World.propSets` — WHICH PROPERTY SET THIS BOLT CARRIES.
+   *
+   * ONE BYTE PER BULLET, AND THAT IS THE WHOLE COST OF THE SUBSTRATE ON THE
+   * HOT PATH. A property set is a 28-field record; storing one per bullet, or
+   * a reference to one, would put an object pointer in a structure-of-arrays
+   * whose entire reason for existing is that it holds no objects. Interning
+   * instead — the world keeps at most 255 distinct sets and hands out indices
+   * — means the collision loop reads a `Uint8Array` and one array lookup, and
+   * `remove`'s swap moves a byte.
+   *
+   * 0 is the empty set (`noProps()`), which every bullet not fired by an
+   * instrument carries. That is what makes `tools/propfire.mjs`' control run
+   * meaningful: with no property installed every bolt in the game is index 0
+   * and every counter must read zero.
+   */
+  src?: number;
+  /** Splits this bolt has left (Ball x Pit Cell). Counts down at each hit. */
+  splits?: number;
+  /**
+   * The lowest this bolt's damage may erode to (Ball x Pit Stone), in absolute
+   * damage rather than as a fraction.
+   *
+   * Absolute because by the time a bolt is eroding, what it left with is gone —
+   * `damage` has already been multiplied down. Storing the floor at spawn is
+   * one `Float32Array` column; storing the original and re-deriving the floor
+   * every hit would be the same column with an extra multiply.
+   */
+  dmgFloor?: number;
 }
 
 export class BulletPool {
@@ -141,6 +170,12 @@ export class BulletPool {
   readonly flags: Uint8Array;
   /** Wall reflections REMAINING. Counts down; 0 means the next wall is the end. */
   readonly bounces: Uint8Array;
+  /** Property-set index. See `BulletSpawn.src`. */
+  readonly src: Uint8Array;
+  /** Splits remaining. See `BulletSpawn.splits`. */
+  readonly splits: Uint8Array;
+  /** Damage floor for an eroding bolt. See `BulletSpawn.dmgFloor`. */
+  readonly dmgFloor: Float32Array;
   /**
    * `spawn` only: the index into `World.enemies` this summon is hunting, or -1.
    *
@@ -177,6 +212,14 @@ export class BulletPool {
    * falsifiable from a headless harness rather than from watching the screen.
    */
   bounced = 0;
+  /**
+   * Monotonic count of reflections that ACCELERATED the bolt, for the same
+   * reason `bounced` exists. `tools/propfire.mjs` reads it as the fire count
+   * for the `accel` property, against `bounced` as its denominator — a
+   * property whose whole content is "the bounce is different" cannot be
+   * measured any other way.
+   */
+  accelerated = 0;
 
   constructor(capacity: number) {
     this.capacity = capacity;
@@ -197,6 +240,9 @@ export class BulletPool {
     this.type = new Uint8Array(capacity);
     this.flags = new Uint8Array(capacity);
     this.bounces = new Uint8Array(capacity);
+    this.src = new Uint8Array(capacity);
+    this.splits = new Uint8Array(capacity);
+    this.dmgFloor = new Float32Array(capacity);
     this.target = new Int16Array(capacity);
   }
 
@@ -232,6 +278,9 @@ export class BulletPool {
     // and multipliers, and a Uint8Array would wrap a negative or an overflow
     // into a large positive count rather than failing.
     this.bounces[i] = Math.max(0, Math.min(255, Math.round(s.bounces ?? 0)));
+    this.src[i] = s.src ?? 0;
+    this.splits[i] = Math.max(0, Math.min(255, Math.round(s.splits ?? 0)));
+    this.dmgFloor[i] = s.dmgFloor ?? 0;
     // Every spawn starts unlocked; only `World.updateSummons` ever sets it.
     this.target[i] = -1;
     return i;
@@ -263,6 +312,9 @@ export class BulletPool {
       this.type[i] = this.type[last];
       this.flags[i] = this.flags[last];
       this.bounces[i] = this.bounces[last];
+      this.src[i] = this.src[last];
+      this.splits[i] = this.splits[last];
+      this.dmgFloor[i] = this.dmgFloor[last];
       this.target[i] = this.target[last];
     }
   }
@@ -285,8 +337,21 @@ export class BulletPool {
     right: number,
     bottom: number,
     walls?: { l: number; t: number; r: number; b: number },
+    /*
+     * ACCELERANDO lives here: fractional speed gained per wall, indexed by the
+     * bolt's property set.
+     *
+     * A lookup table rather than a callback, and rather than a per-bullet
+     * `Float32Array`. A callback would allocate a closure per frame at the one
+     * call site and put a function call inside the tightest loop in the game;
+     * a per-bullet column would cost four bytes a bullet to store a number
+     * that is a property of the WEAPON. This is one array index on the branch
+     * that already fired, and bounces are rare — a full run reflects about
+     * 1,600 times against 400,000 steps.
+     */
+    accelBySrc?: Float32Array,
   ): void {
-    const { x, y, px, py, speed, angle, accel, turn, minSpeed, maxSpeed, ttl, age, flags, bounces } = this;
+    const { x, y, px, py, speed, angle, accel, turn, minSpeed, maxSpeed, ttl, age, flags, bounces, src } = this;
     for (let i = this.count - 1; i >= 0; i--) {
       px[i] = x[i];
       py[i] = y[i];
@@ -349,6 +414,24 @@ export class BulletPool {
           angle[i] = a;
           bounces[i]--;
           this.bounced++;
+          if (accelBySrc !== undefined) {
+            const gain = accelBySrc[src[i]];
+            if (gain > 0) {
+              speed[i] *= 1 + gain;
+              /*
+               * AND IT VISIBLY GROWS. A speed change is the hardest property in
+               * the roster to see — screenshotted in a real browser at wave 15,
+               * an ACCELERANDO bolt on its sixth wall was pixel-identical to one
+               * that had never touched a wall, so the weapon's entire identity
+               * ("every wall makes it faster, and it keeps them") was a number
+               * in a log. A bolt that swells as it winds up is the cheapest
+               * honest readout of that, and it makes the hitbox agree with what
+               * the player is looking at rather than only with the stat.
+               */
+              this.radius[i] = Math.min(11, this.radius[i] * 1.07);
+              this.accelerated++;
+            }
+          }
         }
       }
 

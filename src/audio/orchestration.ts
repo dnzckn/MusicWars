@@ -395,26 +395,52 @@ export function arpDisplacement(leadLevel: number, arpLevel: number): number {
  * implying a new voice, and inventing an affinity for them would make the
  * system arbitrary rather than legible.
  */
+/*
+ * TWENTY BASES OVER EIGHT LANES, AND THE ARITHMETIC IS WORTH STATING.
+ *
+ * There are eight stems an ability can reinforce — `arp`, `clap`, `chords`,
+ * `lead`, `sub`, `kick`, `fx`, `motifs` — and after this pass twenty
+ * draftable instruments, so lanes are SHARED: two or three weapons per lane.
+ * That is not a compromise, it is what `ensembleLift` is built for — it sums
+ * the levels of everything on a lane and saturates, so two players on the arp
+ * is a fuller arp and not a second arp.
+ *
+ * NO LANE WAS ADDED AND NO WEAPON IS VOICELESS. Twelve of the twenty are
+ * re-pointed ids that already had an entry; the eight new ones are added here
+ * and each takes an existing lane chosen for what the weapon IS. The player
+ * holds at most four instruments, so the most a run can put on one lane is
+ * four, which is inside what `ensembleLift` was measured against.
+ *
+ * The SHOT voice is a separate question and is answered separately, in
+ * `audio/sfx.ts`: every one of the twenty has its own entry in `SHOT_VOICES`,
+ * so sharing a stem lane does not mean sharing a firing sound.
+ */
 export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
-  // The starting six, and the lanes they are named after.
-  pizzicato: 'arp', //  dry plucked bolts — plucked figuration
-  snare: 'clap', //     a sweep through an arc — the snare lane, literally
-  bow: 'chords', //     one held beam that does not stop — sustained harmony
-  chime: 'lead', //     struck from above, unaimed — a bell over the top
-  harp: 'arp', //       a fan of bolts — a gliss is an arpeggio
-  drones: 'sub', //     pods that circle and hold — a drone is a pedal tone
+  /* -------------------------------------------------- the twenty bases */
+  ember: 'fx', //        coals spat — crackle, not pitch
+  chime: 'lead', //      GLASS: struck from above, thin and ringing
+  tremolo: 'motifs', //  DETUNE: pools that keep working after you leave
+  pizzicato: 'arp', //   RASP: dry plucked bolts — plucked figuration
+  feedback: 'fx', //     ARC: a squealing loop that jumps between things
+  snare: 'clap', //      SWELL: a held wash of noise
+  phantom: 'motifs', //  a figure with nothing behind it
+  anvil: 'kick', //      struck metal, all body
+  gravel: 'sub', //      grit dragged low
+  nocturne: 'chords', // one held low tone and nothing above it
+  nova: 'kick', //       GLARE: a ring ON THE BEAT — it is the downbeat
+  blackhole: 'sub', //   FERMATA: a suspension that will not resolve
+  siphon: 'chords', //   a slow drawn breath in
+  echoes: 'fx', //       CANON: the SPC700 echo unit, answering itself
+  harp: 'arp', //        TUTTI: a cascade is an arpeggio
+  drones: 'sub', //      ENSEMBLE: pods that circle and hold — a pedal tone
+  timpani: 'kick', //    the fx build is already a timpani roll; see `buildFx`
+  accelerando: 'clap', //a click track pulling ahead of itself
+  bow: 'chords', //      LANCE: one thin sustained edge
+  charm: 'lead', //      DUET: two voices agreeing
 
-  // The rig abilities that are also plainly instruments.
-  nova: 'kick', //      a ring ON THE BEAT — it is the downbeat
-  blackhole: 'sub', //  a well that drags everything down
-  timpani: 'kick', //   the fx build is already a timpani roll; see `buildFx`
-  feedback: 'fx', //    a hum around the hull
-  echoes: 'fx', //      bolts returning off the walls — the SPC700 echo unit
-  tremolo: 'motifs', // pools that keep working after you leave
-
-  // Evolutions inherit their parent's voice and push it harder.
+  /* --------- the results — each inherits its parent's voice and pushes it */
   spiccato: 'arp',
-  snap: 'arp', //      pizzicato's other ending — same voice, harder attack
+  snap: 'arp', //        pizzicato's other ending — same voice, harder attack
   blastbeat: 'clap',
   harmonics: 'chords',
   carillon: 'lead',
@@ -426,6 +452,14 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
   canon: 'fx',
   tutti: 'sub',
   vibrato: 'motifs',
+  pyre: 'fx',
+  revenant: 'motifs',
+  maestro: 'kick',
+  sordino: 'sub',
+  adagio: 'chords',
+  interlude: 'chords',
+  fugue: 'arp',
+  consort: 'lead',
   requiem: 'chords',
   stringsection: 'chords',
 };

@@ -49,7 +49,8 @@ await import('./lib/headless-audio.mjs');
 const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
 const { spawnEnemy } = await import(`${R}game/enemies.ts`);
-const { instrumentStats } = await import(`${R}game/weapons.ts`);
+const { instrumentDef, instrumentStats } = await import(`${R}game/weapons.ts`);
+const { STARTING_INSTRUMENT } = await import(`${R}game/progression.ts`);
 
 const SEED = 12345;
 
@@ -72,12 +73,43 @@ function rayMiss(ox, oy, angle, tx, ty) {
 const COUNTS = [1, 2, 3, 4, 5, 6];
 const RANGES = [80, 120, 170, 250, 350, 500];
 const BEARINGS = [0, 0.7, 1.9, 3.0, 4.4, 5.6];
-/* PIZZICATO at level 1 is the real starting weapon; its range is 620, so every
- * range above is inside it and a miss cannot be excused as out of reach. */
-const BASE = instrumentStats('pizzicato', 1);
+/*
+ * THE REAL STARTING WEAPON AT LEVEL 1, READ OFF `progression.ts`.
+ *
+ * It used to be the literal `'pizzicato'`, and that is exactly the failure
+ * AGENTS.md §3 names — a tool holding its own copy of a constant lies the day
+ * it moves. It moved: the twenty-weapon roster re-pointed `pizzicato` to RASP,
+ * a 210px-range `arc`, and this file went red reporting that "the ship is
+ * firing around its target" when what had actually happened is that it was
+ * feeding `fireSeek` a stat block from a weapon that is not a seek and cannot
+ * reach past a third of the sweep. The bug was in the harness and it looked
+ * exactly like the bug the harness exists to find, which is the worst thing a
+ * gate can do.
+ *
+ * Two preconditions are asserted rather than assumed, so the next time the
+ * opener moves this file says so in one line instead of printing 36 plausible
+ * misses.
+ */
+const STARTER_DEF = instrumentDef(STARTING_INSTRUMENT);
+const BASE = instrumentStats(STARTING_INSTRUMENT, 1);
 
 let checked = 0;
 const failures = [];
+
+if (BASE.range > 0 && BASE.range < Math.max(...RANGES)) {
+  console.log(
+    `\n  FAIL  '${STARTING_INSTRUMENT}' reaches ${BASE.range}px and the sweep goes to ` +
+      `${Math.max(...RANGES)}px — the far rows would be measuring range, not aim\n`,
+  );
+  process.exit(1);
+}
+if (!STARTER_DEF || STARTER_DEF.shape !== 'seek') {
+  console.log(
+    `\n  FAIL  the starting instrument '${STARTING_INSTRUMENT}' is a '${STARTER_DEF?.shape}', not a ` +
+      "'seek' — this check drives `fireSeek` and would be measuring a weapon that never calls it\n",
+  );
+  process.exit(1);
+}
 
 for (const count of COUNTS) {
   for (const range of RANGES) {

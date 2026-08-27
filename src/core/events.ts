@@ -65,6 +65,18 @@ export type PowerupKind =
  * `bomb` stay outside the progression system entirely as field-dropped surges.
  */
 export type InstrumentId =
+  /*
+   * TWELVE BECAME TWENTY, AND TWELVE OF THE TWENTY ARE THESE IDS RE-POINTED.
+   *
+   * `docs/plan-refactor-3.md` §9 takes the roster from Ball x Pit rather than
+   * from imagination: twenty base weapons that are each ONE COMPOSABLE
+   * PROPERTY, delivered by a small shared set of shapes. The twelve ids below
+   * the divider are unchanged and keep their `ENSEMBLE_MIX` lane, their
+   * per-id shot voice and their place in `layers.ts`; what moved is what each
+   * one DOES. Re-pointing is the move AGENTS.md §5 names — change what a card
+   * is worth, do not add a card — and it is why this pass adds eight ids
+   * rather than twenty.
+   */
   | 'pizzicato'
   | 'snare'
   | 'bow'
@@ -76,7 +88,24 @@ export type InstrumentId =
   | 'feedback'
   | 'echoes'
   | 'timpani'
-  | 'tremolo';
+  | 'tremolo'
+  /*
+   * The eight genuinely new ones. Each takes an EXISTING stem lane in
+   * `ENSEMBLE_MIX` and an authored voice in `audio/sfx.ts` — no new lane, no
+   * new synth, and `tools/instruments.mjs` is what proves it.
+   *
+   * These EIGHT ARE THE WHOLE OFFER-POOL COST of the pass: twenty draftable
+   * instruments against twelve is a real dilution and it is measured rather
+   * than waved at. See `tools/offerpool.mjs`.
+   */
+  | 'ember'
+  | 'phantom'
+  | 'anvil'
+  | 'gravel'
+  | 'nocturne'
+  | 'siphon'
+  | 'accelerando'
+  | 'charm';
 
 /**
  * Fusions. Never offered at a level-up — only earned, by taking an instrument
@@ -107,7 +136,32 @@ export type EvolvedId =
    * its one catalyst ever showed up. `snap` makes PIZZICATO the first
    * instrument you can take two ways. See the note beside it in `weapons.ts`.
    */
-  | 'snap';
+  | 'snap'
+  /*
+   * EIGHT MORE RESULTS, AND THEY COST NOTHING IN THE OFFER.
+   *
+   * `progression.ts:606` skips `def.fused` outright when building the draft
+   * pool, so a fusion result is never a card — AGENTS.md §5 states this as the
+   * one free move the system has. Twenty bases need twenty recipes (
+   * `tools/levelup.mjs` fails any instrument that is a dead end to commit to),
+   * so eight new results is arithmetic rather than appetite.
+   *
+   * Six of them exist to KEEP THE MODIFIER SHAPES ALIVE. `rest`, `drag`,
+   * `ghost`, `counterpoint`, `unison` and `tacet` are `docs/plan-items-v2.md`'s
+   * second axis — items that change a rule rather than where a hitbox appears
+   * — and none of the twenty property weapons is one. Rather than delete six
+   * working shapes on the way past, each becomes a fusion result: still
+   * reachable, still measured, and `tools/builds.mjs`' damage-taken spread
+   * (which they are the reason for) keeps its contributors.
+   */
+  | 'pyre'
+  | 'revenant'
+  | 'maestro'
+  | 'sordino'
+  | 'adagio'
+  | 'interlude'
+  | 'fugue'
+  | 'consort';
 
 /**
  * Passive items. Global multipliers, so their honest voicing is to MODIFY an

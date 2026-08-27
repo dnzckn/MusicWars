@@ -119,6 +119,60 @@ export interface Enemy {
   /** How many children to spawn on death, and how deep we already are. */
   splits: number;
   generation: number;
+
+  /* ---------------------------------------------------------------------- *
+   * STATUS — what the player's properties have left on this body.
+   *
+   * `docs/plan-refactor-3.md` §9a: Ball x Pit's base balls are composable
+   * PROPERTIES, and a property is only a property if the target REMEMBERS it.
+   * These fourteen numbers are that memory, and `weapons.ts`' `Props` is what
+   * writes them.
+   *
+   * FOURTEEN PLAIN NUMBERS ON A PLAIN OBJECT, and both halves of that were
+   * chosen against the alternatives. A per-enemy `Map` or a status array would
+   * allocate on every application, at up to a few hundred applications a
+   * second; a parallel structure-of-arrays keyed by enemy index would have to
+   * be shuffled on every swap-remove and every split. Enemies are already
+   * plain objects in a plain array of tens, not thousands — `BulletPool` is
+   * where the typed arrays are because bullets are the thing there are
+   * hundreds of.
+   *
+   * `status` IS THE WHOLE PERFORMANCE STORY. It is a bitmask of which of the
+   * seven statuses are live, so the per-step tick is one integer test per
+   * enemy for the overwhelming majority of enemies that carry nothing. The
+   * measured ceiling before this pass was 56 fps at 39 enemies and the arena
+   * has since grown; a tick that walked fourteen floats per enemy per step at
+   * 120 Hz would be a real cost, and a tick that reads one int is not.
+   * ---------------------------------------------------------------------- */
+  /** Bitmask of live statuses; see `Status` in `world.ts`. 0 means skip. */
+  status: number;
+  /** Burn stacks held, and how long until they all lapse. */
+  burnStacks: number;
+  burnTime: number;
+  /** Damage per second per burn stack, from whatever applied it last. */
+  burnDps: number;
+  poisonStacks: number;
+  poisonTime: number;
+  poisonDps: number;
+  /**
+   * Bleed stacks held, and how long until they clot.
+   *
+   * Bleed is the one status that costs nothing per second: `bleedDmg` per
+   * stack is paid at the moment the target is HIT again, which is why it
+   * belongs to the fastest weapon in the roster and not the slowest.
+   */
+  bleedStacks: number;
+  bleedTime: number;
+  bleedDmg: number;
+  /** Seconds held motionless. A frozen body also takes `PROP.freezeVuln` more. */
+  freezeTime: number;
+  /** Seconds slowed, and the fraction of its speed that is gone. */
+  slowTime: number;
+  slowFactor: number;
+  /** Seconds blinded. A blinded body's volleys and contacts miss half the time. */
+  blindTime: number;
+  /** Seconds fighting for the player instead of against them. */
+  charmTime: number;
 }
 
 /**
@@ -635,6 +689,21 @@ function blank(): Enemy {
     hopToY: 0,
     splits: 0,
     generation: 0,
+    status: 0,
+    burnStacks: 0,
+    burnTime: 0,
+    burnDps: 0,
+    poisonStacks: 0,
+    poisonTime: 0,
+    poisonDps: 0,
+    bleedStacks: 0,
+    bleedTime: 0,
+    bleedDmg: 0,
+    freezeTime: 0,
+    slowTime: 0,
+    slowFactor: 0,
+    blindTime: 0,
+    charmTime: 0,
   };
 }
 

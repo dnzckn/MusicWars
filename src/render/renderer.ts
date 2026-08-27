@@ -21,7 +21,7 @@ import { beatsUntilFire } from '../game/enemies';
 import { INVULN_ON_HIT } from '../game/player';
 import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
-import { SHARD_HUES } from '../game/world';
+import { SHARD_HUES, Status } from '../game/world';
 import { PLAYFIELD_H, PLAYFIELD_W } from '../game/field';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
@@ -45,6 +45,26 @@ interface Star {
 }
 
 export class Renderer {
+  /**
+   * Which ring each live status draws, in the order they stack outward.
+   *
+   * A table rather than a chain of ifs so the draw loop is a single pass with
+   * no branching per colour, and so adding a status is one row. `Status` is
+   * IMPORTED rather than restated: a renderer holding its own copy of a
+   * bitmask would draw the wrong ring the day a bit moved, and would do it
+   * silently. AGENTS.md §3.
+   */
+  private static readonly STATUS_RINGS: readonly [number, number, number][] = [
+    [Status.Burn, 22, 0.85],    // fire
+    [Status.Poison, 96, 0.8],   // rot
+    [Status.Bleed, 350, 0.75],  // blood
+    [Status.Freeze, 195, 0.95], // ice — the brightest, because it is the one
+                                //       that changes what the body can do most
+    [Status.Slow, 168, 0.7],    // wind
+    [Status.Blind, 52, 0.8],    // glare
+    [Status.Charm, 300, 0.95],  // it is yours now
+  ];
+
   private g: CanvasRenderingContext2D;
   private og: CanvasRenderingContext2D;
   private stars: Star[] = [];
@@ -724,7 +744,8 @@ export class Renderer {
 
       g.save();
       g.translate(x, y);
-      g.rotate(Math.sin(e.age * 1.4) * 0.08);
+      // A held body does not sway. See the status block below.
+      if ((e.status & Status.Freeze) === 0) g.rotate(Math.sin(e.age * 1.4) * 0.08);
       /*
        * The one thing that still answers the beat at full strength.
        *
@@ -865,6 +886,43 @@ export class Renderer {
         g.beginPath();
         g.arc(0, 0, e.radius + 20 - charge * 16, 0, TAU);
         g.stroke();
+      }
+
+      /*
+       * WHAT THE PLAYER'S PROPERTIES HAVE LEFT ON THIS BODY.
+       *
+       * THE SIMULATION DELIVERED AND THE SCREEN DID NOT, which is this file's
+       * own recurring defect inverted. Driven in a browser with each of the
+       * twenty weapons forced in turn, every property fired and ticked and NOT
+       * ONE of them was visible: a burning enemy, a poisoned one, a frozen one
+       * and an untouched one were the same orange teardrop. A status the
+       * player cannot see is a status they cannot play around, which makes the
+       * whole substrate a number in a log.
+       *
+       * ONE STROKED ARC PER LIVE STATUS, drawn concentric so two statuses read
+       * as two rings rather than as one thicker one, and skipped entirely on
+       * the overwhelming majority of bodies by the same `status !== 0` test the
+       * simulation's own tick uses. Colours are the ones the effect already
+       * suggests — fire, rot, ice, wind, glare, and the player's own cyan for a
+       * body that has changed sides.
+       *
+       * FREEZE ALSO STOPS THE WOBBLE, because a body that is held and still
+       * rocking to the beat is the same lie in a smaller font. That is handled
+       * at the top of this block, where the rotation is applied.
+       */
+      if (e.status !== 0) {
+        g.globalCompositeOperation = 'lighter';
+        let ring = 0;
+        for (const [bit, hue, alpha] of Renderer.STATUS_RINGS) {
+          if ((e.status & bit) === 0) continue;
+          g.strokeStyle = `hsla(${hue}, 100%, 66%, ${alpha})`;
+          g.lineWidth = 1.6;
+          g.beginPath();
+          g.arc(0, 0, e.radius + 3 + ring * 3.2, 0, TAU);
+          g.stroke();
+          ring++;
+        }
+        g.globalCompositeOperation = 'source-over';
       }
 
       // Core light, brighter as it gets closer to death.

@@ -192,219 +192,90 @@ export interface InstrumentStats {
  * one of them, which keeps the world's dispatch honest.
  *
  * ---------------------------------------------------------------------------
- * SEVEN BECAME TEN, AND THE COUNT WAS THE DIAGNOSIS.
+ * SEVEN BECAME FOURTEEN, AND THEN BACK TO SEVEN. READ WHY, BEFORE ADDING ONE.
  *
- * `docs/research-weapons.md` classified this roster against Vampire Survivors
- * and Ball x Pit by MECHANICAL VERB — "where the hitbox appears and how it
- * behaves", not theme and not stat — and measured one verb per 3.9 instruments
- * here against 1.2 for launch-era Vampire Survivors and 3.0 for Ball x Pit,
- * whose ratio is bought with a second orthogonal trigger axis this game does
- * not have at all. A quarter of the roster was `aura`, a ring centred on the
- * player, and three of those seven auras described themselves as "a very large
- * ring".
+ * `docs/research-weapons.md` classified this roster by MECHANICAL VERB and
+ * measured one verb per 3.9 instruments against 1.2 for launch-era Vampire
+ * Survivors. The answer taken at the time was more geometries: `lance`, `cone`
+ * and `spray`, then `trail`, `chain`, `mortar` and `spawn`. Seven shapes became
+ * fourteen over 27 instruments, one verb per 1.9, and not one id was added.
  *
- * `lance`, `cone` and `spray` are the first three of that document's nine, and
- * they were chosen because the owner named two of them ("like laser",
- * "something short range") and because the third answers "more fun with
- * projectiles". All three RE-POINT existing instruments: no id is added, no
- * `ENSEMBLE_MIX` lane is touched, and `AGENTS.md` §5's zero-sum offer is
- * untouched because a `shape` field is not a card.
+ * IT DID NOT WORK, AND THE OWNER SAID SO TWICE. "There currently not fun", and
+ * then, of the roster that followed: "all one idea". Both verdicts are the same
+ * finding — fourteen geometries are fourteen ways of saying "damage happens
+ * near enemies", and distinctness of geometry is not variety of decision.
  *
- * `trail`, `chain`, `mortar` and `spawn` are the next four, and they finish
- * the catalogue's affordable half. All four RE-POINT as well — TREMOLO FIELD,
- * CARILLON, TUTTI and VIBRATO — and three of them deliver a blurb the file's
- * own "PROSE THE SIMULATION DOES NOT DELIVER" heading has listed the whole
- * time. Seven shapes became fourteen over 27 instruments, 1 verb per 1.9,
- * largest share 19%, and not one instrument id was added.
+ * `docs/plan-refactor-3.md` §9 went back to the source material rather than
+ * inventing a third answer, and found that Ball x Pit spends its variety on
+ * PROPERTIES rather than on delivery — and that this is exactly what lets it
+ * reach thousands of combinations, because uniform delivery is what makes
+ * properties compose. So the count came back down and the variety moved to
+ * `Props`. Seven survivors, chosen for how differently they read on screen,
+ * plus the six non-damage shapes that are a different axis entirely.
  *
- * `boomerang` and `tether` ARE STILL NOT IMPLEMENTED AND SHOULD NOT BE
- * INFERRED CHEAP. Neither has an instrument free to own it, which is the whole
- * content of that document's §F.2: a thirteenth base instrument takes every
- * existing one's share of the draft from 1/12 to 1/13, -7.7% each, and §F.2's
- * own conclusion is that zero new instruments still delivers most of the win.
- * The other two shapes are that decision, taken.
+ * DO NOT ADD A GEOMETRY TO MAKE A WEAPON DIFFERENT. That was tried, it is
+ * written up above, and the next weapon's difference belongs in `Props`.
  */
 export type InstrumentShape =
-  /** Bolts toward the nearest target inside range. */
-  | 'seek'
-  /** A sweep through an arc centred on the ship's facing. */
-  | 'arc'
-  /**
-   * A beam re-drawn along the facing on the interval and left to fade.
+  /* ---------------------------------------------------------------------- *
+   * SEVEN GEOMETRIES, DOWN FROM FOURTEEN, AND THE CUT IS THE ARCHITECTURE.
    *
-   * NOT the held laser — that is `lance`. What distinguishes them is that this
-   * one spreads `count` beams evenly around the WHOLE COMPASS and re-fires,
-   * which is CHORALE's "the pods stop circling and hold station, sustaining
-   * beams between them": a static star of strokes, not a line you point.
-   */
-  | 'beam'
+   * `docs/plan-refactor-3.md` §9a: Ball x Pit reaches ~7,921 combinations
+   * because DELIVERY IS UNIFORM. Every ball launches the same way, so the
+   * property is the weapon and properties compose without a combinatorial
+   * explosion of firing code. This file had gone the other way — fourteen
+   * geometries and zero properties — and the owner's verdict on the result was
+   * that it was "all one idea", which it was: every one of the fourteen
+   * answered "where does the hitbox appear" and none answered "what does the
+   * hit DO".
+   *
+   * Seven of the fourteen are gone. Each was cut because it is a VARIANT of a
+   * survivor, or because the property substrate now expresses it better, and
+   * each is named here with which:
+   *
+   *   `beam`    a static star of strokes around the compass. `lance` is the
+   *             aimed version and the one the owner asked for by name; a star
+   *             of six lances is a lance with a `count`, not a second idea.
+   *   `cone`    `arc` with a short `range` and a wide `arc` is the same volley.
+   *             The close-range identity survives as RASP's stat block.
+   *   `spray`   `arc` with `bounces` and a precessing phase. A geometry variant
+   *             of a survivor by its own documentation.
+   *   `trail`   pools laid down by moving. `field` places pools and UP-TEMPO's
+   *             `Rules.trailDamage` already lays a wake; two systems, one
+   *             sentence.
+   *   `chain`   IS NOW A PROPERTY. `Props.chain` arcs from any hit by any
+   *             delivery, which is strictly more general than a shape only one
+   *             instrument could wear.
+   *   `spawn`   IS NOW A PROPERTY. `Props.brood` sends a hunter from any hit.
+   *   `mortar`  a telegraphed shell that pulls, then lands. `strike` already
+   *             lands ON a body and burns a circle; the telegraph is a
+   *             presentation difference, not a verb.
+   *
+   * WHAT SURVIVES IS CHOSEN FOR HOW DIFFERENTLY IT READS ON SCREEN, not for
+   * how differently it is implemented: a bolt at a target, a stroke across
+   * your facing, a ring on you, a hit that lands over there, satellites, a
+   * pool on the ground, a held line. Seven silhouettes a player can name.
+   * ---------------------------------------------------------------------- */
+  /** Bolts toward the nearest target inside range. The default delivery. */
+  | 'seek'
+  /** A sweep through an arc centred on the ship's facing; a fan if it travels. */
+  | 'arc'
   /**
    * ONE CONTINUOUS BEAM, ANCHORED TO THE SHIP, TRACKING THE AIM IN REAL TIME.
    *
-   * The owner asked for a laser by name and ROSIN BOW's blurb has promised one
-   * since the row was written — "One held beam along your facing. **It does not
-   * stop.**" It stopped: `fireBeam` re-fired every `interval` and spread
-   * `count` copies around the compass, so the one instrument in the table whose
-   * text says it holds was the one that flickered.
+   * `lance` is the verb no other shape has: your HEADING is the weapon. `seek`
+   * picks targets for you, `aura` is omnidirectional, `strike` is explicitly
+   * unaimable and `arc` sprays. A lance rewards strafing sideways to keep the
+   * line on a boss and rotating through a pack like a scythe, and it punishes
+   * standing still with the line off-target.
    *
-   * `lance` is the verb no shape in this game had: your HEADING is the weapon.
-   * `seek` picks targets for you, `aura` is omnidirectional, `strike` is
-   * explicitly unaimable and `arc` sprays. A lance rewards strafing sideways to
-   * keep the line on a boss and rotating through a pack like a scythe, and it
-   * punishes standing still with the line off-target. That is a different left
-   * hand, not a different damage number.
-   *
-   * `count` is PARALLEL lances, which is HARMONICS' "Three parallel beams,
-   * held" taken literally. `linger` is how far past the next activation the
-   * line is drawn for, so a longer hold is a steadier line rather than a
-   * brighter one — `fireLance` refreshes it every interval and it therefore
-   * never gaps, but it does fade out on its own once the instrument stops being
-   * held. `speed`, `pierce`, `bounces` and `arc` are deliberately unread: a
-   * held line has no travel speed, nothing to pass through, no wall to come off
-   * and no angular width beyond its own half-thickness.
+   * `count` is PARALLEL lances. `linger` is how far past the next activation
+   * the line is drawn for, so a longer hold is a steadier line rather than a
+   * brighter one. `speed`, `pierce`, `bounces` and `arc` are deliberately
+   * unread: a held line has no travel speed, nothing to pass through, no wall
+   * to come off and no angular width beyond its own half-thickness.
    */
   | 'lance'
-  /**
-   * A DENSE, SHORT, WIDE BURST OF PELLETS ALONG THE FACING THAT DIES AT ARM'S
-   * LENGTH.
-   *
-   * The other thing the owner asked for by name. Nothing in this game rewarded
-   * closing: every shape is safe-at-range or omnidirectional, and the arena's
-   * whole risk model was "stay away and let the auto-aim work". A cone inverts
-   * it — you dive into the group, dump, and leave — and you cannot camp with
-   * one, which lines up with the camp-pressure system rather than fighting it.
-   *
-   * It is `fireSeek`'s spawn loop with the convergence removed, a short
-   * `range`, and `arc` finally used as a spread by something other than
-   * `fireArc`. `area` and `linger` are unread: a cone is pellets, not a field.
-   */
-  | 'cone'
-  /**
-   * A CONTINUOUS, UNAIMED, HIGH-RATE STREAM THROWN IN A ROTATING PATTERN AROUND
-   * THE SHIP, BOUNCING OFF THE WALLS.
-   *
-   * The reason this game does not FEEL like a projectile game is that its
-   * highest-`count` shapes are auras and beams, which are not objects — they
-   * are rings and rectangles that appear and fade. A spray puts the player's
-   * own output on screen as a physical field they can watch move. You stop
-   * pointing and start timing: the pattern precesses whether you like it or
-   * not, so you position against its phase, and the walls mean your own shots
-   * come back through where you were standing.
-   *
-   * `arc` is the volley's angular span AND, divided by `count`, the amount the
-   * pattern precesses each volley — so consecutive volleys interleave rather
-   * than retracing. `bounces` is forwarded, which is what makes it a field
-   * rather than a volley. `pierce` and `linger` are unread, and `pierce`
-   * deliberately so: a bolt consumed on contact is what keeps the live count
-   * bounded, and this is the one shape in the catalogue whose budget is real.
-   */
-  | 'spray'
-  /**
-   * HAZARD LAID DOWN BY MOVING. STANDING STILL LAYS NOTHING.
-   *
-   * TREMOLO FIELD's card has read "Pools left in your wake" since the row was
-   * written, and `fireField` dropped its pools ON THE NEAREST ENEMY — the one
-   * placement that guarantees the pool is never behind you. The blurb was in
-   * `weapons.ts`'s own "NOT SHAPE BUGS, BUT PROSE THE SIMULATION DOES NOT
-   * DELIVER" list; this is the repair.
-   *
-   * It is the only shape whose output the player authors directly with the
-   * stick. You stop running in straight lines away from a pack and start
-   * drawing loops around it, then walking it back through your own wake — and
-   * it is the natural counterweight to the camp-pressure system in `World`,
-   * because a trail makes moving PAY where `IDLE_GRACE_S` only makes standing
-   * still cost.
-   *
-   * `count` is drops per activation, `damage` is shared between them (coverage,
-   * not a multiplier), `area` is each drop's radius, `linger` is how long the
-   * ground stays hot and `interval` is how often a moving ship lays another.
-   * `speed`, `pierce`, `bounces`, `arc` and `range` are unread: a pool does not
-   * travel, has nothing to pass through, no wall, no angular width and no
-   * reach — it is where you were.
-   */
-  | 'trail'
-  /**
-   * ARCS FROM BODY TO BODY, LOSING A FRACTION EACH HOP.
-   *
-   * CARILLON's blurb is verbatim "Every strike chains to two more. The ringing
-   * does not stop", and `fireStrike` picked its targets AT RANDOM — the same
-   * undelivered-prose list as TREMOLO's. `docs/research-weapons.md` §D.3 calls
-   * this the single highest-value re-point available, because the promise was
-   * already written and paid for and it makes `chime + resonance -> carillon` a
-   * genuine change of verb rather than a bigger bell.
-   *
-   * It is the first weapon whose value depends on enemy DENSITY rather than on
-   * where the ship is: you stop kiting a pack apart and start letting it bunch.
-   * Against a lone boss it is the worst weapon in the game, which is a real and
-   * legible trade.
-   *
-   * IT DOES NOT MOVE CHIME. `strike` keeps its founding member — the shape was
-   * split out of `seek` FOR the bell family — and the `FUSIONS` preamble's
-   * refusal to move CHIME itself stands. What moves is CHIME's evolution.
-   *
-   * `count` is hops, `area` is how far a hop can reach, `range` is how far the
-   * FIRST hop can start from the ship. `speed`, `linger`, `bounces`, `arc` and
-   * `pierce` are unread: a chain does not travel, does not persist, has no wall,
-   * no width and nothing to pass through.
-   */
-  | 'chain'
-  /**
-   * A SHELL AIMED AT WHERE A TARGET WILL BE, THAT LANDS THERE.
-   *
-   * The only shape that hits PAST a wall of bodies. A bolt stops on the first
-   * thing it touches, an aura has to reach outward through everything, and
-   * `strike` — the sole exception — is explicitly unaimed. A mortar makes the
-   * dangerous back rank reachable, so a player stops retreating from a pack and
-   * starts hitting through it.
-   *
-   * And it is the first weapon in this game whose output the ENEMY can respond
-   * to: the landing is telegraphed by a ring that closes on the spot as the
-   * shell arrives, and anything that walks out is not hit.
-   *
-   * TUTTI's "Everything is pulled to the centre first, and then struck" is the
-   * third undelivered blurb this change repairs, and both halves are delivered
-   * — the pending shell drags what is under it for the whole telegraph, then
-   * detonates. `weapons.ts` listed that sentence as prose the simulation could
-   * not produce because `Effect.pull` had no reader and `wells.pull` was
-   * reachable only through two hardcoded ids.
-   *
-   * `count` is shells, `area` the blast radius, `range` how far one can be
-   * thrown, `linger` the telegraph delay. `speed`, `pierce`, `bounces` and
-   * `arc` are unread: a lobbed shell has no expressible travel speed — it
-   * ignores what is in between, which is the point — nothing to pass through,
-   * no wall and no angular width.
-   */
-  | 'mortar'
-  /**
-   * AN AUTONOMOUS ALLY THAT FIGHTS SOMEWHERE THE PLAYER IS NOT.
-   *
-   * The one archetype BOTH reference games have that this one had no equivalent
-   * of at all — Gatti Amari in Vampire Survivors, Brood Mother and Mosquito
-   * King in Ball x Pit, and the Ball x Pit wiki attributes that game's
-   * late-game screen-fill to spawners rather than to slot count. Every hitbox
-   * in this game is welded to the ship, PODS INCLUDED: an orbit is drawn at
-   * `Player.dronePos`, so it is the ship's own geometry with a radius.
-   *
-   * A summon means a corner stays defended while you leave it, and it splits
-   * the player's attention across two positions — a different cognitive load,
-   * not a bigger number.
-   *
-   * VIBRATO owns it: "The pools go hunting", with HOMING as the literal
-   * catalyst. Stated plainly, as `docs/research-weapons.md` §D.9 asks: this
-   * re-points a row that was itself re-pointed one change ago (`field` ->
-   * `strike`), and the argument is `deadhunt-ranges` output rather than taste —
-   * `strike` was the closest thing available when there were seven shapes, and
-   * it delivered "appears where the enemies are" without delivering "hunting",
-   * because a strike is instantaneous and nothing persists to hunt with.
-   *
-   * `count` is the size of the RETINUE and not a volley — the routine tops the
-   * population up rather than adding to it, which is what bounds the shape.
-   * `linger` is each ally's lifetime, `speed` its travel, `range` how far out
-   * it is dispatched. `area`, `arc`, `bounces` and `pierce` are unread; pierce
-   * is refused on purpose, because a piercing ally sits inside the first thing
-   * it reaches and applies its damage on all 120 steps a second.
-   */
-  | 'spawn'
   /** Satellites circling the ship. */
   | 'orbit'
   /** A ring or field centred on the ship. */
@@ -412,183 +283,78 @@ export type InstrumentShape =
   /**
    * An unaimed hit that lands ON something and damages a circle around it.
    *
-   * Split out of `seek`, which it had been wearing since the table was written.
-   * The six `seek` instruments divided cleanly in two: `pizzicato`, `echoes`,
-   * `spiccato` and `canon` declare a travel speed and no area, and `chime` and
-   * `carillon` declare an area and no speed. Those are two different things,
-   * and calling both of them `seek` meant `fireSeek` — which reads `speed` and
-   * ignores `area` — served the bolts and silently dropped everything the bells
-   * declared. CHIME's "strikes land wider" moved a number nothing read, and its
-   * `speed: 0` was floored to a 120px/s crawl at every level with CAPO unable
-   * to touch it, so the bell was also the slowest projectile in the game.
-   *
-   * `carillon` is `chime`'s own evolution, so this is a family rather than one
-   * odd row. A strike reads `count`, `area`, `range`, `interval` and `damage`,
-   * and ignores `speed` — a struck bell has no travel speed because it does not
-   * travel.
+   * The only shape that reaches PAST a wall of bodies without travelling
+   * through it. A strike reads `count`, `area`, `range`, `interval` and
+   * `damage`, and ignores `speed` — a struck bell has no travel speed because
+   * it does not travel.
    */
   | 'strike'
   /** A field dropped in the world that stays where it was put. */
   | 'field'
   /* ---------------------------------------------------------------------- *
-   * THE FIVE SHAPES THAT ARE NOT "DAMAGE IS DEALT IN SHAPE X".
+   * THE SIX SHAPES THAT ARE NOT "DAMAGE IS DEALT IN SHAPE X".
    *
    * `docs/plan-items-v2.md` §1 counted the roster and found twelve items and
-   * ONE idea: every entry above answers the question "where does the hitbox
-   * appear", and none of them answers "what does the player DO". Fourteen
-   * distinct geometries is a real achievement and it is still one axis, which
-   * is why the owner's verdict after playing it was "there currently not fun".
+   * ONE idea. Three of the six below deal NO DAMAGE AT ALL and two of them
+   * make other items fire; that is the second axis, and it is orthogonal to
+   * this pass, which is about the FIRST axis being one idea.
    *
-   * Three of the five below deal NO DAMAGE AT ALL and two of them make other
-   * items fire. That is the second axis, and it is the whole point of this
-   * pass — a roster where the only decision is a delivery angle is a roster
-   * where the level-up screen is a menu of camera angles.
+   * NONE OF THE TWENTY BASE WEAPONS IS ONE OF THESE, and that is a deliberate
+   * consequence of "every base weapon is a property". They survive as fusion
+   * results — earned rather than drafted — so the code stays reachable, the
+   * gates that measure them keep their contributors (`tools/builds.mjs`' damage
+   * spread is largely their doing), and the next phase can decide on evidence
+   * whether the axis earns a base slot back. Deleting six working shapes on the
+   * way past would have been a second design decision smuggled into this one.
    * ---------------------------------------------------------------------- */
   /**
    * A BAR OF INVULNERABILITY THAT SILENCES YOUR OWN BAND.
    *
-   * Deals nothing, ever. The roster had zero non-damaging items and
-   * `docs/plan-items-v2.md` §1 calls that the most obvious hole in it: Vampire
-   * Survivors has Laurel, Clock Lancet, Garlic and Tiragisú and this game had
-   * twelve damage dealers. A defensive item is the one card that changes what
-   * the player is ALLOWED to do rather than what they hit.
-   *
-   * The cost is audible, which is the part no competitor can copy: while the
-   * rest is running, `GameSnapshot.tacetStems` carries the whole band and the
-   * mix drops to its drone. You do not get a free bar; you get a bar with the
-   * music taken away, and you can hear it come back.
-   *
-   * `linger` is the length of the rest in BARS (not seconds — a rest that ends
-   * mid-bar is not a rest), `interval` the cooldown, `area` the radius of the
-   * ring that sweeps the field clean when the band comes back in. `damage`,
-   * `count`, `speed`, `pierce`, `bounces`, `arc` and `range` are unread, and
-   * `damage` is unread ON PURPOSE: see `INSTRUMENTS`' row for `nova`.
+   * Deals nothing, ever. The cost is audible: while the rest is running,
+   * `GameSnapshot.tacetStems` carries the whole band and the mix drops to its
+   * drone. `linger` is the length of the rest in BARS, `interval` the cooldown,
+   * `area` the radius of the ring that sweeps the field clean when the band
+   * comes back in.
    */
   | 'rest'
   /**
    * TIME DRAGS IN A BUBBLE AROUND YOU — INCLUDING YOURS.
    *
-   * The second non-damaging item, and the one with a real drawback attached
-   * rather than a cooldown. Enemies inside `area` move and shoot at a fraction
-   * of their speed; every instrument in the loadout takes proportionally
-   * longer to come round. Control, bought with rate.
-   *
-   * It is the only item in the table that makes the player WORSE at the thing
-   * the rest of the table does, which is what makes holding it a decision
-   * instead of an acquisition. A build with RITARDANDO and a slow, heavy
-   * loadout barely notices; one with METRONOME on the downbeat and SYNCOPATION
-   * in the gaps is giving up its whole identity.
-   *
-   * `area` is the bubble, `damage` is REUSED AS THE DRAG FRACTION (see the row
-   * in `INSTRUMENTS`, which explains why that is not a hack), `arc` is what it
-   * costs you, `interval` and `linger` drive the visible pulse. `count`,
-   * `speed`, `pierce`, `bounces` and `range` are unread.
+   * `area` is the bubble, `damage` is REUSED AS THE DRAG FRACTION, `arc` is
+   * what it costs you, `interval` and `linger` drive the visible pulse.
    */
   | 'drag'
   /**
    * THE LAST THING YOU KILLED COMES BACK AND FIGHTS FOR YOU.
    *
-   * `spawn` is an ally you buy on a timer; this is an ally you EARN, and the
-   * difference is that it makes the corpse a resource. You stop fighting the
-   * nearest thing and start choosing what to kill, because what you kill is
-   * what you get.
-   *
-   * It reuses `BulletFlag.Summon` and `updateSummons` outright — no new
-   * container, no new update loop, and `effectsdraw` already asserts sprite
-   * type 2 exists. The difference from `spawn` is entirely in WHERE and WHEN:
-   * a ghost is pushed at the corpse on the frame of the kill, not at the ship
-   * on a clock.
-   *
-   * IT CANNOT OPEN A RUN. With no other weapon there is no kill, with no kill
-   * there is no ghost, and the deadlock is total — which is why `echoes` had
-   * to leave `STARTERS`. See the note there.
-   *
    * `count` is the standing retinue, `linger` a ghost's lifetime, `damage` its
    * hit, `speed` its travel, `interval` the minimum gap between raisings.
-   * `area`, `arc`, `pierce`, `bounces` and `range` are unread.
    */
   | 'ghost'
   /**
    * YOUR SECOND INSTRUMENT FIRES A COPY WHENEVER YOUR FIRST DOES.
    *
-   * The first item in the game that modifies another item. Ball x Pit's actual
-   * core is that things compose, and nothing here composed: the rig is twelve
-   * global multipliers, which is the flattest possible version of an item
-   * interacting with a build.
-   *
-   * The interesting consequence is that LOADOUT ORDER becomes a decision, and
-   * order is a thing the player already controls (it is acquisition order) and
-   * has never once had a reason to think about.
-   *
    * `damage` is the copy's share of the follower's own damage, `count` extra
    * projectiles on the copy, `interval` a floor on how often a copy may be
-   * struck. Everything else is unread — this shape has no geometry of its own,
-   * which is exactly what makes it a modifier.
+   * struck.
    */
   | 'counterpoint'
   /**
    * EVERY INSTRUMENT FIRES TOGETHER ON THE BAR INSTEAD OF ON ITS OWN TIMER.
    *
-   * The second modifier, and the one that changes the shape of a whole run. It
-   * converts a trickle into a volley: with UNISON held, breadth beats depth,
-   * because six instruments landing on the same beat is one enormous hit and
-   * six instruments on six timers is a texture.
-   *
-   * RATE-NEUTRAL BY CONSTRUCTION, and this is the part that had to be argued
-   * rather than tuned. Re-clocking an instrument from its own `interval` to
-   * one bar multiplies its activations by `interval / bar`; the routine
-   * therefore multiplies its damage by `bar / interval`, clamped, so nothing
-   * in the loadout gains or loses throughput from the conversion itself. What
-   * UNISON's own ladder then adds is the payment. Without the compensation the
-   * item is a 12x buff to PIZZICATO and a 45% nerf to TIMPANI, which is not a
-   * design, it is an accident of two numbers.
-   *
-   * `damage` is the multiplier on the assembled volley and `count` the extra
-   * projectiles every instrument puts into it. `interval` is read by the
-   * dispatcher and nothing else.
+   * Rate-neutral by construction: re-clocking an instrument from its own
+   * `interval` to one bar multiplies its activations by `interval / bar`, so
+   * the routine multiplies its damage by `bar / interval`, clamped.
    */
   | 'unison'
   /**
    * SILENCE ONE LANE OF YOUR OWN SOUNDTRACK, BANK IT, SPEND IT WHEN IT RETURNS.
    *
-   * A resource loop made out of the arrangement. While the lane is out, charge
-   * accumulates; on the bar it comes back in, the charge is spent as a ring.
-   * The mix visibly and audibly thins while it is banking, so the resource has
-   * a readout that is not a number on the HUD — it is the missing part.
-   *
-   * The only item in the game whose cost is paid in the thing the game is
-   * about. You are choosing to make your own soundtrack worse for a payoff,
-   * which is a decision no purely mechanical roster can offer.
-   *
    * `damage` is banked per BAR of silence, `linger` how many bars the lane
    * stays out, `range` the bars it plays before going out again, `area` the
-   * discharge radius, `count` how many lanes go at once. `speed`, `pierce`,
-   * `bounces` and `arc` are unread.
+   * discharge radius, `count` how many lanes go at once.
    */
   | 'tacet';
-
-/**
- * WHICH BEAT AN INSTRUMENT IS ALLOWED TO FIRE ON, over and above its interval.
- *
- * `docs/plan-items-v2.md` §2: this game generates its soundtrack from play, and
- * `Transport` has published `bar`, `beat`, `barPhase` and `crossings(div)` since
- * the project started — and not one weapon has ever read them. The enemy
- * emitters do; the player's band does not. So the pulse the whole game is built
- * on is something the player listens to and never plays against.
- *
- * A beat lock is a rate limiter that quantises rather than throttling: the
- * instrument's own `interval` still says how often it MAY fire, and the lock
- * says the activation waits for the next grid line of the named division. An
- * instrument whose interval is shorter than its grid therefore fires exactly on
- * the grid, and one whose interval is longer fires on the first grid line after
- * it is ready.
- *
- * THE RISK, STATED UP FRONT, because it is the one that sinks the whole axis:
- * a weapon that fires on the downbeat is only interesting if the player can
- * FEEL the downbeat. If the beat is not legible under combat, METRONOME reads
- * as "my gun is randomly slow". `tools/beatlock.mjs` proves the distributions
- * are what they claim; it cannot prove they are audible.
- */
 export type BeatLock =
   /** Bar lines. Four beats apart. */
   | 'bar'
@@ -643,6 +409,16 @@ export interface LevelStep {
    * `mul` because a lock is not a number; `beatLockOf` resolves it.
    */
   beat?: BeatLock;
+  /**
+   * The property set this level and every level above it carries, CUMULATIVE.
+   *
+   * Cumulative rather than a delta, exactly as `RigDef.levels` is and for the
+   * same reason: you cannot answer "what does this do at level 3" without
+   * folding, and every balance conversation about a property is that question.
+   * `instrumentProps` overwrites named fields and leaves the rest, so a rung
+   * that only moves `burn` says only `{ burn: 14 }`.
+   */
+  prop?: Partial<Props>;
 }
 
 export interface InstrumentDef {
@@ -659,6 +435,17 @@ export interface InstrumentDef {
   swell?: Swell;
   /** Level 1. Every step below is applied on top of this, in order. */
   base: InstrumentStats;
+  /**
+   * What this weapon's hits CARRY at level 1. Absent means "nothing" — a
+   * weapon that is only a stat block, which after this pass is a thing only a
+   * fusion result is allowed to be.
+   *
+   * `tools/propfire.mjs` asserts every DRAFTABLE instrument declares at least
+   * one property, because "the property is the weapon" is the architecture and
+   * a base weapon with no property is a delivery shape wearing a name — which
+   * is the roster the owner rejected first.
+   */
+  props?: Partial<Props>;
   /**
    * Two steps, taking level 1 to level 3. Fusions carry none.
    *
@@ -877,6 +664,299 @@ export function noRules(): Rules {
  */
 export const RULE_LOWER_IS_STRONGER: readonly (keyof Rules)[] = ['overchargeEvery', 'chargeSeconds', 'trailEvery'];
 
+/* ------------------------------------------------------------------------ *
+ * THE PROPERTY SUBSTRATE
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT EXISTS, IN ONE PARAGRAPH THAT SHOULD NOT HAVE TO BE RE-DERIVED.
+ *
+ * Three rosters were rejected: fourteen delivery shapes ("all one idea"), a
+ * `family x element` grid ("samey weapons wearing modifier tags"), and sixteen
+ * invented weapons ("too many odd weapons — literally just look at those
+ * games"). `docs/plan-refactor-3.md` §9 reads both wikis and finds the answer
+ * in Ball x Pit: its 21 base balls are mostly SIMPLE COMPOSABLE PROPERTIES —
+ * Burn, Freeze, Poison, Bleed, Lightning, Wind, Ghost, Iron, Stone, Dark,
+ * Light, Time, Vampire, Cell, Egg Sac, Brood Mother, Earthquake, Flesh, Laser,
+ * Charm — and its 69 fusions are hand-authored NEW BEHAVIOURS. It reaches
+ * ~7,921 combinations because DELIVERY IS UNIFORM: every ball launches the
+ * same way, so the property IS the weapon and properties compose without a
+ * combinatorial explosion of firing code.
+ *
+ * This codebase was exactly backwards for a combination game: fourteen
+ * delivery shapes and zero properties. This is the half that was missing.
+ *
+ * ---------------------------------------------------------------------------
+ * IT IS A FLAT RECORD OF NUMBERS, FOR THE SAME REASON `Rules` IS.
+ *
+ * `Rules`' own note argues it and the argument transfers verbatim: a flat
+ * record folds. `instrumentProps` and `mergeProps` are order-independent by
+ * construction, diffable by a tool that holds no copy of anyone's arithmetic,
+ * and need no interpreter, ordering rule or dispatch table. What makes these
+ * PROPERTIES rather than stats is not the container — it is that each one is
+ * consumed by a BRANCH at a moment (a hit, a tick, an activation) rather than
+ * by a multiplication in `applyModifiers`, and that the enemy carries state
+ * because of it.
+ *
+ * `mergeProps` is what the ~60 authored fusions of the next phase are built
+ * on: a fusion result declares its own props and inherits its parents', and
+ * the merge is one `Math.max` per field. That is the whole reason this is a
+ * record and not a list of behaviours.
+ *
+ * ---------------------------------------------------------------------------
+ * NUMBERS ARE TUNED TO THIS GAME, RATIOS ARE FROM THE SOURCE. Ball x Pit's
+ * damage figures mean nothing here — a `pluck` has 16 hp and a heavy 72, and
+ * an instrument deals 4-40 a hit. What is carried across is the SHAPE of each
+ * effect: burn caps at three stacks over three seconds, poison at five over
+ * six, bleed at eight stacks paid on being hit, freeze is a small chance for a
+ * long hold that also makes the target softer, and so on. The per-effect
+ * constants live in `PROP` below rather than in twenty stat blocks, so a
+ * duration is one number and not twenty copies of one number.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * What a HIT CARRIES, over and above its damage.
+ *
+ * Every field is a number so the set can be folded, merged and diffed with no
+ * special case — the same contract `InstrumentStats` and `Modifiers` hold. Zero
+ * always means "this property is not present", which is what makes `noProps()`
+ * a usable control and what lets `tools/propfire.mjs` prove a run with no
+ * property installed fires nothing.
+ */
+export interface Props {
+  /** BURN. Damage per second per stack. Ball x Pit Burn. */
+  burn: number;
+  /** Burn stacks a hit applies. */
+  burnStack: number;
+  /** POISON. Damage per second per stack. Ball x Pit Poison. */
+  poison: number;
+  /** Poison stacks a hit applies. */
+  poisonStack: number;
+  /**
+   * BLEED. Damage per stack, paid WHEN THE TARGET IS HIT AGAIN rather than on
+   * a clock. Ball x Pit Bleed, and the reason it is the odd one out: a bleed
+   * build wants to hit fast and often, which is a different left hand from a
+   * burn build that wants to hit once and walk away.
+   */
+  bleed: number;
+  /** Bleed stacks a hit applies. */
+  bleedStack: number;
+  /** FREEZE. 0..1 chance a hit freezes solid. Ball x Pit Freeze. */
+  freeze: number;
+  /** BLIND. 0..1 chance a hit blinds. Ball x Pit Light. */
+  blind: number;
+  /** CHARM. 0..1 chance a hit turns the target against its own side. Ball x Pit Charm. */
+  charm: number;
+  /** SLOW. 0..1 of a target's speed a hit removes. Ball x Pit Wind. */
+  slow: number;
+  /** CHAIN. Nearby bodies a hit arcs to. Ball x Pit Lightning. */
+  chain: number;
+  /** Damage each arc deals. */
+  chainDamage: number;
+  /** QUAKE. Damage dealt to everything within `quakeRadius` of a hit. Ball x Pit Earthquake. */
+  quake: number;
+  /** That radius, px. */
+  quakeRadius: number;
+  /** LANCE. Damage dealt to everything on a line through a hit. Ball x Pit Laser. */
+  lance: number;
+  /** How far that line reaches either side of the hit, px. */
+  lanceRange: number;
+  /** LEECH. 0..1 chance a hit heals the player one point. Ball x Pit Vampire. */
+  leech: number;
+  /** SPLIT. Times a bolt may split into a clone on hitting. Ball x Pit Cell. */
+  split: number;
+  /** BURST. Lesser bolts a bolt scatters when it lands. Ball x Pit Egg Sac. */
+  burst: number;
+  /** BROOD. 0..1 chance a hit sends out a hunting helper. Ball x Pit Brood Mother. */
+  brood: number;
+  /** ERODE. 0..1 of a bolt's damage lost per body it passes through. Ball x Pit Stone. */
+  erode: number;
+  /** Floor on the eroded damage, as a fraction of the bolt's original. */
+  erodeFloor: number;
+  /** ACCEL. Fractional speed a bolt gains off every wall. Ball x Pit Flesh. */
+  accel: number;
+  /** GHOST. 1 means a bolt passes through bodies instead of being consumed. Ball x Pit Ghost. */
+  ghost: number;
+  /** HOLD. Seconds of freeze a dropped field renews on whatever stands in it. Ball x Pit Time. */
+  hold: number;
+  /** HEAVY. Multiplier on an activation's damage; its bolts travel slower by the same. Ball x Pit Iron. */
+  heavy: number;
+  /** DARK. Multiplier on an activation's damage; the weapon then goes silent. Ball x Pit Dark. */
+  dark: number;
+  /** Seconds a dark weapon is silent after its bolt lands. */
+  darkCooldown: number;
+}
+
+export function noProps(): Props {
+  return {
+    burn: 0,
+    burnStack: 0,
+    poison: 0,
+    poisonStack: 0,
+    bleed: 0,
+    bleedStack: 0,
+    freeze: 0,
+    blind: 0,
+    charm: 0,
+    slow: 0,
+    chain: 0,
+    chainDamage: 0,
+    quake: 0,
+    quakeRadius: 0,
+    lance: 0,
+    lanceRange: 0,
+    leech: 0,
+    split: 0,
+    burst: 0,
+    brood: 0,
+    erode: 0,
+    erodeFloor: 0,
+    accel: 0,
+    ghost: 0,
+    hold: 0,
+    heavy: 0,
+    dark: 0,
+    darkCooldown: 0,
+  };
+}
+
+/**
+ * The named properties, and which `Props` fields carry each one.
+ *
+ * EXPORTED BECAUSE THE GATE MUST NOT HOLD ITS OWN COPY. `tools/propfire.mjs`
+ * has to know that `burn` and `burnStack` are one property with one counter,
+ * and a second copy of this table over there would lie the day a field moved
+ * between two properties — AGENTS.md §3, the `tools/contrast.mjs` lesson.
+ * `World.propFires` is keyed by exactly these names.
+ */
+export const PROPERTIES = {
+  burn: ['burn', 'burnStack'],
+  poison: ['poison', 'poisonStack'],
+  bleed: ['bleed', 'bleedStack'],
+  freeze: ['freeze'],
+  blind: ['blind'],
+  charm: ['charm'],
+  slow: ['slow'],
+  chain: ['chain', 'chainDamage'],
+  quake: ['quake', 'quakeRadius'],
+  lance: ['lance', 'lanceRange'],
+  leech: ['leech'],
+  split: ['split'],
+  burst: ['burst'],
+  brood: ['brood'],
+  erode: ['erode', 'erodeFloor'],
+  accel: ['accel'],
+  ghost: ['ghost'],
+  hold: ['hold'],
+  heavy: ['heavy'],
+  dark: ['dark', 'darkCooldown'],
+} as const satisfies Record<string, readonly (keyof Props)[]>;
+
+export type PropName = keyof typeof PROPERTIES;
+
+/** Every property name, in table order. */
+export const PROPERTY_NAMES = Object.keys(PROPERTIES) as PropName[];
+
+/**
+ * The per-effect constants: durations, caps and the two multipliers.
+ *
+ * Here rather than in twenty stat blocks. A duration that appears once cannot
+ * drift, and the twenty rows below are then genuinely one number each — which
+ * is what "the property IS the weapon" has to mean if it is to mean anything.
+ *
+ * The RATIOS are Ball x Pit's, read off the wiki; the absolute numbers are
+ * this game's. Burn is short and stacks three; poison is long and stacks five,
+ * so poison is the patient one. Bleed stacks eight and pays on contact, so it
+ * belongs to the fastest weapon in the set. Freeze is rare, long and makes the
+ * target softer, which is the whole reason a 4% chance is worth carrying.
+ */
+export const PROP = {
+  /** Seconds a burn stack lasts; every fresh stack refreshes the whole timer. */
+  burnTime: 3,
+  /** Burn stacks a target may carry. */
+  burnMax: 3,
+  poisonTime: 6,
+  poisonMax: 5,
+  /** Seconds a bleed sits on a target before it clots. */
+  bleedTime: 5,
+  bleedMax: 8,
+  /** Seconds a freeze holds. */
+  freezeTime: 2.2,
+  /** Damage multiplier on a frozen target. Ball x Pit: +25%. */
+  freezeVuln: 1.25,
+  /** Seconds a slow lasts. */
+  slowTime: 5,
+  /** Seconds a blind lasts. */
+  blindTime: 3,
+  /** 0..1 of a blinded enemy's attacks that miss. */
+  blindMiss: 0.5,
+  /** Seconds a charm lasts. */
+  charmTime: 5,
+  /** Damage per second a charmed enemy deals to the ones around it. */
+  charmDps: 26,
+  /**
+   * How close a charmed body has to get before it can hurt what it is
+   * fighting, px, on top of both radii.
+   *
+   * Small on purpose: it CLOSES now (`World.CHARM_SPEED`), so this is a
+   * contact range rather than an aura, and a turncoat that damaged everything
+   * within a screen would be a second weapon rather than a defector.
+   */
+  charmRadius: 26,
+  /** Seconds between two status applications from one lingering field. */
+  fieldTick: 0.3,
+  /**
+   * Seconds before a weapon's TUTTI burst may scatter again.
+   *
+   * Ball x Pit's Egg Sac carries a 3s cooldown and this is that number kept.
+   * Without it a scatter-on-contact weapon scatters on every contact of every
+   * bolt, which is not a stronger weapon, it is a pool overflow with a card.
+   */
+  burstCooldown: 3,
+} as const;
+
+/**
+ * Fold two property sets into one. Bigger wins, field by field.
+ *
+ * THIS IS THE JOINT THE NEXT PHASE IS BUILT ON. Sixty authored fusions each
+ * inherit both parents' properties and add their own; that is this function
+ * called twice. It is a `Math.max` rather than a sum because two burns should
+ * be the hotter burn and not double burn — stacking is expressed by
+ * `burnStack`, which is a property in its own right and can be authored up
+ * deliberately.
+ */
+export function mergeProps(a: Props, b: Partial<Props>): Props {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b) as [keyof Props, number][]) {
+    if (typeof v !== 'number') continue;
+    if (v > out[k]) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Property fields where a SMALLER positive number is the STRONGER version, so
+ * a ladder that moves them downward is an improvement rather than a
+ * regression.
+ *
+ * Two of them, and both are counter-intuitive enough that a check without this
+ * list reports a real improvement as a bug — which it did, on the first run of
+ * `tools/propfire.mjs`: GRAVEL's erode goes 0.4 -> 0.32 -> 0.25 because the
+ * stone KEEPS more of itself at higher levels, and NOCTURNE's silence goes 3s
+ * -> 2.4s -> 1.8s because a miss costs you less.
+ *
+ * Exported for the same reason `RULE_LOWER_IS_STRONGER` is: a copy of this
+ * list inside the gate would lie by declaring a real regression to be an
+ * improvement the day somebody moved a field between the two categories.
+ * AGENTS.md §3.
+ */
+export const PROP_LOWER_IS_STRONGER: readonly (keyof Props)[] = ['erode', 'darkCooldown'];
+
+/** True if any property at all is present. Used to skip work, and to gate a control. */
+export function hasProps(p: Props): boolean {
+  for (const k of Object.keys(p) as (keyof Props)[]) if (p[k] !== 0) return true;
+  return false;
+}
+
 export interface RigDef {
   id: RigId;
   label: string;
@@ -916,58 +996,43 @@ export interface RigDef {
 }
 
 /* ------------------------------------------------------------------------ *
- * Instruments
- *
- * Twelve, for six slots. Three of them (drones, nova, blackhole) are existing
- * PowerupKinds reused verbatim, so their audio signature in `layers.ts` keeps
- * working unchanged — the ids are the contract and the ids did not move.
+ * THE TWENTY BASES
  *
  * ---------------------------------------------------------------------------
- * FOUR OF THE TWELVE NO LONGER DEAL DIRECT DAMAGE, AND `tools/builds.mjs` IS
- * RED BECAUSE OF IT. Say this plainly; it is the one measured cost of this pass
- * that has not been paid back.
+ * ONE WEAPON, ONE PROPERTY. That is the whole organising rule, and it is taken
+ * from Ball x Pit rather than invented — `docs/plan-refactor-3.md` §9c maps
+ * every row below to the ball it comes from. Three previous rosters were
+ * rejected (fourteen delivery shapes, a family x element grid, sixteen invented
+ * weapons) and the common fault in all three was that the weapon's identity
+ * lived in its GEOMETRY. Here it lives in what the hit leaves behind.
  *
- * REST and RITARDANDO deal nothing at all, and COUNTERPOINT and UNISON deal
- * nothing of their own — they multiply what is already there. That is the
- * design (`docs/plan-items-v2.md` §3: the roster had twelve damage dealers and
- * zero of anything else) and it costs about a fifth of the roster's raw output.
- * Measured over 900s x 8 seeds x 7 pick policies, before this pass against
- * after:
+ * TWELVE OF THE TWENTY ARE EXISTING IDS RE-POINTED. `pizzicato` is RASP,
+ * `snare` is SWELL, `chime` is GLASS, and so on down. Every one keeps its
+ * `ENSEMBLE_MIX` lane, its per-id shot voice in `audio/sfx.ts` and its place in
+ * `layers.ts`; only the mechanic moved. That is AGENTS.md §5's one free move —
+ * change what a card is WORTH — and it is why this pass costs eight new cards
+ * in the offer rather than twenty.
  *
- *     mean wave reached      24.1  ->  19.2
- *     policy / seed ratio    0.22  ->  0.34      (the tool's own diagnostic)
- *     damage taken spread    2.4x  ->  1.5x      (the tool's GATE — bar is 2x)
+ * TWELVE OF THE TWENTY DELIVER WITH `seek`, WHICH IS THE POINT AND NOT LAZINESS.
+ * Ball x Pit reaches ~7,921 combinations because every ball launches the same
+ * way; uniform delivery is what lets properties compose without a
+ * combinatorial explosion of firing code. A roster where every weapon has its
+ * own geometry is a roster where every FUSION needs its own geometry too, and
+ * that is the wall the last two passes hit. The other eight are spread over the
+ * six surviving shapes so the screen still tells you what is firing.
  *
- * The gate is right that the number moved and its diagnosis is the wrong way
- * round. Its threshold encodes an assumption from a roster with NO defensive
- * items: that the pick shows up as how much punishment a run costs. Under this
- * roster the pick shows up as how FAR a run gets — policy spread in wave
- * reached went 0.97 -> 1.98 and the ratio nearly doubled — and the damage
- * column compresses from both ends because every policy reaches a lower wave,
- * which is fewer minutes of late-game pressure for the reckless builds and more
- * enemies alive for the careful ones. Normalised per wave the spread is 2.14x
- * -> 1.45x, so it is not purely a survival-time artefact either.
+ * ---------------------------------------------------------------------------
+ * THE NUMBERS. Every base is written to roughly 30-40 nominal damage per second
+ * at level 1 and 110-200 at level 3, which is the band the previous roster
+ * occupied (METRONOME ran 36.3 / 72.5 / 208). Ball x Pit's own damage figures
+ * are meaningless here and are NOT copied; what is carried across is each
+ * effect's shape — stack counts, durations, chances and ratios — which lives in
+ * `PROP` rather than in twenty stat blocks.
  *
- * THREE ATTEMPTS TO CLOSE IT, all recorded so they are not re-tried:
- *
- *   REST's cooldown was going DOWN with its ladder, giving 39% of a run
- *   invulnerable. Fixed (7/12/16%) -> 1.4x -> 1.6x.
- *   RITARDANDO's bubble was 486px at 72% depth, most of the view. Cut to
- *   356px at 62% -> no separate effect measurable.
- *   REST's guns now stop with its band, so it trades damage for safety instead
- *   of granting safety free -> 1.5x. Within noise of 1.6x.
- *
- * WHAT IS NOT DONE, DELIBERATELY: a blanket 20-25% lift on the seven surviving
- * damage dealers would very likely take the column back over 2x, and it would
- * be the thing AGENTS.md §3 calls a gate optimised against — moving numbers to
- * move a metric. It would also push against `tools/arena.mjs`, which measures
- * the OTHER direction and holds: encirclement p90 went 0.32 -> 0.42 against a
- * 0.25 bar, and this file's own `INSTRUMENT_MAX_LEVEL` note says in as many
- * words that the difficulty curve needs the player weaker, not stronger. Two
- * gates now want opposite things and only one of them can be satisfied by a
- * number. Whoever takes this next should decide which, on the design, and then
- * either lift the roster or replace `builds`' threshold with one that is not
- * blind to a defensive item — not quietly widen the bar.
+ * CARD TEXT LEADS WITH THE MECHANIC. `docs/plan-refactor-3.md` §4: damage
+ * number, then effect, then flavour, and no poetry above the numbers. Every
+ * `blurb` and every `steps[].note` below is written in that order, and
+ * `tools/levelup.mjs` holds them to a 131-character card.
  * ------------------------------------------------------------------------ */
 
 function stats(p: Partial<InstrumentStats>): InstrumentStats {
@@ -987,863 +1052,582 @@ function stats(p: Partial<InstrumentStats>): InstrumentStats {
 }
 
 export const INSTRUMENTS: readonly InstrumentDef[] = [
+  /* ---------------------------------------------------------------- burn */
   {
-    id: 'pizzicato',
-    /*
-     * PIZZICATO IS NOW METRONOME, AND IT IS THE PROOF OF THE WHOLE SECOND AXIS.
-     *
-     * `docs/plan-items-v2.md` §1: twelve items and one idea. Every row in this
-     * table answered "where does the hitbox appear", the geometries were
-     * genuinely distinct after the last pass, and the owner played it and said
-     * "there currently not fun". Distinctness of geometry is not variety of
-     * decision — the player still moves away from things and lets damage
-     * happen, whatever shape the damage is.
-     *
-     * METRONOME is the cheapest possible test of the other axis. It keeps
-     * `seek`, keeps the arp lane, keeps SPICCATO and SNAP as its endings, and
-     * changes exactly one thing: WHEN it is allowed to fire. It goes off on the
-     * bar line and nowhere else, for eight times a normal shot.
-     *
-     * POWER IS UNCHANGED AND THAT IS ARITHMETIC, not a guess. At 128 BPM a bar
-     * is 1.875s against the old 0.22s interval, so it fires 8.5x less often;
-     * damage goes 4 -> 34, which is 8.5x. Nominal throughput at level 1 is
-     * 36.3/s against the old 36.4/s. What changes is that all of it lands at
-     * once, on a beat the player can hear coming.
-     *
-     * THE SILENCE BONUS is the anti-synergy the plan asks for and it is the one
-     * part that is not obvious. SYNCOPATION (`snare`) is deliberately the
-     * anti-metronome, and two weapons on disjoint slices of the bar do not
-     * actually fight — they interleave, which is a synergy. So the downbeat
-     * volley scales with how much of the bar went by in silence
-     * (`World.beatsQuiet`): alone, METRONOME arrives out of four beats of
-     * nothing at full weight; alongside a weapon firing four times a bar it
-     * arrives out of one and keeps 62% of it. That is a real cost the player
-     * can hear, measured by `tools/beatlock.mjs`.
-     *
-     * IT IS STILL THE DEFAULT OPENER. A player who never touches the starter
-     * menu meets the musical axis in the first second of the game, which is the
-     * only way an axis this unusual gets learned at all.
-     */
-    label: 'METRONOME',
+    id: 'ember',
+    label: 'EMBER',
     shape: 'seek',
-    beat: 'bar',
-    swell: 'silence',
-    blurb: 'Fires on the downbeat and nowhere else, for eight times a normal shot. Hardest out of silence.',
-    character: 'aggressive — short, dry, off the string',
     weight: 1.0,
-    // 34 rather than 4, and 0.5 rather than 0.22: at 128 BPM the bar gate sets
-    // the rate and `interval` is only a floor under it, so the throughput above
-    // is `count * damage / bar` and not `count * damage / interval`.
-    base: stats({ interval: 0.5, count: 2, damage: 34, speed: 1150, range: 620 }),
-    /*
-     * FOLDED FROM SEVEN STEPS TO TWO, and this row is the worked example for
-     * the other eleven.
-     *
-     * The old ladder was `+1 count / x1.18 speed x1.25 range / +1 count /
-     * x0.68 interval / +1 pierce / +2 count / +1 pierce x1.4 damage`. Summed:
-     * count +4, pierce +2, speed x1.18, range x1.25, interval x0.68,
-     * damage x1.4. No field takes both an add and a mul, so splitting those
-     * totals across two steps reproduces level 8's block exactly at level 3 —
-     * count 6, damage 5.6, interval 0.1496, speed 1357, pierce 3, range 775.
-     *
-     * The split is by KIND rather than by arithmetic: the first step is more
-     * bolts going further, the second is more bolts going harder and faster.
-     * Both notes therefore name a count change, which is the one thing a player
-     * can count on the screen without reading a stat.
-     */
-    /*
-     * BOTH RUNGS ARE STRUCTURAL AND NEITHER IS A PERCENTAGE. L2 doubles the
-     * bolts, L3 doubles the RATE by moving the lock from the bar to the
-     * half-bar — a rung the player hears rather than reads. Nominal throughput
-     * still tracks what the old ladder delivered: 36.3 / 72.5 / 208 per second
-     * against 36.4 / 72.7 / 224.
-     */
+    blurb: '9 dmg x2 · each hit sets 1 burn stack, 7/s for 3s, up to 3 stacks. Coals thrown at whatever is nearest.',
+    character: 'aggressive — coals spat, dry and crackling',
+    base: stats({ interval: 0.5, count: 2, damage: 9, speed: 900, range: 620 }),
+    props: { burn: 7, burnStack: 1 },
     steps: [
       {
-        note: 'four bolts on the one instead of two, thrown further and faster, each punching through what it hits',
-        add: { count: 2, pierce: 1 },
-        mul: { speed: 1.18, range: 1.25 },
+        note: '12 dmg x3 · burn bites 10/s a stack — three stacks on one target is 30/s for as long as it lives',
+        add: { count: 1 },
+        mul: { damage: 1.35 },
+        prop: { burn: 10 },
       },
       {
-        note: 'the bar answers on the three as well — five bolts, twice as often, harder, punching through three',
-        beat: 'halfbar',
-        add: { count: 1, pierce: 2 },
-        mul: { damage: 1.15 },
+        note: '17 dmg x4 · every coal now lands TWO stacks, so one hit takes a target most of the way to its cap',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { burn: 14, burnStack: 2 },
       },
     ],
   },
-  {
-    id: 'snare',
-    /*
-     * SNARE ROLL IS NOW SYNCOPATION: it fires on the OFF beat and never on the
-     * beat. Four sweeps a bar, on the "and" of each one.
-     *
-     * It is the anti-metronome and the pair is the clearest statement the
-     * roster makes about its new axis: two weapons that both run on the same
-     * clock and never once agree about where they are in it. Holding both
-     * covers the whole bar and costs METRONOME its silence bonus, which is a
-     * decision rather than a stack.
-     *
-     * `interval` is 0.2 and the grid is 0.234s at 128 BPM, so the lock sets the
-     * rate outright — four sweeps a bar, one every 0.469s. Read the block with
-     * that in mind: `damage * count / interval` is not this instrument's
-     * throughput, `damage * count / 0.469` is.
-     *
-     * ---------------------------------------------------------------------
-     * IT IS A STARTER NOW, AND THE BLOCK WAS RE-AUTHORED FOR IT — twice, the
-     * second time because the first was measuring the wrong thing.
-     *
-     * Carried over at throughput parity with the old SNARE ROLL (10.7/s against
-     * 10.5/s) it measured **3.0 waves against METRONOME's 6.7, 45% of the best
-     * against a 70% floor** — the gate correctly calling it a trap. Nothing
-     * about the floor was touched, exactly as when this gate last named CHIME.
-     *
-     * THE FIRST FIX WAS DAMAGE AND IT DID ALMOST NOTHING. 2.4x the damage moved
-     * the wave count 3.0 -> 3.0 and only the hits column responded (14.0 ->
-     * 9.3). That is the finding, and it is about the SHAPE rather than this
-     * row: an `arc` sweep reaches `max(range, area)` and this one reached 96px.
-     * A weapon that only touches things already on top of you cannot clear a
-     * wave however hard it hits, and no amount of damage fixes a reach problem.
-     *
-     * REACH, THEN, and the sweep says so at every step —
-     * `tools/_openersweep.mjs`, 3 seeds x 240s, wave reached:
-     *
-     *     damage 5,  reach 96,  1 sweep     3.0     score  7,883
-     *     damage 12, reach 96,  1 sweep     3.0     score  8,163
-     *     damage 9,  reach 210, 1 sweep     4.0     score 21,858
-     *     damage 11, reach 300, 1 sweep     4.3     score 46,137
-     *     damage 8,  reach 280, 2 sweeps    6.7     score 69,830   <- overshoots
-     *     damage 6,  reach 240, 2 sweeps    6.0     score 58,052   <- taken
-     *
-     * The second sweep is what actually did it, and in hindsight obviously:
-     * `fireArc` spaces its strokes evenly around the whole compass, so a second
-     * one is not more damage in front of you, it is an ANSWER BEHIND YOU, and
-     * enemies in this game arrive from every bearing. The 280px row was not
-     * taken because it makes the off-beat weapon outscore the downbeat one
-     * nearly 2:1, and the pair is supposed to be a choice.
-     *
-     * Ladder in real throughput per second: 25.6 / 38.4 / 81.9 against the old
-     * SNARE ROLL's 10.5 / 21.0 / 85.7 — the ceiling lands within 5% and the
-     * opening is 2.4x, bought mostly in reach rather than in damage.
-     */
-    label: 'SYNCOPATION',
-    shape: 'arc',
-    beat: 'offbeat',
-    blurb: 'Rolls on the off-beat and never on the beat. Four sweeps a bar, all of them in the gaps.',
-    character: 'mechanical — tight, martial, rudimental',
-    weight: 0.95,
-    base: stats({ interval: 0.2, count: 2, damage: 6, area: 240, arc: 1.5, range: 240 }),
-    steps: [
-      {
-        note: 'a third sweep off to the side, and all of them open a third wider and reach a third further out',
-        add: { count: 1 },
-        mul: { arc: 1.3, area: 1.3, range: 1.3 },
-      },
-      {
-        note: 'a fourth sweep closes the circle, and every off-beat now bites well over half again as hard',
-        add: { count: 1 },
-        mul: { arc: 1.5, damage: 1.6 },
-      },
-    ],
-  },
-  {
-    id: 'bow',
-    label: 'ROSIN BOW',
-    /*
-     * THE THIRD SHAPE RE-POINT, AND THE ONLY ONE WHERE THE BLURB WAS ALREADY
-     * RIGHT AND THE SIMULATION WAS WRONG.
-     *
-     * "One held beam along your facing. **It does not stop.**" has been the
-     * text on this card since the row was written, and `fireBeam` re-fired it
-     * every `interval`, spread `count` copies evenly around the compass, and
-     * let each one fade. Nothing about it was held and nothing about it was
-     * along your facing once `count` reached two. `lance` is that sentence,
-     * implemented.
-     *
-     * NOT ONE NUMBER IN THIS BLOCK MOVED, and that is a property of the routine
-     * rather than a coincidence. `fireBeam` spends `damage` over a life of
-     * `linger` and overlaps `linger / interval` generations, so a target
-     * standing in one stroke takes `damage / interval` per second.
-     * `fireLance` sets its `dps` to exactly `damage / interval`. Single-target
-     * throughput is therefore identical at every level and under every rig
-     * loadout, which is the same power-neutrality argument CHORALE's re-point
-     * made and it is checkable by reading two lines of `world.ts`.
-     *
-     * WHAT DOES CHANGE is coverage, in both directions. The pair used to point
-     * at `aim` and `aim + PI`, so half the output faced backwards at all times;
-     * it now runs as two parallel lines both pointing where you are pointing.
-     * That is a straight upgrade when you are aiming and a straight downgrade
-     * when you are not, which is the entire design of the shape.
-     *
-     * `pierce: 99` stays and stays DEAD. `deadhunt-ranges` reported it under
-     * `beam` and reports it under `lance`; nothing has regressed and nothing
-     * has been repaired. It is not deleted because `synthesiseDuet` takes
-     * `Math.max` of each parent's `pierce`, so removing it would quietly turn
-     * every bow-parented duet from a piercing weapon into a non-piercing one —
-     * a real balance change disguised as a tidy-up. Fixing it properly means
-     * giving `pierce` a meaning for a line that damages everything it crosses,
-     * and there is not one.
-     */
-    shape: 'lance',
-    blurb: 'One held beam along your facing. It does not stop.',
-    character: 'mournful — long bowed sostenuto',
-    weight: 0.85,
-    base: stats({ interval: 1.6, count: 1, damage: 7, area: 9, speed: 0, pierce: 99, linger: 0.5, range: 520 }),
-    steps: [
-      {
-        note: 'a far thicker stroke, held much steadier, reaching right across the arena',
-        mul: { linger: 1.6, area: 1.4, range: 1.5 },
-      },
-      {
-        /*
-         * The note changed because the behaviour did. It used to read "a second
-         * beam draws OPPOSITE the first ... redrawn so often the pair is all
-         * but continuous", which described `fireBeam`'s compass spread and its
-         * re-fire. Neither survives the re-point: the second line is parallel
-         * and the pair is genuinely continuous rather than nearly so.
-         * `AGENTS.md` §3 asks that a note say what the player will SEE, and
-         * this one now does.
-         */
-        note: 'a second line runs alongside the first, both cutting half again as hard, and the pair holds without a flicker',
-        add: { count: 1 },
-        mul: { linger: 1.7, interval: 0.465, damage: 1.6 },
-      },
-    ],
-  },
+  /* -------------------------------------------------------------- freeze */
   {
     id: 'chime',
-    /*
-     * CHIME IS NOW RITARDANDO, AND IT DEALS NO DAMAGE AT ALL.
-     *
-     * `docs/plan-items-v2.md` §1: the roster had twelve damage dealers and zero
-     * of anything else, and that is the most obvious hole in it. Vampire
-     * Survivors has Laurel, Clock Lancet, Garlic and Tiragisu; the whole
-     * reference class this game is chasing gets its variety from items that are
-     * not a damage number. RITARDANDO is control, and the price is control of
-     * yourself.
-     *
-     * WHAT IT DOES. Enemies inside `area` of the ship move, turn and fire at a
-     * fraction of their speed. Every instrument in your loadout takes
-     * proportionally longer to come round. You buy a bubble you can stand in
-     * and pay for it out of your own rate of fire, which is the first genuine
-     * DRAWBACK any item in this table has carried.
-     *
-     * WHY IT COST CHIME ITS PLACE IN `STARTERS`. An opener has to be able to
-     * kill things in the first minute and this one cannot kill anything ever.
-     * `tools/openers.mjs` asserts the weakest opener reaches 70% of the best,
-     * and it is right to: a starter that cannot clear wave one is not a choice,
-     * it is a trap. See the note on `STARTERS` in `progression.ts` for the
-     * replacement and why it is a better set than the one it replaces.
-     *
-     * `damage` IS REUSED AS THE DRAG DEPTH, and it is signed so that MORE is
-     * STRONGER: it is the fraction of enemy time REMOVED, not the fraction
-     * left. That is not decoration. `tools/levelup.mjs` asserts
-     * `damage * count / interval` never falls as an instrument levels, and a
-     * field holding "enemies run at 55%" would read as a REGRESSION every time
-     * the item got better. `arc` is what the drag costs you, as a fraction of
-     * your own interval added on. `count` reaching 2 is the flag that enemy
-     * BULLETS are dragged as well as enemy bodies — a rung with no number to
-     * spend, expressed in the one field the shape has spare.
-     *
-     * DEPTH AND RADIUS WERE BOTH CUT AFTER THE FIRST MEASUREMENT, for the same
-     * reason REST's cooldown went the other way: at 0.72 depth over a 486px
-     * bubble this covers most of a 900x780 view and takes 72% off everything in
-     * it, bodies AND fire, permanently. That is not control, it is a difficulty
-     * setting. 0.40 / 0.52 / 0.62 over 220 / 297 / 356px is a bubble you have
-     * to stand in.
-     *
-     * `World.ensembleDps` skips this shape outright. A "nominal dps" column
-     * that counted 0.72 as damage would be quietly wrong in every balance tool
-     * in `tools/`, which is exactly the class of defect this file's history is
-     * made of.
-     */
-    label: 'RITARDANDO',
-    shape: 'drag',
-    blurb: 'Time drags in a bubble around you. Enemies crawl, and so does your own rate of fire. No damage.',
-    character: 'shimmering — a single struck bell, long decay',
-    weight: 0.9,
-    base: stats({ interval: 1.2, count: 1, damage: 0.4, area: 220, arc: 0.3, linger: 0.6 }),
+    label: 'GLASS',
+    shape: 'seek',
+    weight: 1.0,
+    blurb: '5 dmg x2, fast · 5% of hits freeze solid for 2.2s, and a frozen target takes 25% more from everything.',
+    character: 'shimmering — thin struck glass, a long ring',
+    base: stats({ interval: 0.28, count: 2, damage: 5, speed: 1000, range: 560 }),
+    props: { freeze: 0.05 },
     steps: [
       {
-        note: 'the bubble opens half again as wide, enemies inside it drop to under half speed, and it costs you less',
-        add: { damage: 0.12 },
-        mul: { area: 1.35, arc: 0.85, linger: 1.3 },
-      },
-      {
-        note: 'enemy FIRE slows inside it as well as enemy bodies, in a bubble wider again and deeper still',
-        add: { count: 1, damage: 0.1 },
-        mul: { area: 1.2, arc: 0.85 },
-      },
-    ],
-  },
-  {
-    id: 'harp',
-    /*
-     * HARP GLISS IS NOW COUNTERPOINT — the first item in this game that
-     * modifies another item.
-     *
-     * `docs/plan-items-v2.md` §3: Ball x Pit's actual core is that things
-     * compose, and nothing here composed. Twelve instruments each did their own
-     * thing on their own timer, and the twelve passives were global
-     * multipliers, which is the flattest imaginable version of an item
-     * interacting with a build. A roster with no interactions has no lattice,
-     * and a lattice is where "rich ecosystem" actually comes from.
-     *
-     * WHAT IT DOES. Whenever the FIRST instrument in your loadout fires, your
-     * SECOND fires a copy — same routine, same geometry, a share of its damage.
-     * At level 3 your third answers as well.
-     *
-     * AND THAT MAKES LOADOUT ORDER A DECISION, which is the interesting part.
-     * Order is acquisition order; the player has always controlled it and has
-     * never once had a reason to think about it. With COUNTERPOINT held, a fast
-     * first instrument and a heavy second is a completely different build from
-     * the reverse — and it is the one build decision in the game that costs no
-     * picks at all.
-     *
-     * `docs/plan-items-v2.md` §7 names the risk and it is real: "if the player
-     * cannot see which instrument is first, the item is a coin flip." The HUD
-     * draws the loadout in acquisition order already, so the information is on
-     * screen; whether it READS as an ordering is not something any tool here
-     * can answer.
-     *
-     * `damage` is the copy's share of the follower's damage, `count` extra
-     * projectiles on the copy, `pierce` HOW MANY followers answer, `interval` a
-     * floor on how often a copy may be struck. Nothing else is read: this shape
-     * has no geometry of its own, which is what makes it a modifier rather than
-     * a weapon.
-     */
-    label: 'COUNTERPOINT',
-    shape: 'counterpoint',
-    blurb: 'Your second instrument fires a copy whenever your first does. The order you took them in matters now.',
-    character: 'shimmering — a cascading harp run',
-    weight: 0.9,
-    base: stats({ interval: 0.6, count: 0, damage: 0.7, pierce: 1 }),
-    steps: [
-      {
-        note: 'the answering voice carries an extra projectile of its own, and it may be struck twice as often',
+        note: '7 dmg x3 · 8% to freeze. More shards in the air is more rolls, which is the only way this weapon scales',
         add: { count: 1 },
-        mul: { interval: 0.5 },
+        mul: { damage: 1.35 },
+        prop: { freeze: 0.08 },
       },
       {
-        note: 'your THIRD instrument answers as well, and both copies come through as strong as the original',
-        add: { count: 1, pierce: 1 },
-        mul: { damage: 1.6 },
-      },
-    ],
-  },
-  {
-    id: 'drones',
-    /*
-     * DRONE PODS IS NOW UNISON: the whole band stops using its own timers and
-     * fires TOGETHER, on the bar.
-     *
-     * The second of the two items that modify other items, and the one that
-     * changes the shape of a run rather than a build. A trickle becomes a
-     * volley. Six instruments landing on the same beat is one enormous hit; six
-     * instruments on six timers is a texture — and the game has only ever had
-     * the texture.
-     *
-     * IT MAKES BREADTH BEAT DEPTH, which is the point. `tools/builds.mjs`
-     * measures the `greedy` (spread wide) policy against `narrow` (go deep) and
-     * the game has always rewarded depth. UNISON is the card that inverts that
-     * for one run, and inverting a dominant strategy is worth more than adding
-     * a number to it.
-     *
-     * RATE-NEUTRAL BY CONSTRUCTION, and this had to be argued rather than
-     * tuned. Re-clocking an instrument from its own `interval` to one bar
-     * multiplies its activations by `interval / bar`, so `World.fireInstruments`
-     * multiplies its damage by `bar / interval`, clamped to [0.4, 12]. Without
-     * that, UNISON is a 12x buff to a 0.15s weapon and a 45% NERF to a 3.2s
-     * one — two numbers colliding, not a design. With it, the conversion costs
-     * and gains nothing and this ladder is the whole of the payment.
-     *
-     * `damage` is the multiplier on the assembled volley, `count` extra
-     * projectiles every instrument puts into it, `linger` how far past a bar
-     * line a late instrument may still join. `interval` is read by the
-     * dispatcher and nothing else.
-     */
-    label: 'UNISON',
-    shape: 'unison',
-    beat: 'bar',
-    blurb: 'The whole band drops its own timers and fires together, on the bar. Breadth starts beating depth.',
-    character: 'eerie — the arp split into hard-panned satellites',
-    weight: 0.95,
-    base: stats({ interval: 1.0, count: 0, damage: 1.25 }),
-    steps: [
-      {
-        note: 'every instrument in the band puts one more projectile into the volley',
+        note: '11 dmg x4 · 12% to freeze. At four shards a pack loses something to the ice about once a second',
         add: { count: 1 },
-      },
-      {
-        note: 'the band lands on the half-bar as well, half again as hard, with two extra projectiles from each player',
-        beat: 'halfbar',
-        add: { count: 1 },
-        mul: { damage: 1.6 },
+        mul: { damage: 1.55 },
+        prop: { freeze: 0.12 },
       },
     ],
   },
-  {
-    id: 'nova',
-    /*
-     * NOVA IS NOW REST, AND ITS DAMAGE IS ZERO ON EVERY RUNG.
-     *
-     * A full bar in which nothing can touch you, on a long cooldown — and your
-     * whole band stops playing for every beat of it. The mix drops to its drone
-     * and comes back on the bar line, and the ring that sweeps the field clean
-     * lands with it.
-     *
-     * THE SECOND ITEM WITH NO DAMAGE, and the one that makes the axis a real
-     * axis rather than one experiment. A player holding REST is playing a
-     * different game for one bar in twenty: they can walk INTO the thing they
-     * have spent the whole run walking away from, which is the only item here
-     * that changes what the player is allowed to do rather than what they hit.
-     *
-     * THE SILENCE IS THE COST AND IT HAD TO BE AUDIBLE, or this is just Laurel
-     * with extra steps. `GameSnapshot.tacetStems` carries the whole band while
-     * the rest runs and the director zeroes those lanes; `SILENCEABLE_STEMS`
-     * deliberately excludes `sub`, `hats`, `fx` and `power` so what is left is
-     * a drone and not a crash. `docs/plan-items-v2.md` §7 names the failure
-     * mode exactly: the silence has to read as dramatic rather than as a bug,
-     * and that is a judgement no tool in this repository can make.
-     *
-     * `linger` IS IN BARS, not seconds. A rest that ends mid-bar is not a rest,
-     * and the whole item is built on the player hearing where it starts and
-     * stops. `interval` is the cooldown in seconds, `area` the radius of the
-     * return sweep, `count` how many rings that sweep is made of.
-     *
-     * ---------------------------------------------------------------------
-     * THE COOLDOWN GOES UP WITH THE LADDER, WHICH LOOKS BACKWARDS AND IS NOT.
-     *
-     * It went DOWN in the first draft — 26s, 22s, 13.7s against 1, 2 and 3 bars
-     * of rest — and that is 7%, 22% and **39% of the whole run invulnerable**.
-     * At 39% the item stops being a bar you spend and becomes a background
-     * property of the run, and `tools/builds.mjs` could see the consequence
-     * even though it has no idea REST exists: damage taken across the seven
-     * pick policies collapsed from a 2.4x spread to 1.4x, because every policy
-     * was picking up the same blanket immunity.
-     *
-     * Uptime is now 7%, 12% and 16%. What the ladder buys is the LENGTH of the
-     * window — one bar is a dodge, three bars is a plan — and not how much of
-     * the run you spend inside one.
-     *
-     * AND THE GUNS STOP TOO. `World.fireInstruments` returns early for the
-     * whole rest, so the band is silent in the simulation as well as in the
-     * mix. The first implementation silenced only the sound, which made the
-     * card's own sentence false and the item a bar of free immunity. Read that
-     * as the item's real shape: a rest is time you spend NOT killing things,
-     * and at three bars on a 34-second cooldown it is 16% of the run's damage
-     * traded for 16% of the run's danger.
-     *
-     * `damage: 0` IS THE DECLARATION. `tools/levelup.mjs` asserts nominal dps
-     * never falls as an item levels; 0, 0, 0 passes, and any later editor who
-     * gives this row a damage number will be undoing the design rather than
-     * balancing it.
-     */
-    label: 'REST',
-    shape: 'rest',
-    /*
-     * THE LOCK WAS IN THE PROSE AND NOT IN THE ROW, which is this file's own
-     * favourite defect. `fireRest` says in as many words that 'the shape carries
-     * beat: bar so it can only ever begin on a line', and it did not — the field
-     * was simply never written. `tools/beatlock.mjs` printed REST as an UNLOCKED
-     * row with 25/13/0/0/0/0/13/50 across the bar, which is a rest starting
-     * wherever the cooldown happened to land. The whole item is built on the
-     * player hearing where the silence starts and stops.
-     */
-    beat: 'bar',
-    blurb: 'A whole bar where nothing can touch you — and your whole band stops playing for every beat of it.',
-    character: 'heavy — a wide room clap on the pulse',
-    weight: 0.8,
-    base: stats({ interval: 26, count: 1, damage: 0, area: 320, linger: 1 }),
-    steps: [
-      {
-        note: 'two full bars of silence instead of one, and the band coming back sweeps a far wider ring clean',
-        add: { linger: 1 },
-        mul: { area: 1.5, interval: 1.15 },
-      },
-      {
-        note: 'three bars, and the return comes back as two rings that throw back and stagger everything they reach',
-        add: { linger: 1, count: 1 },
-        mul: { interval: 1.13, area: 1.3 },
-      },
-    ],
-  },
-  {
-    id: 'blackhole',
-    label: 'BLACK HOLE',
-    shape: 'field',
-    blurb: 'A well that drags everything in and crushes it.',
-    character: 'heavy — a sub drone sliding down into an impact',
-    weight: 0.7,
-    base: stats({ interval: 6.5, count: 1, damage: 26, area: 150, linger: 2.4 }),
-    steps: [
-      {
-        note: 'the well pulls from half again as far out, holds open longer, and is deployed more often',
-        mul: { area: 1.536, linger: 1.4, interval: 0.72 },
-      },
-      {
-        note: 'a second well, swallowing enemy fire as well as enemies, and the collapse detonates outward when it closes',
-        add: { count: 1 },
-        mul: { area: 1.2, damage: 2.4 },
-      },
-    ],
-  },
-  {
-    id: 'feedback',
-    label: 'DROP',
-    /*
-     * THE FOURTH SHAPE RE-POINT, AND THE ONE THAT COSTS THE MOST TO ARGUE.
-     *
-     * `aura` held SEVEN of twenty-seven instruments — 26%, the largest share in
-     * the table by a wide margin, and three of the seven (CATHEDRAL, REQUIEM,
-     * TUTTI) describe themselves as "a very large ring". The `FUSIONS` preamble
-     * below already refuses a fourth on exactly that ground. FEEDBACK is the
-     * cheapest one to move because it is already a short-range weapon — "burns
-     * whatever comes close" — so it gains a facing rather than a range.
-     *
-     * THE STAT BLOCK IS RE-AUTHORED, WHICH THE OTHER RE-POINTS DID NOT NEED,
-     * and this is the honest part. `cone` reads `arc`, `speed`, `range` and
-     * `pierce` and ignores `area` and `linger`; the aura block set `area` and
-     * nothing else. Carrying it over verbatim would have produced a cone with
-     * no spread, no muzzle velocity and no reach, and `deadhunt-ranges` would
-     * have printed `feedback.area 74->166 (the ladder moves it)` — the exact
-     * defect class this table's history is made of. So `area` is DELETED rather
-     * than carried, the way VIBRATO's `speed` was.
-     *
-     * POWER, TRACKED RUNG BY RUNG on `damage x count / interval`, which is the
-     * convention CHORALE and VIBRATO were both argued on:
-     *
-     *     L1  was 10.0   now 11.7        L2  was 22.7   now 26.3
-     *     L3  was 61.4   now 61.3
-     *
-     * The ceiling lands within a fifth of a per cent of where it was, and the
-     * two rungs beneath it are within 16%. Nominal is generous to a cone and
-     * stingy to an aura in
-     * opposite directions and both are worth saying: an aura's ring hits
-     * EVERYTHING inside its radius for full damage, so nominal understates it
-     * badly in a crowd; a cone's pellets are counted as if every one of the
-     * twelve connects, which at 250px of reach they will not. The real delivery
-     * is therefore lower than these numbers on both sides of the change, and
-     * `tools/arena.mjs`, `tools/builds.mjs` and `tools/openers.mjs` are where
-     * that gets decided rather than here. FEEDBACK is not a starter, so
-     * `openers` measures it only through the offer pool.
-     *
-     * AND IT COSTS A DEFENCE NOBODY WROTE DOWN, WHICH IS THE PART THAT MOVED
-     * THE NUMBERS. `fireAura` pushes its rings into `novas` with
-     * `clears: true`, and `updateNova` DELETES ENEMY BULLETS in the expanding
-     * annulus — so every aura in this table is quietly also a bullet-cancel,
-     * and neither FEEDBACK's blurb nor WALL OF SOUND's ever mentioned it. A
-     * cone spawns bullets and clears nothing. Measured over `tools/builds.mjs`
-     * at 900s x 8 seeds x 7 policies, hits taken across the policies went from
-     * 12-32 to 24-67 while the mean wave reached barely moved (26.4 -> 25.5 for
-     * the `first` policy, 27.0 -> 26.9 for `narrow`), and `tools/arena.mjs`
-     * agrees: encirclement p90 0.27 -> 0.33 against a 0.25 bar, so the player is
-     * more exposed rather than slower. Both gates still pass and the direction
-     * is the one the INSTRUMENT_MAX_LEVEL note above says the curve needs, but
-     * it is a real change and it is not in the nominal-power arithmetic. If a
-     * later pass wants the defence back, give it to the shape rather than to
-     * these two rows — a bullet-clearing cone is a design decision, and putting
-     * FEEDBACK back on `aura` to get it would undo the census fix.
-     *
-     * THE BLURB CHANGED. "A hum around the hull" is an omnidirectional
-     * sentence and this is no longer an omnidirectional weapon; leaving it
-     * would have been a fourth entry on the "prose the simulation does not
-     * deliver" list two paragraphs of this file already complain about. The
-     * `character` phrase is untouched, so the audio side sees no change at all.
-     */
-    /*
-     * FEEDBACK IS NOW DROP, AND THE SHAPE DID NOT MOVE — the CLOCK did.
-     *
-     * It keeps the cone, the stat block and the ladder it was given one pass
-     * ago, and gains one property: it is near-inert during the intro, the
-     * build, the breakdown and the fill, and it is the loudest thing on the
-     * field during the drop. `Swell.drop` reads `MusicalState.section` and
-     * `MusicalState.energy`, which `main.ts` pushes in from the director.
-     *
-     * THE RUN'S MUSICAL ARC BECOMES A COMBAT CLOCK. Nothing else in this game
-     * has ever asked the player to listen for a cue and then act on it — the
-     * arrangement has been a beautiful readout of a fight it had no say in
-     * since the project started (`docs/plan-items-v2.md` §2). A player holding
-     * DROP saves position, saves the well, saves the bomb, and spends all of it
-     * when the build lands.
-     *
-     * MEASURED, BECAUSE THE SECTION SHARE DECIDES WHETHER THIS IS A DESIGN OR A
-     * TAX. `tools/sections.mjs` over 8 seeds x 300s: drop 42.5%, build 17.2%,
-     * breakdown 16.5%, sustain 16.2%, intro 4.1%, fill 3.4%. So the item is
-     * live for a bit under half a run — often enough to build around, rarely
-     * enough that its arrival is an event. Time-weighted, the swell works out
-     * about 18% above a flat item of the same block, which is the volatility
-     * premium and is deliberate.
-     *
-     * IT IS NOT AN OPENER AND MUST NOT BECOME ONE. Four minutes of `openers`
-     * would spend most of itself outside a drop.
-     */
-    shape: 'cone',
-    swell: 'drop',
-    blurb: 'Almost nothing until the drop lands. Inside one, the loudest thing on the field.',
-    character: 'aggressive — saturated amp hum, no attack at all',
-    weight: 0.85,
-    base: stats({ interval: 0.6, count: 5, damage: 1.4, arc: 0.8, speed: 880, range: 190 }),
-    steps: [
-      {
-        note: 'four more pellets in the burst, thrown wider and further, and the drop comes round sooner',
-        add: { count: 4 },
-        mul: { arc: 1.15, range: 1.15, interval: 0.8 },
-      },
-      {
-        note: 'twelve pellets that punch clean through everything while the drop is running, wide enough for a whole rush',
-        add: { count: 3, pierce: 2 },
-        mul: { interval: 0.8, damage: 1.4, arc: 1.35, speed: 1.2, range: 1.15 },
-      },
-    ],
-  },
-  {
-    id: 'echoes',
-    /*
-     * ECHO CHAMBER IS NOW SOSTENUTO: the last enemy you killed comes back and
-     * fights for you.
-     *
-     * The third non-damaging item, in the sense that matters — SOSTENUTO itself
-     * has no hitbox anywhere. What it has is a rule about corpses, and that
-     * turns the field into a resource. You stop shooting the nearest thing and
-     * start choosing what to kill, because what you kill is what stands next to
-     * you for the next seven seconds.
-     *
-     * NO NEW CONTAINER. A ghost is a `BulletFlag.Summon` bullet, driven by
-     * `updateSummons`, drawn as sprite type 2 — all of which `spawn` (VIBRATO)
-     * already built and `tools/effectsdraw.mjs` already asserts is drawn. The
-     * difference is entirely WHERE and WHEN: a summon is bought on a timer at
-     * the ship, a ghost is raised at a body.
-     *
-     * IT SURVIVES ITS OWN HITS, which `spawn` does not, and that is the one
-     * change to `collidePlayerBullets` this item needed. A summon is consumed
-     * on contact; a ghost carries `bounces` as STRIKES REMAINING and recoils
-     * instead, which both keeps it alive to be an ally and rate-limits it — a
-     * piercing ally would sit inside the first body it reached and apply its
-     * damage on all 120 steps a second, which is why `spawn` refuses pierce.
-     *
-     * IT CANNOT OPEN A RUN, AND THAT IS A HARD DEADLOCK RATHER THAN A WEAKNESS.
-     * No other weapon means no kill; no kill means no ghost; no ghost means no
-     * kill. `echoes` therefore had to leave `STARTERS` — see the note there.
-     * The old ECHO CHAMBER was in that list on merit and this is a real loss;
-     * the wall-bouncing it brought survives in CANON, which is still its
-     * evolution.
-     *
-     * `count` is the standing retinue, `linger` a ghost's lifetime, `damage`
-     * its strike, `speed` its travel, `bounces` how many strikes it has in it,
-     * `interval` the minimum gap between raisings, `range` how far from the
-     * ship a corpse may be and still be raised.
-     */
-    label: 'SOSTENUTO',
-    shape: 'ghost',
-    blurb: 'The last thing you killed comes back and fights beside you until it fades.',
-    character: 'eerie — the same hit returning late and quieter',
-    weight: 0.85,
-    base: stats({ interval: 1.4, count: 1, damage: 9, speed: 300, bounces: 3, linger: 7, range: 700 }),
-    steps: [
-      {
-        note: 'two ghosts stand with you at once, they last half again as long and each one strikes far harder',
-        add: { count: 1, bounces: 2 },
-        mul: { linger: 1.6, damage: 1.8 },
-      },
-      {
-        note: 'three ghosts, raised almost the instant you kill, moving faster and tearing through what they reach',
-        add: { count: 1, bounces: 3 },
-        mul: { interval: 0.45, damage: 1.5, speed: 1.4 },
-      },
-    ],
-  },
-  {
-    id: 'timpani',
-    /*
-     * TIMPANI IS NOW CRESCENDO: the only weapon in the game that wants you in
-     * trouble.
-     *
-     * Its damage is multiplied by how much danger the ship is actually in —
-     * feeble on an empty field, enormous inside a ring. It inverts the risk
-     * curve every other item in this table sits on, and inverting a curve is
-     * worth more than steepening one: the whole roster's answer to pressure has
-     * always been "get out", and this is the one card that answers "stay".
-     *
-     * IT READS THE WORLD, NOT THE MUSIC, AND THAT IS DELIBERATE. The plan
-     * (`docs/plan-items-v2.md` §3) names `energy`, which is the director's
-     * blend of run progress and immediate danger. The behaviour it asks for —
-     * "feeble when safe, enormous when surrounded" — is the second half of that
-     * blend and nothing else, and the world already computes it:
-     * `World.analyseEncirclement` produces the exact signal `tools/arena.mjs`
-     * gates the difficulty curve on. Using it means CRESCENDO needs no
-     * `MusicalState` push, behaves identically in a headless gate and a played
-     * run, and cannot be made strong by surviving for a long time in safety.
-     * Say plainly what that costs: this item does NOT respond to the
-     * arrangement, and one of the five musical-axis slots is therefore musical
-     * in name rather than in mechanism.
-     *
-     * `World.dangerSwell` is the multiplier and `tools/beatlock.mjs` prints its
-     * distribution over a real run, because a swell whose input sits at 0.04
-     * for the whole game is a swell that is off — and the raw encirclement p50
-     * IS 0.04. It is blended with the nearest-threat and local-population
-     * signals for exactly that reason.
-     *
-     * THE BLOCK IS FRONT-LOADED, BECAUSE THIS IS THE THIRD OPENER NOW — see
-     * `STARTERS`. `tools/_openersweep.mjs` measured it at 3.7 waves against
-     * METRONOME's 6.7, which is 55% against a 70% floor; `damage` goes 34 -> 54
-     * at level 1 and the top rung's multiplier comes down 2.4 -> 1.6 to pay for
-     * it, which takes it to 5.3 waves (76%). The ceiling moves 90.7 -> 96.0 per
-     * second before the swell, under 6%, while the opening moves 10.6 -> 16.9.
-     * The swell then multiplies whatever that is by 0.3 to 3.3.
-     *
-     * Unlike SYNCOPATION this row needed no reach: an aura already covers 170px
-     * in every direction, which is the same property that made the old TIMPANI
-     * a better opener at 10.6 nominal than FEEDBACK was at 11.7.
-     *
-     * The number in the block is the FLOOR of a range rather than the value,
-     * which is the one thing to keep in mind when reading it against any other
-     * row in this table.
-     */
-    label: 'CRESCENDO',
-    shape: 'aura',
-    swell: 'danger',
-    blurb: 'Feeble while you are safe. Enormous while you are surrounded. It wants you in trouble.',
-    character: 'heavy — orchestral, felt in the chest',
-    weight: 0.7,
-    base: stats({ interval: 3.2, count: 1, damage: 54, area: 170, linger: 0.25 }),
-    steps: [
-      {
-        note: 'the wave carries much further and lands more often — and it now swells outward with the danger too',
-        mul: { area: 1.69, interval: 0.75, linger: 1.8 },
-      },
-      {
-        note: 'a second, delayed wave, and being surrounded is worth well over half again what it was worth',
-        add: { count: 1 },
-        mul: { area: 1.2, damage: 1.6 },
-      },
-    ],
-  },
+  /* -------------------------------------------------------------- poison */
   {
     id: 'tremolo',
-    /*
-     * TREMOLO FIELD IS NOW TACET: you silence a lane of your own soundtrack,
-     * the quiet banks up, and it lands when the part comes back in.
-     *
-     * THE ONLY ITEM IN THE GAME WHOSE COST IS PAID IN THE THING THE GAME IS
-     * ABOUT. Every other trade-off here is mechanical — rate for damage, range
-     * for safety. This one asks the player to make their own soundtrack worse
-     * for a payoff, and the readout for the resource is not a bar on the HUD,
-     * it is the missing part. You can hear how charged it is.
-     *
-     * THE CYCLE. `range` bars of playing, then `linger` bars with `count` lanes
-     * out of the mix, banking `damage` a bar; on the bar line the lanes come
-     * back, the bank discharges as a ring of radius `area` and the cycle
-     * restarts. It is locked to the bar because a tacet that begins in the
-     * middle of one is not a tacet, it is a dropout — so `interval` is only the
-     * dispatcher's floor (0.5s, under one bar) and `range` carries the count of
-     * bars, which is the one spare field on a shape that has no reach.
-     *
-     * WHICH LANE. A rota over `SILENCEABLE_STEMS`, advancing each cycle, so the
-     * item does not spend a whole run removing the same part — and never
-     * `sub`, `hats`, `fx` or `power`, so there is always something sounding.
-     * `docs/plan-items-v2.md` §7 names the risk: silence has to read as
-     * dramatic, not as a bug.
-     *
-     * THIS IS THE SECOND RE-POINT THIS ROW HAS HAD. It was `field`, then
-     * `trail` ("pools left in your wake", which the simulation finally
-     * delivered one pass ago), and now this. The wake is not lost — VIBRATO,
-     * still this instrument's evolution, is `spawn`, and UP-TEMPO in the rig
-     * lays a trail on distance travelled. Say plainly that a good implemented
-     * shape was spent here: `trail` was the item the last pass was proudest of
-     * and the owner still found the roster boring, which is the whole argument
-     * of `docs/plan-items-v2.md` §1 in one row.
-     */
-    label: 'TACET',
-    shape: 'tacet',
-    beat: 'bar',
-    blurb: 'Silences a lane of your own soundtrack. The quiet banks up, and lands when the part comes back.',
-    character: 'shimmering — unsettled, wobbling, never quite still',
-    weight: 0.85,
-    base: stats({ interval: 0.5, count: 1, damage: 7, area: 150, linger: 2, range: 4 }),
+    label: 'DETUNE',
+    shape: 'field',
+    weight: 0.95,
+    blurb: '52 dmg pool for 3s · anything standing in it takes a poison stack, 5/s each, to 5 stacks over 6s.',
+    character: 'eerie — a beating, out-of-tune unison',
+    base: stats({ interval: 1.6, count: 1, damage: 52, area: 130, linger: 3 }),
+    props: { poison: 5, poisonStack: 1 },
     steps: [
       {
-        note: 'the part stays out for twice as long, so twice as much banks up, and it comes back wider',
-        add: { linger: 2 },
-        mul: { damage: 1.6, area: 1.4 },
+        note: 'two pools per drop, sharing the damage · poison bites 7/s a stack — twice the ground, same hit',
+        add: { count: 1 },
+        mul: { area: 1.1 },
+        prop: { poison: 7 },
       },
       {
-        note: 'two parts go quiet at once, and what comes back sweeps every bullet it reaches off the field',
+        note: 'three pools, 5s each · poison 10/s a stack, so a full five stacks is 50/s on anything that lingers',
         add: { count: 1 },
-        mul: { damage: 1.5, area: 1.35 },
+        mul: { linger: 1.7, damage: 1.3 },
+        prop: { poison: 10 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- bleed */
+  {
+    id: 'pizzicato',
+    label: 'RASP',
+    shape: 'arc',
+    beat: 'offbeat',
+    weight: 1.0,
+    blurb: '3 dmg x4 at close range · 2 bleed stacks a hit to 8; every stack costs the target 2 more per hit.',
+    character: 'mechanical — a bow scraped across the bridge',
+    /*
+     * 300px, AND 210 WAS A BUG RATHER THAN A CHOICE.
+     *
+     * `Enemy.standoff` defaults to 240: everything that is not a rammer holds
+     * a ring at that distance and works the tangent. A 210px weapon therefore
+     * could not reach the majority of the roster AT ALL — it was not a
+     * short-range trade, it was a weapon that only hit things already touching
+     * you. `tools/openers.mjs` found it from the outside: RASP reached 61% of
+     * the best opener's wave against a 70% floor.
+     *
+     * 300 is still by a distance the shortest reach in the roster (the next is
+     * SWELL's 520) and still means diving into a pack, which is the identity.
+     * It is now outside the standoff ring rather than inside it.
+     */
+    base: stats({ interval: 0.22, count: 4, damage: 3, arc: 0.8, speed: 900, range: 300 }),
+    props: { bleed: 2, bleedStack: 2 },
+    steps: [
+      {
+        note: '4 dmg x6, wider · bleed pays 3 a stack, so a target at full stacks loses 24 on every single hit',
+        add: { count: 2 },
+        mul: { damage: 1.3, arc: 1.25 },
+        prop: { bleed: 3 },
+      },
+      {
+        note: '6 dmg x8, reaching further · bleed pays 4 a stack. Nothing in the game rewards fire rate more',
+        add: { count: 2 },
+        mul: { damage: 1.35, range: 1.5 },
+        prop: { bleed: 4 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- chain */
+  {
+    id: 'feedback',
+    label: 'ARC',
+    shape: 'seek',
+    weight: 0.95,
+    blurb: '20 dmg · the hit arcs on to 3 more bodies nearby for 9 each. Worthless against one thing, murder in a crowd.',
+    character: 'aggressive — a squealing feedback loop',
+    base: stats({ interval: 0.75, count: 1, damage: 20, speed: 1100, range: 640 }),
+    props: { chain: 3, chainDamage: 9 },
+    steps: [
+      {
+        note: '28 dmg · arcs to 4 for 14 each. A packed group takes 84 from one bolt where a lone shape takes 42',
+        mul: { damage: 1.4 },
+        prop: { chain: 4, chainDamage: 14 },
+      },
+      {
+        note: '39 dmg x2 · each bolt arcs to 5 for 20. Two bolts into a wall of bodies is ten separate arcs',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { chain: 5, chainDamage: 20 },
+      },
+    ],
+  },
+  /* ---------------------------------------------------------------- slow */
+  {
+    id: 'snare',
+    label: 'SWELL',
+    shape: 'lance',
+    weight: 0.95,
+    blurb: '30 dmg/s in a held line along your heading · everything in it loses 30% of its speed for 5s.',
+    character: 'mechanical — a rising wash of noise',
+    base: stats({ interval: 0.5, count: 1, damage: 15, area: 13, linger: 0.6, range: 520 }),
+    props: { slow: 0.3 },
+    steps: [
+      {
+        note: 'two parallel lines, reaching 40% further · the drag deepens to 45%, which is most of a shape’s charge',
+        add: { count: 1 },
+        mul: { damage: 1.25, range: 1.4 },
+        prop: { slow: 0.45 },
+      },
+      {
+        note: 'three lines, thicker, held longer · 60% slower. A wall of bodies walks into it and effectively stops',
+        add: { count: 1 },
+        mul: { damage: 1.35, area: 1.5, linger: 1.4 },
+        prop: { slow: 0.6 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- ghost */
+  {
+    id: 'phantom',
+    label: 'PHANTOM',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '14 dmg x2 · the bolts are not consumed by what they hit. One shot crosses the whole arena through everything.',
+    character: 'eerie — a voice with no body behind it',
+    base: stats({ interval: 0.85, count: 2, damage: 14, speed: 820, range: 1400, pierce: 99 }),
+    props: { ghost: 1 },
+    steps: [
+      {
+        note: '20 dmg x3, faster · three lines drawn through a column of enemies instead of two',
+        add: { count: 1 },
+        mul: { damage: 1.4, speed: 1.2 },
+        prop: { ghost: 1 },
+      },
+      {
+        note: '30 dmg x4 · four bolts that stop for nothing. Line the pack up and every one of them is hit four times',
+        add: { count: 1 },
+        mul: { damage: 1.5 },
+        prop: { ghost: 1 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- heavy */
+  {
+    id: 'anvil',
+    label: 'ANVIL',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '60 dmg in one slow bolt · double damage for 40% less speed. You watch it travel, and so does the target.',
+    character: 'heavy — struck metal, no decay worth speaking of',
+    base: stats({ interval: 1.5, count: 1, damage: 30, speed: 900 }),
+    props: { heavy: 2 },
+    steps: [
+      {
+        note: '96 dmg · the weight goes to x2.4, which takes the speed down with it. One bolt kills most things outright',
+        mul: { damage: 1.33 },
+        prop: { heavy: 2.4 },
+      },
+      {
+        note: '176 dmg x2 · two of them, at x2.75 weight. Slower than anything else in the game and it does not matter',
+        add: { count: 1 },
+        mul: { damage: 1.6 },
+        prop: { heavy: 2.75 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- erode */
+  {
+    id: 'gravel',
+    label: 'GRAVEL',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '36 dmg on the first body, then 40% less on each one after, down to a floor of 18. It never stops travelling.',
+    character: 'heavy — grit dragged over a drum head',
+    base: stats({ interval: 1.0, count: 1, damage: 36, speed: 700, range: 760, pierce: 99 }),
+    props: { erode: 0.4, erodeFloor: 0.5 },
+    steps: [
+      {
+        note: '50 dmg, wearing down 32% a body · the stone keeps more of itself, so the fourth target still feels it',
+        mul: { damage: 1.4 },
+        prop: { erode: 0.32, erodeFloor: 0.5 },
+      },
+      {
+        note: '70 dmg x2, wearing 25% a body and never below 60% · two stones through a column is eight or ten hits',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { erode: 0.25, erodeFloor: 0.6 },
+      },
+    ],
+  },
+  /* ---------------------------------------------------------------- dark */
+  {
+    id: 'nocturne',
+    label: 'NOCTURNE',
+    shape: 'seek',
+    weight: 0.85,
+    blurb: '120 dmg in one bolt · triple damage, and the weapon goes silent for 3s the moment it lands.',
+    character: 'mournful — a low held tone, nothing above it',
+    base: stats({ interval: 0.6, count: 1, damage: 40, speed: 950, range: 780 }),
+    props: { dark: 3, darkCooldown: 3 },
+    steps: [
+      {
+        note: '198 dmg · x3.3 weight and the silence drops to 2.4s. A miss now costs you noticeably less',
+        mul: { damage: 1.65 },
+        prop: { dark: 3.3, darkCooldown: 2.4 },
+      },
+      {
+        note: '396 dmg x2 · two bolts at x3.6, silent for 1.8s after. The largest single number in the game',
+        add: { count: 1 },
+        mul: { damage: 1.83 },
+        prop: { dark: 3.6, darkCooldown: 1.8 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- blind */
+  {
+    id: 'nova',
+    label: 'GLARE',
+    shape: 'aura',
+    beat: 'halfbar',
+    swell: 'danger',
+    weight: 0.9,
+    blurb: '44 dmg in a ring on the beat · blinds for 3s, and a blinded enemy misses half of what it throws.',
+    character: 'aggressive — a hard flash of white noise',
+    base: stats({ interval: 0.6, count: 1, damage: 44, area: 210, linger: 0.25 }),
+    props: { blind: 0.55 },
+    steps: [
+      {
+        note: '62 dmg, half again as wide · 75% of what the ring touches is blinded rather than half of it',
+        mul: { damage: 1.4, area: 1.45 },
+        prop: { blind: 0.75 },
+      },
+      {
+        note: '99 dmg in two rings that hang before fading · everything caught is blinded, with no roll at all',
+        add: { count: 1 },
+        mul: { damage: 1.6, linger: 2.2 },
+        prop: { blind: 1 },
+      },
+    ],
+  },
+  /* ---------------------------------------------------------------- hold */
+  {
+    id: 'blackhole',
+    label: 'FERMATA',
+    shape: 'field',
+    weight: 0.85,
+    blurb: '40 dmg over 8s in a 190px snare · everything standing in it is held fast, and takes 25% more while it is.',
+    character: 'eerie — one chord, suspended, refusing to resolve',
+    base: stats({ interval: 4.0, count: 1, damage: 40, area: 190, linger: 8 }),
+    props: { hold: 0.6 },
+    steps: [
+      {
+        note: 'a 240px snare lasting 12s · the hold clings for 0.9s after a shape walks out of it',
+        mul: { area: 1.26, linger: 1.5, damage: 1.4 },
+        prop: { hold: 0.9 },
+      },
+      {
+        note: 'two snares, 16s each · with the interval down to 3s you can have three of them on the field at once',
+        add: { count: 1 },
+        mul: { linger: 1.33, damage: 1.5, interval: 0.75 },
+        prop: { hold: 1.2 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- leech */
+  {
+    id: 'siphon',
+    label: 'SIPHON',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '6 dmg x2, quick · 5% of hits give you a point of health back. The only weapon that pays you.',
+    character: 'mournful — a slow drawn breath in',
+    base: stats({ interval: 0.34, count: 2, damage: 6, speed: 900, range: 600 }),
+    props: { leech: 0.05 },
+    steps: [
+      {
+        note: '8 dmg x3 · 8% of hits heal. Three bolts a third of a second means the roll comes round constantly',
+        add: { count: 1 },
+        mul: { damage: 1.35 },
+        prop: { leech: 0.08 },
+      },
+      {
+        note: '12 dmg x4 · 12% of hits heal. Against a full screen this out-heals most of what the screen does to you',
+        add: { count: 1 },
+        mul: { damage: 1.5 },
+        prop: { leech: 0.12 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- split */
+  {
+    id: 'echoes',
+    label: 'CANON',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '18 dmg · every bolt splits off a clone of itself where it lands, twice. One shot becomes three.',
+    character: 'shimmering — the same figure entering late',
+    base: stats({ interval: 0.9, count: 1, damage: 18, speed: 880, range: 700 }),
+    props: { split: 2 },
+    steps: [
+      {
+        note: '25 dmg, splitting three times · one bolt into a crowd leaves four travelling out of it',
+        mul: { damage: 1.4 },
+        prop: { split: 3 },
+      },
+      {
+        note: '35 dmg x2, splitting four times · two bolts in, ten out. The screen fills with your own answer',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { split: 4 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- burst */
+  {
+    id: 'harp',
+    label: 'TUTTI',
+    shape: 'seek',
+    weight: 0.9,
+    blurb: '34 dmg · scatters 3 lesser bolts where it lands, at most once every 3s. The whole band answers at once.',
+    character: 'shimmering — everyone in, on the same beat',
+    base: stats({ interval: 1.6, count: 1, damage: 34, speed: 860, range: 660 }),
+    props: { burst: 3 },
+    steps: [
+      {
+        note: '48 dmg · four lesser bolts a burst instead of three, and they carry a third of the parent’s hit',
+        mul: { damage: 1.4 },
+        prop: { burst: 4 },
+      },
+      {
+        note: '67 dmg x2 · six lesser bolts a burst, from either parent. A single activation puts fourteen shots out',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { burst: 6 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- brood */
+  {
+    id: 'drones',
+    label: 'ENSEMBLE',
+    shape: 'orbit',
+    weight: 0.9,
+    blurb: '9 dmg a shot from 2 circling pods · 25% of hits send out a helper that hunts on its own for 4s.',
+    character: 'eerie — a pedal tone that will not go away',
+    // No `linger`: `firePods` does not read it (`tools/deadhunt-ranges.mjs`
+    // reports it as a dead stat), and the helper's lifetime is
+    // `World.BROOD_LIFE` because a helper is a PROPERTY's output rather than
+    // this instrument's geometry.
+    base: stats({ interval: 0.5, count: 2, damage: 9, area: 78, speed: 900, range: 620 }),
+    props: { brood: 0.25 },
+    steps: [
+      {
+        note: '13 dmg from 3 pods on a wider ring · 35% of hits send a helper instead of a quarter of them',
+        add: { count: 1 },
+        mul: { damage: 1.45, area: 1.3 },
+        prop: { brood: 0.35 },
+      },
+      {
+        note: '19 dmg from 4 pods · half of every hit sends a helper. The screen is more yours than theirs',
+        add: { count: 1 },
+        mul: { damage: 1.45 },
+        prop: { brood: 0.5 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- quake */
+  {
+    id: 'timpani',
+    label: 'TIMPANI',
+    shape: 'strike',
+    beat: 'bar',
+    swell: 'silence',
+    weight: 0.9,
+    blurb: '30 dmg where it lands on the downbeat · and 40 more to everything within 200px. Hardest out of silence.',
+    character: 'heavy — a struck head, all body and no edge',
+    base: stats({ interval: 0.9, count: 1, damage: 30, area: 120, range: 560 }),
+    props: { quake: 40, quakeRadius: 200 },
+    steps: [
+      {
+        note: 'two strikes a bar, 42 each · the shock behind them reaches 260px and hits for 62',
+        add: { count: 1 },
+        mul: { damage: 1.4, area: 1.2 },
+        prop: { quake: 62, quakeRadius: 260 },
+      },
+      {
+        note: 'three strikes, on the one and the three · 59 each, with a 330px shock hitting for 96 behind every one',
+        beat: 'halfbar',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { quake: 96, quakeRadius: 330 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- accel */
+  {
+    id: 'accelerando',
+    label: 'ACCELERANDO',
+    shape: 'arc',
+    weight: 0.9,
+    blurb: '10 dmg x2 thrown off the walls · every wall a bolt comes off makes it 25% faster, and it keeps them.',
+    character: 'mechanical — a click track pulling ahead',
+    base: stats({ interval: 0.7, count: 2, damage: 10, arc: 0.5, speed: 620, bounces: 6 }),
+    props: { accel: 0.25 },
+    steps: [
+      {
+        note: '14 dmg x3, bouncing 9 times · each wall now adds 35%, so a corner shot comes back through you very fast',
+        add: { count: 1, bounces: 3 },
+        mul: { damage: 1.4 },
+        prop: { accel: 0.35 },
+      },
+      {
+        note: '20 dmg x4, bouncing 13 times at +45% a wall · the arena fills with your own ricochets and they never slow',
+        add: { count: 1, bounces: 4 },
+        mul: { damage: 1.4 },
+        prop: { accel: 0.45 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- lance */
+  {
+    id: 'bow',
+    label: 'LANCE',
+    shape: 'seek',
+    weight: 0.95,
+    blurb: '10 dmg · and 22 to everything on a 420px line straight through what it hits. Line them up.',
+    character: 'aggressive — one thin sustained edge',
+    base: stats({ interval: 0.9, count: 1, damage: 10, speed: 1300, range: 900 }),
+    props: { lance: 22, lanceRange: 420 },
+    steps: [
+      {
+        note: '14 dmg · the line carries 32 and reaches 540px. Against a column this is the highest damage in the game',
+        mul: { damage: 1.4 },
+        prop: { lance: 32, lanceRange: 540 },
+      },
+      {
+        note: '20 dmg x2 · two lines, 46 each, reaching 680px. Two shots can cut a wave in half twice over',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { lance: 46, lanceRange: 680 },
+      },
+    ],
+  },
+  /* --------------------------------------------------------------- charm */
+  {
+    id: 'charm',
+    label: 'DUET',
+    shape: 'seek',
+    weight: 0.85,
+    blurb: '12 dmg · 5% of hits turn a shape against its own side for 5s. It fights for you and cannot touch you.',
+    character: 'shimmering — two voices agreeing for once',
+    base: stats({ interval: 0.4, count: 1, damage: 12, speed: 950, range: 620 }),
+    props: { charm: 0.05 },
+    steps: [
+      {
+        note: '17 dmg x2 · 8% of hits charm, and twice the bolts is twice the rolls. Expect one turncoat at all times',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { charm: 0.08 },
+      },
+      {
+        note: '24 dmg x3 · 12% of hits charm. On a full screen you are running a second wave against the first',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { charm: 0.12 },
       },
     ],
   },
 
-  /* -------------------------------------------------------------------- *
-   * Fusions. Never offered; only earned. `steps` is empty because a fusion
-   * arrives finished — its whole point is that it is not on a ladder.
-   * -------------------------------------------------------------------- */
-
+  /* ------------------------------------------------------------------ *
+   * THE RESULTS — twenty-one evolutions and two unions.
+   *
+   * Never drafted: `progression.ts` skips `def.fused` when it builds the pool,
+   * so every row below is free in offer terms (AGENTS.md §5). They are seated
+   * at `FUSED_MAX_LEVEL` on arrival and carry no steps.
+   *
+   * TWENTY-ONE BECAUSE THERE ARE TWENTY BASES. `tools/levelup.mjs` fails any
+   * instrument with no evolution — "a dead end to commit to" — so the recipe
+   * count follows the roster size rather than taste. RASP branches, which is
+   * the one place a base has two endings.
+   *
+   * SIX OF THEM EXIST TO KEEP A SHAPE ALIVE. INTERLUDE (`rest`), ADAGIO
+   * (`drag`), REVENANT (`ghost`), FUGUE (`counterpoint`), MAESTRO (`unison`)
+   * and SORDINO (`tacet`) are `docs/plan-items-v2.md`'s second axis — items
+   * that change a rule rather than where a hitbox appears. None of the twenty
+   * property weapons is one, so without these rows six working shapes and the
+   * `tools/builds.mjs` spread they produce would have gone dark. Their stat
+   * blocks are the previous roster's, lifted rather than re-derived.
+   * ------------------------------------------------------------------ */
   {
     id: 'spiccato',
     label: 'SPICCATO',
     shape: 'seek',
     fused: true,
     weight: 0,
-    blurb: 'The bolts stop stopping. They skip off everything and keep going.',
-    character: 'aggressive — bouncing bow, dry ricochet',
-    base: stats({ interval: 0.1, count: 7, damage: 9, speed: 1500, pierce: 3, bounces: 2, range: 1100 }),
+    blurb: '9 dmg x9 · 3 bleed stacks a hit, and the bolts come off the walls twice.',
+    character: 'aggressive — bounced bow, very short',
+    base: stats({ interval: 0.15, count: 9, damage: 9, speed: 1500, pierce: 3, bounces: 2, range: 900 }),
+    props: { bleed: 5, bleedStack: 3 },
     steps: [],
   },
   {
-    /*
-     * PIZZICATO'S SECOND ENDING, and the first branch in the tree.
-     *
-     * Every other evolution in this table is the only one its base has. Twelve
-     * instruments, twelve evolutions, one catalyst each — so choosing an
-     * instrument chose its ending too, and the only open question was whether
-     * that one catalyst ever came up. That is a lookup, not a decision, and it
-     * is the half of "the concept of mixing weapons together isn't really
-     * there" that survives every other system working correctly.
-     *
-     * A branch costs nothing the offer pool cares about, which is why this is
-     * the shape the fix takes. `compressor` already exists — it is BLACKHOLE's
-     * catalyst — so no thirteenth rig item is added and the deliberate 12x12
-     * survives. The result is `fused`, and `availableOptions` skips fused defs
-     * outright, so it is never drafted and occupies no card slot. Nothing is
-     * added to a four-card offer; an existing card simply becomes worth more,
-     * which is the only way out of the zero-sum trap this project has found.
-     *
-     * The decision is real because `applyFusion` deletes the base. Hold
-     * PIZZICATO at its ceiling with both CAPO and COMPRESSOR maxed and both cards are on
-     * the table; take either and the base is spent, so the other is gone for
-     * the run. That is the Ball x Pit shape — commit, and the commitment costs
-     * you the alternative.
-     *
-     * IT IS A SIDEGRADE ON PURPOSE, and deliberately not an arc. HARP already
-     * owns the fan-of-bolts territory and CROSSSTRUNG is its 360-degree
-     * ending; giving PIZZICATO an arc would blur two roster lines into one,
-     * which is the objection that killed the RICOCHET rig item. So both
-     * branches stay `seek` and split on stat philosophy instead. SPICCATO is
-     * seven fast light bolts that bounce — it clears crowds. This is one heavy
-     * bolt that goes through things — 375 dmg/s on a single target against
-     * SPICCATO's 630, and far more than that through a line. Trading raw
-     * single-target damage for penetration is a direction, and it is the
-     * direction SPICCATO cannot go.
-     *
-     * The name is real technique: Bartok pizzicato, the snap where the string
-     * is pulled clear of the fingerboard and slaps back against it. The
-     * loudest sound a plucked string can make, and a percussive one.
-     *
-     * BALANCE IS GATE-CHECKED, NOT PLAYTESTED. `tools/combine.mjs` asserts a
-     * committed build still beats a fusion-ignoring control, and
-     * `tools/builds.mjs` asserts the pick still moves the outcome. Read those
-     * numbers rather than these; nobody has played this.
-     */
     id: 'snap',
     label: 'SNAP',
     shape: 'seek',
     fused: true,
     weight: 0,
-    blurb: 'One bolt, pulled clear and let go. It goes through whatever is in the way.',
-    character: 'aggressive — Bartok snap, string against fingerboard',
-    base: stats({ interval: 0.28, count: 1, damage: 105, speed: 2200, pierce: 6, range: 1400 }),
+    /*
+     * THE ONE WEAPON IN THE TABLE THAT CARRIES NO PROPERTY, DELIBERATELY.
+     *
+     * Two reasons, and the second is why it is written down. `levelup.mjs`
+     * refuses a rig where every passive is a rule, on the grounds that an
+     * ecosystem in which everything is special is as flat as one in which
+     * nothing is; the same argument applies here, and a single enormous
+     * unadorned bolt is the baseline every property reads as a departure from.
+     *
+     * And it is `tools/propfire.mjs`' CONTROL. That check's whole weight rests
+     * on a run that produces every moment — hits, kills, volleys, bounces —
+     * and fires no property at all, because without one a counter incremented
+     * one line too high would pass every other row for free. A property-free
+     * weapon that still kills things is the only way to build that run without
+     * the tool reaching in and mutating the table it is auditing.
+     *
+     * It is a FUSION RESULT, so it is never drafted: the rule that every
+     * DRAFTABLE instrument carries a property is not weakened by this row.
+     */
+    blurb: '96 dmg in one enormous pluck · no effect at all, and it punches through five.',
+    character: 'aggressive — a string pulled clear and let go',
+    base: stats({ interval: 1.15, count: 1, damage: 96, speed: 1750, pierce: 5, range: 1000 }),
     steps: [],
   },
   {
@@ -1852,222 +1636,58 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     shape: 'arc',
     fused: true,
     weight: 0,
-    blurb: 'Sweeps front and back with no gap between them, forever.',
-    character: 'aggressive — relentless, mechanical, no gaps',
-    base: stats({ interval: 0.16, count: 4, damage: 22, area: 190, arc: 2.6, range: 190 }),
+    blurb: '26 dmg a stroke, six strokes around the compass · everything caught is slowed 60%.',
+    character: 'mechanical — a blast beat, relentless',
+    base: stats({ interval: 0.26, count: 6, damage: 26, area: 210, arc: 2.4, range: 240 }),
+    props: { slow: 0.6 },
     steps: [],
   },
   {
     id: 'harmonics',
     label: 'HARMONICS',
-    /*
-     * ROSIN BOW's ending, and it moves with it. `bow + laser -> harmonics` has
-     * LASER as its literal catalyst and "Three parallel beams, held" as its
-     * literal blurb, so this is the one row in the table where the recipe, the
-     * catalyst and the text all named the same shape and the field disagreed
-     * with all three.
-     *
-     * Stat block untouched, for the reason given at ROSIN BOW: `fireLance`
-     * delivers `damage / interval` to a target in the line, which is exactly
-     * what `fireBeam`'s overlapping generations delivered. `count: 3` stops
-     * being three strokes at 0, 120 and 240 degrees and becomes the three
-     * parallel lines the blurb has always claimed.
-     *
-     * `harmonics + crossstrung -> stringsection` still changes the verb —
-     * `lance -> arc` where it used to be `beam -> arc` — so the one union that
-     * was already earning its shape change keeps earning it.
-     */
     shape: 'lance',
     fused: true,
     weight: 0,
-    blurb: 'Three parallel beams, held. Nothing crosses them twice.',
-    character: 'shimmering — a glassy overtone stack above the fundamental',
-    base: stats({ interval: 0.9, count: 3, damage: 20, area: 14, pierce: 99, linger: 1.6, range: 900 }),
+    blurb: '46 dmg/s in three parallel held beams · 55% slow on anything standing in them.',
+    character: 'mournful — flageolet tones, glassy',
+    base: stats({ interval: 0.46, count: 3, damage: 21, area: 15, linger: 0.9, range: 780 }),
+    props: { slow: 0.55 },
     steps: [],
   },
   {
     id: 'carillon',
     label: 'CARILLON',
-    /*
-     * THE SEVENTH RE-POINT, AND `docs/research-weapons.md` §D.3 CALLS IT THE
-     * HIGHEST-VALUE ONE AVAILABLE. The blurb below is verbatim "Every strike
-     * chains to two more" and `fireStrike` picked its targets AT RANDOM. There
-     * was no chain, and the `FUSIONS` preamble has said so in as many words.
-     *
-     * It also fixes what the recipe is FOR. `chime + resonance -> carillon` was
-     * `strike -> strike`: the evolution bought a bigger bell, and this file's
-     * own header rule is that a fusion must change the verb. It changes it now.
-     *
-     * CHIME DOES NOT MOVE. `strike` was split out of `seek` for the bell family
-     * and the preamble's "Rejected on the census" bullet refuses to move CHIME
-     * itself; this moves CHIME's EVOLUTION, which is a different row and the
-     * one the blurb was written on.
-     *
-     * `area: 60 -> 170` IS A RE-TUNE AND NOT THE BUFF IT LOOKS LIKE. On
-     * `strike` it was the blast radius around each landing; on `chain` it is
-     * how far a hop can REACH for the next body, which is a different unit.
-     * 60px between two enemy centres is inside contact range for a pair of 15px
-     * shapes, so a 60px hop radius would have stopped the chain at one body on
-     * every wave that was not a pile-up — the shape would have existed and
-     * never fired past its first hop. 170 is a little over a typical two-shape
-     * gap in a formation, which is what makes density the thing the weapon
-     * reads.
-     *
-     * `pierce: 3` IS DELETED, and it was already dead: `strike` did not read it
-     * either, so `deadhunt-ranges` printed `DEAD carillon.pierce=3 (set,
-     * static)` before this change. Same call CROSS-STRUNG's `pierce: 2` got —
-     * a stat kept and unread is the defect this whole audit exists to remove.
-     *
-     * POWER. Nominal `damage x count / interval` is 300 before and after. Real
-     * output falls: five flat 30s become 30 + 25.5 + 21.7 + 18.4 + 15.7 = 111
-     * at the 0.85 falloff, against five strikes that could each catch a second
-     * shape in their circle. The compensation is that every hop lands on a
-     * DISTINCT live body where five random strikes can and routinely do land on
-     * the same one — the case `fireStrike`'s own comment admits it chose.
-     */
-    shape: 'chain',
+    shape: 'strike',
     fused: true,
     weight: 0,
-    blurb: 'Every strike chains to two more. The ringing does not stop.',
+    blurb: '34 dmg a strike, four of them · each arcs to 5 more for 26, and 18% of hits freeze.',
     character: 'shimmering — bells chaining into each other',
-    base: stats({ interval: 0.5, count: 5, damage: 30, area: 170, range: 900 }),
+    base: stats({ interval: 0.55, count: 4, damage: 34, area: 170, range: 900 }),
+    props: { chain: 5, chainDamage: 26, freeze: 0.18 },
     steps: [],
   },
   {
     id: 'crossstrung',
     label: 'CROSS-STRUNG',
-    /*
-     * THE FIFTH SHAPE RE-POINT, AND IT IS A REPAIR RATHER THAN A NEW IDEA.
-     *
-     * "A full circle of strings, swept continuously" already described a
-     * rotating pattern, and `fireArc`'s travelling branch could not produce
-     * one: it lays `count` bolts across `arc` centred on the aim and does it
-     * again, identically, every interval. At `arc: 6.28` that is the same
-     * twenty spokes redrawn in the same twenty places forever. Nothing swept.
-     *
-     * `spray` precesses the volley by `arc / count` each activation, so
-     * consecutive volleys interleave and the field turns — and it forwards
-     * `bounces`, so the pattern comes back off the walls through where you were
-     * standing. That is the "more fun with projectiles" the owner asked for and
-     * it is the only shape in the table that gives the player a PATTERN rather
-     * than a volley.
-     *
-     * `pierce: 2` IS DELETED, AND IT IS A NERF. `spray` deliberately does not
-     * read `pierce`, because a bolt consumed on contact is what keeps the live
-     * count bounded and this is the one shape in the catalogue whose budget is
-     * real — `docs/MASTER_PLAN.md` G4 already records this instrument silently
-     * hitting `MAX_PLAYER_BULLETS`. Keeping the stat and not reading it would
-     * have printed `crossstrung.pierce=2 (set, static)` in `deadhunt-ranges`;
-     * keeping the stat and reading it would have made every one of ~90 live
-     * bolts immortal. So it goes, the way VIBRATO's `speed` went, and the loss
-     * is real: these bolts now stop at the first thing they hit.
-     *
-     * POWER, on the same nominal `damage x count / interval` the other
-     * re-points were argued on: 10 x 20 / 0.34 = 588 before, 14.28 x 14 / 0.34
-     * = 588 after. Exactly neutral on that metric and a genuine reduction in
-     * play, because the pierce is gone. That is deliberate — it is the price of
-     * a bounded budget — and `tools/arena.mjs` and `tools/builds.mjs` are where
-     * it should be read rather than here.
-     *
-     * BUDGET, WHICH IS THE WHOLE REASON THIS ROW IS ANNOTATED AT LENGTH, AND
-     * IT WAS TUNED AGAINST A MEASUREMENT RATHER THAN AGAINST THE ARITHMETIC.
-     *
-     * `count` 14 plus SPREAD's 3 is 17 bolts per volley; `range / speed` is
-     * invariant under CAPO, because `applyModifiers` scales `range` by the same
-     * multiplier it scales `speed` by, so the life is a fixed 1.15s; the floor
-     * interval is 0.34 x RAPID's 0.62 = 0.211s. That says 5.5 overlapping
-     * generations and 93 bolts in flight.
-     *
-     * The arithmetic UNDERSTATES it by about 13% and the first cut of this row
-     * was written against the arithmetic. At `interval: 0.3` the live count
-     * measured 119 — over the 90-107 `docs/research-weapons.md` §D.7 budgeted —
-     * so the interval went back to CROSS-STRUNG's original 0.34 and `damage`
-     * was re-derived to hold nominal at 588. `tools/_shapecount.mjs` runs the
-     * real `World.update` with this instrument alone at max and the whole rig
-     * at max, which is the number to trust; do not re-tune this row off the
-     * paragraph above without re-running it.
-     *
-     * `MAX_PLAYER_BULLETS` moved 400 -> 700 in the same change, and that was
-     * not precautionary: `deadhunt-ranges` recorded the 400 cap saturating in a
-     * full-loadout run before this change and 473 live bullets with 0 overflow
-     * after it.
-     */
-    shape: 'spray',
+    shape: 'arc',
     fused: true,
     weight: 0,
-    blurb: 'A full circle of strings, swept continuously, ringing off every wall.',
-    character: 'shimmering — a full 360-degree cascade',
-    base: stats({ interval: 0.34, count: 14, damage: 14.28, arc: 6.28, speed: 820, bounces: 3, range: 900 }),
+    blurb: '15 dmg x14 in a bouncing fan · 5 burst bolts wherever one lands.',
+    character: 'shimmering — a harp strung both ways at once',
+    base: stats({ interval: 0.34, count: 14, damage: 15, arc: 6.28, speed: 820, bounces: 3, range: 900 }),
+    props: { burst: 5 },
     steps: [],
   },
   {
     id: 'chorale',
     label: 'CHORALE',
-    /*
-     * THE SHAPE CHANGED HERE, AND THE BLURB IS THE EVIDENCE.
-     *
-     * This was `orbit` — the same shape as DRONE PODS — so the evolution was a
-     * rename and a stat bump, which is the defect the file header at the top of
-     * this file promises does not exist ("a different verb, not a bigger
-     * number"). Measured, 13 of the 15 recipes in `FUSIONS` produced a result
-     * with their base's shape; this is one of the two that moved.
-     *
-     * FOUR INDEPENDENT THINGS SAY `beam`, and none of them is taste:
-     *
-     *   1. **The blurb already said so.** "…sustaining BEAMS between them." It
-     *      has said so since the row was written. Nothing but the `shape` field
-     *      disagreed.
-     *   2. **The catalyst's stat was dead.** FERMATA is this recipe's catalyst
-     *      and FERMATA moves `linger`; `firePods` does not read `linger`.
-     *      `tools/deadhunt-ranges.mjs` printed exactly that — `DEAD
-     *      chorale.linger=1 (set, static)` under `orbit`. `fireBeam` reads
-     *      `linger` as the beam's life, so the catalyst now buys something.
-     *   3. **The one per-shape floor in the whole simulation that BITES was
-     *      this row.** Same tool: `firePods Math.max(200, s.speed) … BITES for
-     *      chorale`, because CHORALE declared `speed: 0` and pods have to fire
-     *      a bullet at *some* speed. `world.ts`'s own comment on that floor
-     *      says the quiet part: "the `orbit` shape has no input that could
-     *      express 'the satellites stop moving', and CHORALE's stated identity
-     *      cannot currently be built out of the stats it has." A held beam has
-     *      no travel speed, so the contradiction dissolves rather than being
-     *      papered over with a hand-picked bullet speed.
-     *   4. **`character` is "a sustained four-part choir with no attack."** A
-     *      held beam is the only shape in the table with no attack transient.
-     *
-     * WHAT IT COSTS, said plainly: DRONE PODS' pods each eat one bullet, and
-     * that defence is a property of the `orbit` shape, not of the stat block.
-     * Evolving now gives it up. That is deliberate — Ball x Pit's Black Hole
-     * one-shots and then destroys itself, and an evolution that only adds is
-     * the thing this change exists to stop — but it does mean `orbit` has no
-     * authored ending any more. It is not gone from built runs: DRONE PODS
-     * itself is draftable all run, and any duet with drones as parent A is
-     * still an orbit. Giving some OTHER evolution the `orbit` shape to fill the
-     * hole was considered and rejected; see the note above `FUSIONS`.
-     *
-     * TUNED TO BE POWER-NEUTRAL ON BOTH METRICS, so the shape change can be
-     * measured on its own. Nominal `damage x count / interval` is 360, exactly
-     * what the `orbit` block produced. And because a beam's `dps` is
-     * `damage / life` while `life / interval` generations overlap, a target
-     * standing in one spoke takes `damage / interval` = 60/s — which is also
-     * what six pods firing 12-damage bullets outward every 0.2s delivered to a
-     * single target, since only about one pod in six was ever pointing at it.
-     * `area` came down 120 -> 18 because on `orbit` it was the ORBIT radius and
-     * on `beam` it is the beam's half-width; 120 would have been a 240px-thick
-     * beam. `pierce: 99` is gone: `fireBeam` ignores `pierce` (it damages
-     * everything along its length anyway), and BOW and HARMONICS already carry
-     * that dead stat — a third copy is not worth the tidiness.
-     *
-     * FERMATA still does something, and it is coverage rather than power: a
-     * longer life means more overlapping generations at more aim angles, while
-     * `damage / interval` is unchanged. That is the same power-neutral shape as
-     * the `pushField` count repair in `world.ts`, and for the same reason.
-     */
-    shape: 'beam',
+    shape: 'orbit',
     fused: true,
     weight: 0,
-    blurb: 'The pods stop circling and hold station, sustaining beams between them.',
-    character: 'mournful — a sustained four-part choir with no attack',
-    base: stats({ interval: 0.5, count: 6, damage: 30, area: 18, linger: 0.9, range: 700 }),
+    blurb: '30 dmg from six pods holding station · 60% of hits send a helper out to hunt.',
+    character: 'mournful — a chorale, four parts, held',
+    base: stats({ interval: 0.4, count: 6, damage: 30, area: 150, speed: 640, range: 700 }),
+    props: { brood: 0.6 },
     steps: [],
   },
   {
@@ -2076,9 +1696,10 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     shape: 'aura',
     fused: true,
     weight: 0,
-    blurb: 'The ring reaches the walls every bar and leaves the room ringing.',
-    character: 'heavy — enormous, ceremonial, drenched in room',
-    base: stats({ interval: 0.95, count: 3, damage: 26, area: 420, linger: 1.4 }),
+    blurb: '130 dmg in a 520px ring that hangs · everything inside is blinded outright.',
+    character: 'mournful — a vast slow room',
+    base: stats({ interval: 1.1, count: 2, damage: 130, area: 520, linger: 0.8 }),
+    props: { blind: 1 },
     steps: [],
   },
   {
@@ -2087,235 +1708,159 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     shape: 'field',
     fused: true,
     weight: 0,
-    blurb: 'The well collapses on the beat and everything inside it goes with it.',
-    character: 'heavy — a sub collapse landing exactly on the one',
-    base: stats({ interval: 2.4, count: 2, damage: 90, area: 260, linger: 3.2 }),
+    blurb: '220 dmg well, thrown, that eats bullets · and holds whatever falls into it.',
+    character: 'heavy — the one, landed on hard',
+    base: stats({ interval: 6.5, count: 2, damage: 220, area: 330, linger: 5 }),
+    props: { hold: 1.2 },
     steps: [],
   },
   {
     id: 'wallofsound',
     label: 'WALL OF SOUND',
-    /*
-     * FEEDBACK's ending, and it moves with it. Two of the seven auras leave in
-     * one recipe, which is why this pair was picked over any other.
-     *
-     * POWER-NEUTRAL EXACTLY. `damage x count / interval` was 16 x 1 / 0.1 =
-     * 160; it is 4 x 16 / 0.4 = 160. `area: 190` and `linger: 0.8` are deleted
-     * for the reason given at FEEDBACK — `cone` reads neither, and a stat left
-     * set on a shape that cannot read it is this repository's signature defect.
-     *
-     * THE BLURB IS REWRITTEN AND THIS IS A RETREAT, SAID PLAINLY. "The field
-     * grows with your speed" is on the `FUSIONS` preamble's list of prose the
-     * simulation does not deliver, and `docs/research-weapons.md` §D.4 argues
-     * that a cone "finally has an axis to grow along". It does — and it is not
-     * implemented here. No `InstrumentStats` field expresses player speed and
-     * no routine reads it, so scaling the cone by how fast the ship is moving
-     * would be a hidden multiplier with no dial and no dead-stat audit row,
-     * which is worse than an unkept promise. The text now says what the
-     * simulation does. Whoever implements the speed term should put the
-     * sentence back.
-     *
-     * BUDGET. `count` 16 plus SPREAD's 3 is 19 pellets, alive for
-     * `range / speed x 1.05` = 0.24s, against a floor interval of 0.4 x RAPID's
-     * 0.62 = 0.248s — so under one generation. `tools/_shapecount.mjs` runs
-     * this instrument alone at max with the whole rig at max and measures
-     * exactly 19, against the 16 `docs/research-weapons.md` §D.4 budgeted.
-     * FEEDBACK's ceiling lands a frame the other side of the same line and
-     * measures 30; see `fireCone` for why.
-     */
-    shape: 'cone',
+    shape: 'arc',
     fused: true,
     weight: 0,
-    blurb: 'A wall of blast out of the front. Nothing survives being driven into.',
-    character: 'aggressive — total, saturated, everything at once',
-    base: stats({ interval: 0.4, count: 16, damage: 4, arc: 1.7, speed: 1000, range: 230 }),
+    blurb: '22 dmg x16 at close range · every hit sets two burn stacks at 16/s.',
+    character: 'aggressive — a wall of amplifiers',
+    base: stats({ interval: 0.2, count: 16, damage: 22, arc: 1.5, speed: 980, range: 330 }),
+    props: { burn: 16, burnStack: 2 },
     steps: [],
   },
   {
     id: 'canon',
-    label: 'CANON',
+    label: 'STRETTO',
     shape: 'seek',
     fused: true,
     weight: 0,
-    blurb: 'Every bounce spawns a delayed copy of the bolt that made it.',
-    character: 'eerie — the same line entering late against itself',
-    base: stats({ interval: 0.42, count: 4, damage: 13, speed: 700, bounces: 8, pierce: 2, range: 2600 }),
+    blurb: '30 dmg x5 off the walls · splitting five times, and 40% faster off every wall.',
+    character: 'shimmering — entries stacked on top of each other',
+    base: stats({ interval: 0.42, count: 5, damage: 30, speed: 1150, bounces: 6, range: 1000 }),
+    props: { split: 5, accel: 0.4 },
     steps: [],
   },
   {
     id: 'tutti',
-    label: 'TUTTI',
-    /*
-     * THE EIGHTH RE-POINT, AND THE THIRD BLURB IN THIS CHANGE THE SIMULATION
-     * HAS NEVER DELIVERED.
-     *
-     * "Everything is pulled to the centre first, and then struck" is a
-     * telegraph that pulls followed by a landing. As an `aura` it was neither:
-     * `fireAura` expands a ring from the SHIP outward and pulls nothing —
-     * `Effect.pull` has no reader and `wells.pull` is reachable only through
-     * two hardcoded ids, which is exactly what the preamble's undelivered-prose
-     * heading records. `mortar` delivers both halves: `World.updateShells`
-     * drags what is under the landing point for the whole telegraph and then
-     * detonates there.
-     *
-     * It also stops being the fourth of five instruments describing itself as a
-     * very large ring. `weapons.ts` already refused a fourth aura on that
-     * ground; this takes `aura` from five members to four and hands the freed
-     * identity to the only shape in the game that hits past a crowd.
-     *
-     * TIMPANI ITSELF STAYS `aura`. The recipe is `timpani + magnet -> tutti`,
-     * so this is a fusion changing the verb, which is what a fusion is for.
-     *
-     * `area: 320 -> 180` IS A NERF AND IT IS THE HONEST DIRECTION. An aura's
-     * 320 is the radius a THIN ANNULUS sweeps out to — `updateNova` damages
-     * only within ±16px of the moving edge, so an enemy standing anywhere in
-     * that circle takes the ring's dps for the ~0.07s the edge is on top of it,
-     * about 6 of the 120 on the card. A mortar's radius is a FLAT DISC and
-     * everything inside it takes the full 120. Keeping 320 would have turned "a
-     * very large ring that mostly misses" into "120 damage to a third of the
-     * arena, twice every 1.9s", which is not a re-point, it is a new weapon
-     * wearing the old one's name. 180 is still the largest single blast in the
-     * table, and REQUIEM at 520 keeps the "fills the arena" line to itself.
-     *
-     * `range: 700` IS NEW because a lobbed shell needs a reach and an aura had
-     * no use for one; `fireAura` ignored `range` entirely, which is why REQUIEM
-     * still prints a DEAD row for its own 900. 700 is long enough that the back
-     * rank of a formation is inside it, which is the verb.
-     *
-     * `linger: 0.6` KEEPS ITS NUMBER AND CHANGES ITS JOB, from the ring's hang
-     * at full radius to the telegraph delay. 0.6s is long enough to read and to
-     * walk out of at any enemy speed in the table, and short enough that the
-     * shell is not a warning the player has already forgotten.
-     *
-     * POWER, on the nominal `damage x count / interval` the other re-points
-     * were argued on: 120 x 2 / 1.9 = 126 before and after — untouched, because
-     * none of the three stats in it moved. What moved is delivery, and it moved
-     * UP: see the annulus arithmetic above. `arena` and `builds` are where that
-     * is read, not this paragraph.
-     */
-    shape: 'mortar',
+    label: 'FORTISSIMO',
+    shape: 'strike',
     fused: true,
     weight: 0,
-    blurb: 'Everything is pulled to the centre first, and then struck.',
-    character: 'heavy — the whole orchestra on a single hit',
-    base: stats({ interval: 1.9, count: 2, damage: 120, area: 180, linger: 0.6, range: 700 }),
+    blurb: '90 dmg a strike, three of them · with a 400px shock behind each one for 120.',
+    character: 'heavy — everyone, as loud as they can',
+    base: stats({ interval: 1.1, count: 3, damage: 90, area: 200, range: 780 }),
+    props: { quake: 120, quakeRadius: 400 },
     steps: [],
   },
   {
     id: 'vibrato',
     label: 'VIBRATO',
-    /*
-     * THE SECOND SHAPE RE-POINT. `field` -> `strike`, and the tell was a stat
-     * the simulation never read.
-     *
-     * TREMOLO FIELD drops pools where you have been and they stay there.
-     * VIBRATO's whole blurb is "the pools go hunting" — and it was `field`, so
-     * the pools went on staying exactly where they were put. The row tried to
-     * say otherwise: it declared `speed: 190`, and `tools/deadhunt-ranges.mjs`
-     * printed `DEAD vibrato.speed=190 (set, static)`, because `fireField`
-     * ignores `speed`. A stat set to express the evolution's entire identity,
-     * read by nothing, is this repository's signature defect.
-     *
-     * `strike` is what "hunting" actually means here. `fireStrike` lands
-     * `count` hits per activation ON randomly chosen live enemies within
-     * `range`, each burning a circle of `area` around where it landed. That is
-     * a pool that appears where the enemies are instead of where you were —
-     * the same damage shape, relocated, which is the smallest change that makes
-     * the sentence true.
-     *
-     * `speed` is DELETED rather than moved, and this is the honest part:
-     * `fireStrike` ignores `speed` too. No shape in the table is "a pool that
-     * travels". The hunting is expressed by the targeting, not by a velocity,
-     * so the number goes rather than being carried to a second shape that also
-     * cannot read it. `linger: 5.5` goes for the same reason — a strike is
-     * instantaneous, and leaving it set would trade one dead stat for another.
-     * `range: 620` is new because a strike needs a reach and `fireField` had no
-     * use for one; 620 is short of CARILLON's 900 on purpose.
-     *
-     * NOMINAL POWER IS UNCHANGED at 96 (`damage x count / interval`) so the
-     * shape change is what gets measured. REAL delivery is not unchanged and
-     * saying so matters: on `field`, `pushField` splits one activation's damage
-     * across its pools and spreads it over `linger`, so a maxed TREMOLO put
-     * about 0.37 dps into each of a handful of wells. Nominal dps flatters
-     * `field` badly. This is therefore a genuine buff in play, not only a
-     * re-point, and `builds` / `combine` are the numbers that decide whether it
-     * is too much — not the nominal column.
-     *
-     * IT DOES NOT BLUR CHIME. `strike` now has two members and so do `seek`
-     * (three), `arc` (three) and `beam`; sharing a routine is not sharing a
-     * role. CARILLON is five tight 30-damage bells in a 60px circle out to
-     * 900px; this is four wide 12-damage washes in a 96px circle out to 620.
-     * Strong-and-narrow against weak-and-wide is the same axis SPICCATO and
-     * SNAP already split on.
-     *
-     * WHAT DID NOT WORK, AND NOW DOES. This entry used to read: "HOMING is this
-     * recipe's catalyst and `Modifiers.homing` steers PLAYER BULLETS
-     * (`world.ts`, `steerPlayerBullets`). A field spawns none and a strike
-     * spawns none, so the catalyst was inert before this change and is inert
-     * after it." That was true and it is the reason HOMING was re-pointed:
-     * `Rules.killEcho` fires on a KILL rather than on a bullet spawn, and a
-     * strike kills plenty. The catalyst of this recipe finally does something
-     * for the line it gates.
-     */
-    /*
-     * AND NOW `strike` -> `spawn`, WHICH IS THE SAME ROW MOVING TWICE. Stated
-     * up front because `docs/research-weapons.md` §D.9 asks for exactly that:
-     * "this re-points a row that was itself re-pointed one change ago, so it
-     * should be argued on `deadhunt-ranges` output the way that change was, not
-     * on taste."
-     *
-     * The argument above still holds in full and is left standing: `field` had
-     * no way to express "hunting" and `strike` was the closest of the seven
-     * shapes that existed. What it delivered was "the pool appears where the
-     * enemies are" — relocation, instantly, and then gone. What it could not
-     * deliver is the verb in the sentence: nothing persisted, so nothing hunted.
-     * A strike is an event; a hunt needs a thing that is still there next
-     * second.
-     *
-     * `spawn` is that thing, and the catalyst finally reads twice over: HOMING
-     * gates this recipe, `Rules.killEcho` already made it live at the kill, and
-     * now the result itself is four bodies that steer.
-     *
-     * WHAT MOVES IN THE STAT BLOCK, ALL THREE OF IT:
-     *
-     *   `speed: 300` COMES BACK. It was deleted in the last re-point with the
-     *   note "no shape in the table is a pool that travels", which was true
-     *   then and is the exact gap this shape fills. Not the original 190: that
-     *   number was never balanced against anything, because nothing ever read
-     *   it, and 190px/s is under the standoff speed of half the roster — an
-     *   ally that cannot close is a decoration. 300 closes on everything but a
-     *   diving shape.
-     *
-     *   `linger: 4` IS THE ALLY'S LIFETIME. Also deleted last time, for the
-     *   honest reason that a strike is instantaneous. Four seconds is long
-     *   enough to cross the arena twice and short enough that the retinue turns
-     *   over inside a wave rather than accumulating.
-     *
-     *   `area: 96` IS DELETED. `spawn` does not read it and neither did
-     *   `strike`'s replacement candidates — a summon is a body, not a field.
-     *   Left set it would have printed `DEAD vibrato.area=96 (set, static)`,
-     *   which is the same report that moved this row off `field` in the first
-     *   place, so leaving it would have been a joke at this file's expense.
-     *
-     * `count: 4` CHANGES MEANING AND NOT VALUE, from strikes per activation to
-     * the size of the standing retinue. `interval: 0.5` changes from "how often
-     * it strikes" to "how quickly a spent ally is replaced". `range: 620` is
-     * unchanged and still a reach — how far out an ally is dispatched.
-     *
-     * POWER. Nominal `damage x count / interval` is 96 before and after, and
-     * for once the nominal is close to honest: an ally is consumed by the body
-     * it reaches, so at most `count` of them can be spent and replaced per
-     * interval, which is the same throughput a strike had. It is worse in
-     * practice against anything far away — an ally has to fly there and a
-     * strike teleports — and better against a pack, because the ally that
-     * survives keeps hunting. `arena` and `builds` decide, not this paragraph.
-     */
-    shape: 'spawn',
+    shape: 'field',
     fused: true,
     weight: 0,
-    blurb: 'The pools go hunting.',
-    character: 'eerie — pitch wobbling as it hunts',
-    base: stats({ interval: 0.5, count: 4, damage: 12, speed: 300, linger: 4, range: 620 }),
+    blurb: '150 dmg in four pools · poison 14/s a stack on anything that stands in one.',
+    character: 'eerie — a wide, slow vibrato',
+    base: stats({ interval: 1.9, count: 4, damage: 150, area: 190, linger: 6 }),
+    props: { poison: 14, poisonStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'pyre',
+    label: 'PYRE',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '70 dmg in a ring twice a second · three burn stacks a hit at 22/s each.',
+    character: 'aggressive — a fire that has taken hold',
+    base: stats({ interval: 0.5, count: 1, damage: 70, area: 300, linger: 0.4 }),
+    props: { burn: 22, burnStack: 3 },
+    steps: [],
+  },
+  {
+    id: 'revenant',
+    label: 'REVENANT',
+    shape: 'ghost',
+    fused: true,
+    weight: 0,
+    blurb: 'The last four things you killed come back and fight for you, at 44 a hit.',
+    character: 'eerie — a voice from the other side of the room',
+    base: stats({ interval: 0.5, count: 4, damage: 44, speed: 420, linger: 8, range: 700 }),
+    props: { ghost: 1 },
+    steps: [],
+  },
+  {
+    id: 'maestro',
+    label: 'MAESTRO',
+    shape: 'unison',
+    fused: true,
+    weight: 0,
+    blurb: 'Your whole band fires together on the bar, at x1.5, with two extra shots each.',
+    character: 'heavy — the downbeat, conducted',
+    // `area` is unread by `fireUnison` and was a dead stat; see the shape.
+    base: stats({ interval: 1, count: 2, damage: 1.5 }),
+    props: { heavy: 1.2 },
+    steps: [],
+  },
+  {
+    id: 'sordino',
+    label: 'SORDINO',
+    shape: 'tacet',
+    fused: true,
+    weight: 0,
+    blurb: 'Two lanes of your own soundtrack go out; you get 220 dmg back when they return.',
+    character: 'eerie — the mute on, and then off',
+    base: stats({ interval: 1, count: 2, damage: 220, area: 380, linger: 2, range: 2 }),
+    props: { poison: 10, poisonStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'adagio',
+    label: 'ADAGIO',
+    shape: 'drag',
+    fused: true,
+    weight: 0,
+    blurb: 'Time crawls in a 400px bubble around you — at 55% — and your own guns with it.',
+    character: 'mournful — everything, slower',
+    // `count: 2` is what switches ENEMY FIRE into the bubble as well as
+    // bodies (`World.fireDrag`). At 1 the item slowed movement and left every
+    // bullet at full speed, and `tools/beatlock.mjs` read 0 drags over 225
+    // activations — the shape's whole identity, installed and never happening.
+    base: stats({ interval: 0.5, count: 2, damage: 0.55, area: 400, arc: 1.16, linger: 0.4 }),
+    props: { slow: 0.55 },
+    steps: [],
+  },
+  {
+    id: 'interlude',
+    label: 'INTERLUDE',
+    shape: 'rest',
+    fused: true,
+    weight: 0,
+    blurb: 'Two bars where nothing can touch you and your band stops playing. 300px sweep after.',
+    character: 'mournful — a rest, and then everyone back in',
+    base: stats({ interval: 15, count: 1, damage: 0, area: 300, linger: 2 }),
+    props: { leech: 0.4 },
+    steps: [],
+  },
+  {
+    id: 'fugue',
+    label: 'FUGUE',
+    shape: 'counterpoint',
+    fused: true,
+    weight: 0,
+    blurb: 'Every other instrument answers your first one, at 70% weight, with two extra shots.',
+    character: 'shimmering — a subject answered at the fifth',
+    base: stats({ interval: 0.18, count: 2, damage: 0.7 }),
+    props: { split: 1 },
+    steps: [],
+  },
+  {
+    id: 'consort',
+    label: 'CONSORT',
+    shape: 'orbit',
+    fused: true,
+    weight: 0,
+    blurb: '26 dmg from five pods · 22% of hits charm what they touch into fighting for you.',
+    character: 'shimmering — a consort of viols, all agreeing',
+    base: stats({ interval: 0.35, count: 5, damage: 26, area: 132, speed: 1000, range: 680 }),
+    props: { charm: 0.22 },
     steps: [],
   },
   {
@@ -2324,20 +1869,22 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     shape: 'aura',
     fused: true,
     weight: 0,
-    blurb: 'The choir and the room become one thing, and it fills the arena.',
-    character: 'mournful — vast and funereal; the ceiling of a run',
-    base: stats({ interval: 0.5, count: 6, damage: 44, area: 520, pierce: 99, linger: 2.4, range: 900 }),
+    blurb: '210 dmg in a 620px ring · blinds everything, and 30% of hits heal you.',
+    character: 'mournful — a requiem, the whole room singing',
+    base: stats({ interval: 0.85, count: 3, damage: 210, area: 620, linger: 1.1 }),
+    props: { blind: 1, leech: 0.3 },
     steps: [],
   },
   {
     id: 'stringsection',
     label: 'STRING SECTION',
-    shape: 'arc',
+    shape: 'lance',
     fused: true,
     weight: 0,
-    blurb: 'Massed beams sweeping the circle, all of them held.',
+    blurb: '150 dmg/s in six held beams · a 70% slow and 44 down the line from every contact.',
     character: 'shimmering — massed strings, soaring',
-    base: stats({ interval: 0.3, count: 24, damage: 24, area: 16, arc: 6.28, speed: 1100, pierce: 6, linger: 1.2, range: 900 }),
+    base: stats({ interval: 0.3, count: 6, damage: 45, area: 18, linger: 1.2, range: 900 }),
+    props: { slow: 0.7, lance: 44, lanceRange: 520 },
     steps: [],
   },
 ];
@@ -2638,7 +2185,22 @@ export const RIG: readonly RigDef[] = [
   },
   {
     id: 'fermata',
-    label: 'FERMATA',
+    /*
+     * LABELLED 'PEDAL' NOW, BECAUSE THE WEAPON ROSTER TOOK THE OTHER NAME.
+     *
+     * `docs/plan-refactor-3.md` §9c names one of the twenty bases FERMATA (Ball
+     * x Pit's Time ball — a dropped snare that holds what stands in it), and
+     * two things labelled FERMATA on the same pause screen is the exact defect
+     * `tools/mirror.mjs` was rewritten for: two rows with different ids
+     * rendering identical text, which a person reads as the game repeating
+     * itself. AGENTS.md §3, "assert what a person SEES".
+     *
+     * The ID DOES NOT MOVE, so the catalyst lattice, the audio signature and
+     * every reference in `layers.ts` are untouched — this is a label change and
+     * nothing else. A sustain pedal is the same gesture the item already
+     * describes: put your foot down and hold.
+     */
+    label: 'PEDAL',
     weight: 0.9,
     blurb: 'Plant your feet and the whole band swells.',
     character: 'mournful — held past its length',
@@ -2885,6 +2447,26 @@ export interface FusionDef {
   line: string;
 }
 
+/*
+ * TWENTY-ONE EVOLUTIONS AND TWO UNIONS.
+ *
+ * The count follows the roster: `tools/levelup.mjs` fails any instrument that
+ * has no evolution, because committing three picks to a dead end is the worst
+ * thing a progression system can do to a player. Twenty bases therefore need
+ * twenty recipes, and RASP branches to make twenty-one.
+ *
+ * EIGHT RIG ITEMS NOW CATALYSE TWO BASES EACH. AGENTS.md §5 permits exactly
+ * this and says why: the 12x12 lattice is broken by a THIRTEENTH PASSIVE, not
+ * by a passive doing double duty. Every one of the twelve still catalyses at
+ * least one base, which `levelup` also asserts, so no passive is filler.
+ *
+ * THIS IS NOT THE FUSION SYSTEM THE NEXT PHASE BUILDS. `docs/plan-refactor-3.md`
+ * §9d asks for ~60 hand-authored results over `C(20,2) = 190` base-plus-base
+ * pairs, Ball x Pit style. What is here is the EXISTING base-plus-catalyst
+ * lattice re-pointed onto the new roster, so `discovery`, `mirror`, `combine`
+ * and the workbench keep working while the roster changes underneath them.
+ * `mergeProps` is the joint the authored table will hang off.
+ */
 export const FUSIONS: readonly FusionDef[] = [
   { kind: 'evolution', base: 'pizzicato', catalyst: 'capo', result: 'spiccato', line: 'the bow starts to bounce' },
   { kind: 'evolution', base: 'pizzicato', catalyst: 'compressor', result: 'snap', line: 'the string is pulled clear and let go' },
@@ -2894,11 +2476,19 @@ export const FUSIONS: readonly FusionDef[] = [
   { kind: 'evolution', base: 'harp', catalyst: 'spread', result: 'crossstrung', line: 'the frame is strung both ways' },
   { kind: 'evolution', base: 'drones', catalyst: 'fermata', result: 'chorale', line: 'the satellites stop moving and start singing' },
   { kind: 'evolution', base: 'nova', catalyst: 'reverb', result: 'cathedral', line: 'the room grows around the pulse' },
-  { kind: 'evolution', base: 'blackhole', catalyst: 'compressor', result: 'downbeat', line: 'the collapse lands on the one' },
+  { kind: 'evolution', base: 'blackhole', catalyst: 'magnet', result: 'downbeat', line: 'the collapse lands on the one' },
   { kind: 'evolution', base: 'feedback', catalyst: 'tempo', result: 'wallofsound', line: 'the hum outruns you' },
   { kind: 'evolution', base: 'echoes', catalyst: 'timewarp', result: 'canon', line: 'the echo answers itself' },
-  { kind: 'evolution', base: 'timpani', catalyst: 'magnet', result: 'tutti', line: 'everything is drawn in before the strike' },
+  { kind: 'evolution', base: 'timpani', catalyst: 'reverb', result: 'tutti', line: 'the whole band comes in behind it' },
   { kind: 'evolution', base: 'tremolo', catalyst: 'homing', result: 'vibrato', line: 'the pools start hunting' },
+  { kind: 'evolution', base: 'ember', catalyst: 'laser', result: 'pyre', line: 'the coals catch, all at once' },
+  { kind: 'evolution', base: 'phantom', catalyst: 'timewarp', result: 'revenant', line: 'what you killed comes back' },
+  { kind: 'evolution', base: 'anvil', catalyst: 'capo', result: 'maestro', line: 'the whole band lands on the one' },
+  { kind: 'evolution', base: 'gravel', catalyst: 'spread', result: 'sordino', line: 'the mute goes on, and the room banks it' },
+  { kind: 'evolution', base: 'nocturne', catalyst: 'timewarp', result: 'adagio', line: 'the dark spreads out and slows everything in it' },
+  { kind: 'evolution', base: 'siphon', catalyst: 'compressor', result: 'interlude', line: 'the band stops, and nothing can reach you' },
+  { kind: 'evolution', base: 'accelerando', catalyst: 'rapid', result: 'fugue', line: 'the subject is answered, and answered again' },
+  { kind: 'evolution', base: 'charm', catalyst: 'homing', result: 'consort', line: 'the turncoats form a consort' },
 
   { kind: 'union', base: 'chorale', catalyst: 'cathedral', result: 'requiem', line: 'the choir and the room become one' },
   { kind: 'union', base: 'harmonics', catalyst: 'crossstrung', result: 'stringsection', line: 'the section takes the whole line' },
@@ -3039,6 +2629,25 @@ function synthesiseDuet(id: string): InstrumentDef | undefined {
       + (a.fused && b.fused ? 'two sections, one score' : 'two players on one stand'),
     weight: 0,
     fused: true,
+    /*
+     * BOTH PARENTS' PROPERTIES, MERGED. This is the line that makes a generic
+     * duet a real Ball x Pit combination rather than a stat blend: EMBER x
+     * GLASS carries burn AND freeze, and behaves like both, without anyone
+     * having authored the pair. `docs/plan-refactor-3.md` §9b's requirement
+     * that "the remaining 130 pairs carry both parents' properties so nothing
+     * is a dead end" is one `mergeProps` call.
+     *
+     * Unbounded in the sense that damage is not: the dps rescale below acts on
+     * the STAT block only, so a duet's properties are the strict union of its
+     * parents' at full strength. That is intended — properties are what the
+     * player is combining FOR, and halving them would make every duet a
+     * diluted version of both parents, which is the "samey weapons wearing
+     * modifier tags" verdict in a different costume.
+     */
+    props: mergeProps(
+      instrumentProps(a.id, Math.min(DUET_INPUT_LEVEL, maxLevelOf(a.id))),
+      instrumentProps(b.id, Math.min(DUET_INPUT_LEVEL, maxLevelOf(b.id))),
+    ),
     base: {
       ...am,
       interval: Math.min(am.interval, bm.interval),
@@ -3182,6 +2791,32 @@ export function instrumentStats(id: string, level: number): InstrumentStats {
     if (step.mul) {
       for (const [k, v] of Object.entries(step.mul) as [keyof InstrumentStats, number][]) out[k] *= v;
     }
+  }
+  return out;
+}
+
+/**
+ * Fold an instrument's base properties and its steps up to `level` into one set.
+ *
+ * The `beatLockOf` treatment rather than the `instrumentStats` one: each rung's
+ * `prop` is cumulative and OVERWRITES the fields it names, so a ladder reads as
+ * "burn 9 / 14 / 20" rather than as three deltas nobody can add up. A fused
+ * instrument has no steps and returns its base set at every level.
+ *
+ * A DUET INHERITS BOTH PARENTS. `synthesiseDuet` merges the two sets with
+ * `mergeProps`, which is the same fold the authored fusions of the next phase
+ * will use — a generic pairing is therefore never a dead end in the way
+ * `docs/plan-refactor-3.md` §9b warns about, because the properties survive
+ * even when nobody wrote the recipe down.
+ */
+export function instrumentProps(id: string, level: number): Props {
+  const def = instrumentDef(id);
+  if (!def) return noProps();
+  const out = { ...noProps(), ...def.props };
+  const upto = Math.min(Math.max(level, 1), def.steps.length + 1) - 1;
+  for (let i = 0; i < upto; i++) {
+    const p = def.steps[i].prop;
+    if (p) Object.assign(out, p);
   }
   return out;
 }

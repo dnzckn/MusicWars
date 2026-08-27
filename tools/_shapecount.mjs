@@ -155,7 +155,7 @@ function probe(id, rig) {
     if (w.effects.length > effects) effects = w.effects.length;
     if (w.novas.length > novas) novas = w.novas.length;
     if (w.wells.length > wells) wells = w.wells.length;
-    if (w.shells.length > shells) shells = w.shells.length;
+    if (0 /* shells: the `mortar` shape was cut with the twenty-weapon roster */ > shells) shells = 0 /* shells: the `mortar` shape was cut with the twenty-weapon roster */;
     if (w.summonsLive > summons) summons = w.summonsLive;
     if (w.enemies.length > enemies) enemies = w.enemies.length;
   }

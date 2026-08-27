@@ -241,14 +241,43 @@ for (const [key, r] of dist) {
 
 /* -------------------------------------------------------------------- 3 */
 {
-  const met = dist.get('pizzicato@1');
-  const syn = dist.get('snare@1');
+  /*
+   * THE PAIR IS FOUND BY ITS LOCK, NOT BY ITS NAME.
+   *
+   * This used to read `dist.get('pizzicato@1')` and `dist.get('snare@1')` and
+   * fail with "METRONOME or SYNCOPATION is missing from the table". Both ids
+   * are still in the table and both moved to different weapons in the
+   * twenty-weapon roster, so a hardcoded pair would have gone on testing
+   * whichever weapons happened to inherit two ids — the `tools/contrast.mjs`
+   * failure (a tool holding its own copy of a constant lies the day it moves)
+   * in its most flattering direction: still green, measuring nothing.
+   *
+   * The ASSERTION is unchanged and the search is stronger: take the busiest
+   * bar-locked instrument-level and the busiest off-beat one, whatever they
+   * are called, and require their distributions to be nearly disjoint. If the
+   * roster ever loses one of the two locks this reports that instead, which is
+   * the real finding.
+   */
+  const busiest = (want) => {
+    let best = null;
+    for (const row of LOCKED) {
+      if (row.lock !== want) continue;
+      const d = dist.get(`${row.id}@${row.lv}`);
+      if (d && (!best || d.n > best.d.n)) best = { row, d };
+    }
+    return best;
+  };
+  const met = busiest('bar');
+  const syn = busiest('offbeat');
   if (!met || !syn) {
-    fail('METRONOME or SYNCOPATION is missing from the table — the pair the axis is built on');
+    fail(
+      `the roster has ${met ? 'no OFF-BEAT' : 'no BAR'}-locked instrument — the pair the musical axis is built on is gone`,
+    );
   } else {
-    const d = tvd(met.p, syn.p);
+    const d = tvd(met.d.p, syn.d.p);
     console.log(
-      `  METRONOME vs SYNCOPATION: total variation ${d.toFixed(3)} over ${met.n} + ${syn.n} activations (min 0.80)`,
+      `  ${met.row.label} (bar) vs ${syn.row.label} (offbeat): total variation ${d.toFixed(3)} ` +
+        `over ${met.d.n} + ${syn.d.n} activations (min 0.80)`,
     );
     if (d < 0.8) {
       fail(`the downbeat weapon and the off-beat weapon fire in the same places (TVD ${d.toFixed(3)}) — the anti-metronome is not anti anything`);
@@ -276,22 +305,32 @@ console.log('\n  the items whose identity is a branch — fires against chances\
    * reachable at all — and if a branch needs more than that to happen, that is
    * a finding about the item rather than about this list.
    */
+  /*
+   * THE FIVE MODIFIER SHAPES MOVED FROM BASE INSTRUMENTS TO FUSION RESULTS.
+   *
+   * None of the twenty property weapons is a `ghost`, `counterpoint`, `tacet`,
+   * `drag` or `unison` — see `InstrumentShape`'s note on why those six shapes
+   * survive as evolutions rather than as picks — so the ids here are the
+   * RESULTS now. Forcing a fused id straight into `progression.instruments` is
+   * what this harness already does for every other row; the assertion under it
+   * is unchanged.
+   */
   for (const [ids, label] of [
-    [['echoes', 'pizzicato'], 'SOSTENUTO ghosts raised'],
-    [['harp', 'pizzicato', 'timpani'], 'COUNTERPOINT copies fired'],
-    [['tremolo', 'pizzicato'], 'TACET discharges'],
-    [['chime', 'pizzicato'], 'RITARDANDO bullets dragged'],
-    [['drones', 'pizzicato', 'timpani'], 'UNISON conducted activations'],
+    [['revenant', 'ember'], 'REVENANT ghosts raised'],
+    [['fugue', 'ember', 'timpani'], 'FUGUE copies fired'],
+    [['sordino', 'ember'], 'SORDINO discharges'],
+    [['adagio', 'ember'], 'ADAGIO bullets dragged'],
+    [['maestro', 'ember', 'timpani'], 'UNISON conducted activations'],
   ]) {
     const w = new World(0x51ed);
-    w.starter = 'pizzicato';
+    w.starter = 'ember';
     w.start();
     const force = () => {
       for (const k of Object.keys(w.progression.instruments)) delete w.progression.instruments[k];
-      for (const id of ids) w.progression.instruments[id] = W.INSTRUMENT_MAX_LEVEL;
+      for (const id of ids) w.progression.instruments[id] = W.maxLevelOf(id);
       // The companion stays at level 1: it is there to produce kills and
       // volleys, not to be the thing under test.
-      if (ids.length > 1) w.progression.instruments.pizzicato = 1;
+      if (ids.length > 1) w.progression.instruments.ember = 1;
     };
     force();
     let acts = 0;
@@ -308,10 +347,10 @@ console.log('\n  the items whose identity is a branch — fires against chances\
       w.player.dead = false;
     }
     const got =
-      label.startsWith('SOSTENUTO') ? w.ghostsRaised
-      : label.startsWith('COUNTERPOINT') ? w.counterpointCopies
-      : label.startsWith('TACET') ? w.tacetDischarges
-      : label.startsWith('RITARDANDO') ? w.dragsApplied
+      label.startsWith('REVENANT') ? w.ghostsRaised
+      : label.startsWith('FUGUE') ? w.counterpointCopies
+      : label.startsWith('SORDINO') ? w.tacetDischarges
+      : label.startsWith('ADAGIO') ? w.dragsApplied
       : w.beatFires.bar + w.beatFires.halfbar;
     const steps = Math.round(SECS / DT);
     rows.push({ label, got, acts, steps });
@@ -342,20 +381,30 @@ console.log('\n  the items whose identity is a branch — fires against chances\
  * SOME damage. The raw encirclement signal reads p50 0.04 in `arena`, which is
  * exactly why `World.dangerSwell` is a blend of three views and not that one.
  * ------------------------------------------------------------------------ */
-console.log('\n  CRESCENDO — the danger multiplier over a real run\n');
-{
+/*
+ * THE DANGER-SWELL INSTRUMENT IS FOUND BY ITS `swell` FIELD.
+ *
+ * It used to be the literal `timpani` and the label CRESCENDO. The roster moved
+ * both — TIMPANI is an earthquake now and the danger swell rides on GLARE — so
+ * a hardcoded id would have been measuring an instrument that does not swell
+ * and reporting a flat multiplier as a broken one.
+ */
+const SWELLED = W.INSTRUMENTS.find((d) => d.swell === 'danger' && !d.fused);
+if (!SWELLED) fail('no draftable instrument carries the danger swell — the encirclement multiplier is unreachable');
+console.log(`\n  ${SWELLED?.label ?? '???'} — the danger multiplier over a real run\n`);
+if (SWELLED) {
   const w = new World(0xbeef);
-  w.starter = 'pizzicato';
+  w.starter = 'ember';
   w.start();
   const force = () => {
     for (const k of Object.keys(w.progression.instruments)) delete w.progression.instruments[k];
-    w.progression.instruments.timpani = W.INSTRUMENT_MAX_LEVEL;
-    w.progression.instruments.pizzicato = 1;
+    w.progression.instruments[SWELLED.id] = W.INSTRUMENT_MAX_LEVEL;
+    w.progression.instruments.ember = 1;
   };
   force();
   const swells = [];
   w.onActivation = (id, _phase, damage) => {
-    if (id === 'timpani') swells.push(damage);
+    if (id === SWELLED.id) swells.push(damage);
   };
   const drive = makeBrain('dodge');
   const inp = { x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false };
@@ -370,19 +419,19 @@ console.log('\n  CRESCENDO — the danger multiplier over a real run\n');
   }
   swells.sort((a, b) => a - b);
   const q = (p) => (swells.length ? swells[Math.min(swells.length - 1, Math.floor(p * swells.length))] : NaN);
-  const flat = W.instrumentStats('timpani', W.INSTRUMENT_MAX_LEVEL).damage;
+  const flat = W.instrumentStats(SWELLED.id, W.INSTRUMENT_MAX_LEVEL).damage;
   console.log(`  n=${swells.length}   damage per wave  p10 ${q(0.1).toFixed(0)}  p50 ${q(0.5).toFixed(0)}  p90 ${q(0.9).toFixed(0)}  max ${q(1).toFixed(0)}`);
   console.log(`  the stat block alone would be ${flat.toFixed(0)} at every one of them`);
-  if (swells.length === 0) fail('CRESCENDO never fired — the swell was not measured');
+  if (swells.length === 0) fail(`${SWELLED.label} never fired — the swell was not measured`);
   else if (q(0.9) / Math.max(0.001, q(0.1)) < 1.6) {
-    fail(`CRESCENDO's p90/p10 is only ${(q(0.9) / Math.max(0.001, q(0.1))).toFixed(2)}x — the swell is a constant with extra steps`);
+    fail(`${SWELLED.label}'s p90/p10 is only ${(q(0.9) / Math.max(0.001, q(0.1))).toFixed(2)}x — the swell is a constant with extra steps`);
   }
 }
 
 console.log('\n  DROP — where the world thinks the arrangement is, with nobody conducting\n');
 {
   const w = new World(0x1234);
-  w.starter = 'pizzicato';
+  w.starter = 'ember';
   w.start();
   const share = {};
   const drive = makeBrain('dodge');

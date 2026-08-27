@@ -2283,6 +2283,119 @@ above. `tempo` is per step at 120Hz against a drop every 60-80px, so a low
 single-digit percentage is the design working. **The assertion is non-zero, not
 a threshold** — a threshold here would be a number nobody could defend.
 
+## `propfire` — a weapon property that is installed and never applies, or applies and never ticks
+
+    node --experimental-transform-types tools/propfire.mjs [seconds]
+
+`rulefire` is the model and this is the same defect one layer up. The
+twenty-weapon roster (`docs/plan-refactor-3.md` §9) puts every weapon's identity
+in a **property** — burn, freeze, poison, bleed, chain, quake, lance, charm and
+twelve more — and a property fails in more ways than a rule does. It waits for a
+hit, then a roll, then a body that can carry it, then a per-step tick that has
+to keep carrying it. Any one of the four can be missing while the file
+type-checks, the card renders the number, the HUD shows the weapon and the
+weapon still deals its listed damage.
+
+So it measures four columns per property rather than one, off `World`:
+
+    propChances   the property was present and was rolled
+    propFires     the roll landed and the property was written onto a body
+    propTicks     enemy-steps actually spent carrying it
+    propDamage    hit points actually removed BY THE PROPERTY
+
+`propTicks` is the column `rulefire` has no equivalent of and the reason this
+file exists separately. A burn written onto an enemy and cleared on the next
+frame — a timer decremented before it is read, a bitmask cleared in the wrong
+branch — fires its counter once per hit and deals nothing at all, and every
+other number in the game stays healthy.
+
+Six questions:
+
+1. Every `Props` field is owned by some weapon, and every property has a BASE
+   carrier. A property only a fusion can reach is a property most runs never
+   meet.
+2. **Every draftable instrument carries a property.** This is the architecture
+   assertion. "The property is the weapon" is what the roster is organised on,
+   and a base weapon with no property is a delivery shape wearing a name —
+   which is the roster the owner rejected first, and nothing else in the suite
+   would notice it coming back.
+3. Every property maps to a counter in all four tables.
+4. **One run per property**, holding only the base weapons that carry it, real
+   `World`, real bot. A zero denominator is a FAILURE.
+5. **Ticks and damage**, per the lists in the source — a status that expires the
+   frame it lands is not a status, and a splash that removes no hit points is
+   not a splash.
+6. **CROSS-CONTAMINATION and the CONTROL.** Each run must fire no property its
+   loadout does not carry, and a run holding SNAP — the roster's one
+   deliberately property-free weapon — must fire nothing at all while still
+   producing every moment in `World.propMoments`.
+
+**The harness drives the WEAVING brain, not the dodging one, and that is
+load-bearing.** Measured at 30s with `dodge`: RASP landed ONE hit in the whole
+run and the control produced ZERO body contacts, so two of the moments this
+file depends on never happened and a third was measured off a sample of one.
+The weaving brain stands in the fight. It also holds the player one point below
+full health, for the same class of reason `rulefire` plants its bot: SIPHON's
+heal cannot be observed on a player who is never hurt.
+
+### What it found while being written
+
+- **The harness leaked.** Re-asserting the loadout before each `update` is one
+  frame too late — `applyOfferInput` runs early in `update` and
+  `fireInstruments` later in the same one, so a card taken on that step fires
+  once. Six stray `poison` fires appeared inside the run that holds nothing but
+  RASP. Offers are suppressed outright now. The CROSS-CONTAMINATION block
+  caught it, which is the block existing to catch exactly that.
+- **SIPHON looked broken and was only wasted.** The heal originally counted a
+  fire only when there was room for the health, so a player at full health read
+  as 91 chances and 0 fires — "installed and inert", a true sentence about the
+  counter and a false one about the property. The roll and the heal are counted
+  separately now.
+- **A turncoat did not fight.** `charm` dealt damage inside a fixed radius and
+  left the body walking its normal path, which is aimed at the PLAYER. 2 charms
+  applied, 0 damage dealt. A charmed body closes on what it is fighting now.
+- **GLARE's blind needs a denominator.** A bare "attacks prevented > 0" is
+  duration-dependent: enemies in this build attack rarely, and a 60s run
+  produced three blinded attacks and prevented none of them, which the check
+  reported as a working property being inert. `World.blindedAttacks` is the
+  denominator, and it is deliberately NOT in `propMoments` — the control run
+  cannot produce it, and putting it there made the control fail for a reason
+  that had nothing to do with the control.
+
+### Fail-tested per assertion
+
+Eight planted defects, each seen red and undone by its inverse edit; the log is
+at the bottom of the source. AGENTS.md §3 is explicit that a check with several
+assertions can pass its own fail-test on the strength of one, so they were
+planted one at a time: the fire counter, the tick branch, the damage credit, a
+counter moved outside its own `if` (the control), a base weapon stripped of its
+property, a ladder that goes backwards, a property leaking across weapons, and
+the blind miss chance set to zero.
+
+## `offerpool` — what twenty draftable instruments do to a four-card offer
+
+    node --experimental-transform-types tools/offerpool.mjs [runs]
+
+AGENTS.md §5 records the finding this exists to check: **the four-card offer is
+zero-sum, and every card type added is taken from the others.** A change that
+added no card type at all — only eligibility — still cost 31% of a building
+player's designed fusions and was reverted. The twenty-weapon roster adds EIGHT
+draftable instruments, which is a much bigger move on the pool than the one that
+got reverted, and no other gate measures dilution directly. That is precisely
+how the reverted change got as far as it did.
+
+The counterfactual is built INSIDE one build: the eight ids this pass added are
+banished, which is the generator's own exclusion path, and both arms are then
+run over the same seeds with the same weights. It is not the shipped-yesterday
+game — the narrow arm still has the new properties, stat blocks and four-slot
+rig — and it is not meant to be. It isolates POOL SIZE and nothing else.
+
+Reported per arm: the composition of a card (new instrument / level-up / rig /
+fusion), how often a fusion is on the table, designed fusions per run, and how
+many offers a named instrument waits to appear in. The assertion is on the last
+of those metrics against the narrow arm, at the 25% line — under the 31% that
+was judged unacceptable before.
+
 ## `capture` — the game's real audio, offline through superdough (`tools/capture.mjs`)
 
 `AGENTS.md` says "the listening artefact is the browser capture recorder", and
