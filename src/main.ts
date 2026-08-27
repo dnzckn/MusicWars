@@ -13,6 +13,7 @@
  * simulation's internals; they meet at `GameSnapshot` and `EventBus`.
  */
 
+import type { MusicalState } from './core/events';
 import { Input } from './core/input';
 import { FIXED_DT, Loop } from './core/loop';
 import { MusicDirector } from './audio/director';
@@ -117,6 +118,15 @@ const seedParam = new URLSearchParams(location.search).get('seed');
 const parsedSeed = seedParam === null ? NaN : Number(seedParam);
 const world = new World(Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : undefined);
 const director = new MusicDirector();
+/**
+ * The arrangement's position, carried from `render` back into `update`.
+ *
+ * A single mutated object rather than a fresh one per frame: this runs at up to
+ * 144 Hz for the length of a run, and `World.setMusicalState` copies its fields
+ * out rather than keeping the reference, so nothing downstream can be surprised
+ * by it changing.
+ */
+const lastMusical: MusicalState = { section: 'sustain', energy: 0.45 };
 const renderer = new Renderer(playfield, overlay, world);
 const hud = new Hud();
 const input = new Input();
@@ -634,6 +644,28 @@ const loop = new Loop({
     input.shipX = world.player.x;
     input.shipY = world.player.y;
     const state = injected ?? input.sample();
+    /*
+     * THE ONE INBOUND EDGE OF THE GAME/MUSIC BOUNDARY.
+     *
+     * `core/events.ts` says the simulation emits and never receives, and every
+     * musical signal this project publishes has been output-only since it
+     * started — which `docs/plan-items-v2.md` §2 identifies as the reason the
+     * soundtrack is a beautiful readout of a fight it has no say in. DROP
+     * (`feedback`) is the first item that needs it back.
+     *
+     * A VALUE PUSH, NOT A CALL. `World.setMusicalState` copies two numbers off
+     * a readout; the world holds no director, cannot ask it a question, and
+     * `src/game/` still never imports `src/audio/`. Either half can still be
+     * rewritten without the other, which is the property that boundary exists
+     * to protect.
+     *
+     * ONE FRAME STALE, deliberately: the readout is built in `render`, which
+     * runs after this. A section holds for a minimum of four bars
+     * (`arrangement.ts` MIN_BARS) — 7.5 seconds at 128 BPM — so a 16ms lag is
+     * three orders of magnitude inside the signal, and computing a second
+     * readout here would cost more than it could possibly buy.
+     */
+    world.setMusicalState(lastMusical);
     world.update(dt, state);
     director.update(world.snapshot, world.transport, dt);
   },
@@ -643,6 +675,9 @@ const loop = new Loop({
       needsSync = false;
     }
     const readout = director.readout(world.transport);
+    // Handed to the simulation at the top of the next `update`; see there.
+    lastMusical.section = readout.section;
+    lastMusical.energy = readout.energy;
     // Caption every announcement with what the music just became.
     renderer.bannerDetail = `${readout.key.toUpperCase()} · ${readout.feel.toUpperCase()} · ${readout.bpm} BPM`;
     renderer.targetHue = readout.paletteHue;

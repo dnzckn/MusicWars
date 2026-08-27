@@ -527,12 +527,60 @@ export const STARTING_INSTRUMENT = 'pizzicato';
  * above — and they lead to three different evolutions (spiccato, canon,
  * carillon), so the opening pick already leans the fusion tree.
  *
- * ECHOES earns its place twice over: wall-bouncing exists in the engine and
- * only three of twenty-six instruments use it, so the Ball x Pit half of the
- * brief was locked behind one mid-run build line. As an opener it is available
- * from the first bar, by choice, without touching balance or the rig's 12x12.
+ * ---------------------------------------------------------------------------
+ * ECHOES AND CHIME ARE OUT, AND THIS IS NOT A BALANCE TWEAK — IT IS TWO ITEMS
+ * BECOMING UNPLAYABLE AS OPENERS BY DESIGN.
+ *
+ * The items pass (`docs/plan-items-v2.md` §3) re-points `chime` to RITARDANDO,
+ * which deals no damage at all, and `echoes` to SOSTENUTO, which raises the
+ * last enemy you killed. Both fail the one thing an opener has to do:
+ *
+ *   RITARDANDO cannot kill anything, ever. A run that opens with it reaches
+ *   wave one and stops.
+ *   SOSTENUTO is a HARD DEADLOCK, which is worse than weak. No other weapon
+ *   means no kill; no kill means no ghost; no ghost means no kill. There is no
+ *   number that fixes it, because the item's input is its own output.
+ *
+ * `tools/openers.mjs` asserts the weakest opener reaches 70% of the best and it
+ * is RIGHT to — AGENTS.md §3 says a gate that fails because the design changed
+ * is replaced with a stronger one and never relaxed. Nothing here relaxes it:
+ * the floor is untouched and the LIST is what changed, because the assumption
+ * the gate encodes ("every offered opener can fight") is still exactly the
+ * assumption we want.
+ *
+ * The three that replace them are the best statement of the new roster
+ * available at the moment of choosing, and they are three different verbs
+ * rather than three different geometries:
+ *
+ *   METRONOME   fires on the downbeat and nowhere else, for eight times a shot
+ *   SYNCOPATION fires on the off-beat and never on the beat
+ *   CRESCENDO   feeble while you are safe, enormous while you are surrounded
+ *
+ * Two beat-locked weapons in disjoint halves of the pulse, and one that inverts
+ * the risk curve. A player picking between those has met the whole of the new
+ * axis before the first enemy arrives, which is the only way an axis this
+ * unusual gets learned — and it is three different VERBS rather than three
+ * different geometries, which is the complaint this pass exists to answer.
+ *
+ * LANES, which `openers` also checks: arp, clap and kick. Three distinct
+ * `ENSEMBLE_MIX` entries, so the openings are still audibly different from the
+ * first bar.
+ *
+ * CHOSEN BY MEASUREMENT AND NOT BY THEME, and the first attempt was wrong.
+ * `bow` was in this list for one revision on the strength of its re-point to
+ * `lance`, and `tools/_openersweep.mjs` — every base instrument alone, 3 seeds
+ * x 240s — put it at the wave-3 floor along with nine others, against
+ * METRONOME's 6.7. Under this roster only METRONOME cleared early waves at all,
+ * so two rows were front-loaded to make the menu real: SYNCOPATION's opening
+ * throughput 2.4x and CRESCENDO's 1.6x, both paid for out of their own top
+ * rungs so the ceilings barely move. See the notes on those rows.
+ *
+ * WHAT IT COSTS. The wall-bouncing ECHOES brought to the opening menu is
+ * genuinely lost; it survives in CANON, which is still `echoes`' evolution, and
+ * in SPICCATO. ROSIN BOW remains what it has always been — a strong mid-run
+ * pick and a poor opener.
  */
-export const STARTERS: readonly string[] = ['pizzicato', 'echoes', 'chime'];
+export const STARTERS: readonly string[] = ['pizzicato', 'snare', 'timpani'];
 
 export function createProgression(seed = 1, starter?: string): ProgressionState {
   return {
@@ -1332,7 +1380,22 @@ export function writeAbilityLevels(state: ProgressionState, into: Record<string,
   for (const [k, v] of Object.entries(state.rig)) into[k] = v;
 }
 
-/** The instruments that should be firing, in slot order. */
+/**
+ * The instruments that should be firing, in slot order.
+ *
+ * THE ORDER IS LOAD-BEARING NOW. DO NOT SORT THIS.
+ *
+ * `Object.entries` on a string-keyed object returns insertion order, which here
+ * is ACQUISITION order, and COUNTERPOINT (`harp`) reads index 0 as the leader
+ * and 1 and 2 as the voices that answer it. Sorting this by id, by level, by
+ * damage or by anything else would silently turn that item from a decision the
+ * player makes into a coin flip — with no type error, no failing gate, and no
+ * visible change anywhere else in the game.
+ *
+ * `Hud.updateBand` renders `snap.abilities` in the same insertion order, so the
+ * chips along the top of the band panel are the order this returns. That is the
+ * whole affordance the item has; keep the two in step.
+ */
 export function activeInstruments(state: ProgressionState): { id: string; level: number }[] {
   return Object.entries(state.instruments).map(([id, level]) => ({ id, level }));
 }

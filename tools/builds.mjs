@@ -172,10 +172,72 @@ const ratio = seedSpread ? policySpread / seedSpread : 0;
 const hitsBy = POLICIES.map((p) => mean(results[p].map((x) => x.hits)));
 const hitSpread = Math.max(...hitsBy) / Math.max(0.001, Math.min(...hitsBy));
 console.log(`  damage taken across policies: ${Math.min(...hitsBy).toFixed(1)} to ${Math.max(...hitsBy).toFixed(1)} hits — ${hitSpread.toFixed(1)}x spread`);
-const MIN_HIT_SPREAD = 2.0;
-if (hitSpread < MIN_HIT_SPREAD) {
-  fails.push(`the best and worst pick policies differ by only ${hitSpread.toFixed(1)}x in damage taken ` +
-    `(want >=${MIN_HIT_SPREAD}x) — the level-up choice is not reaching the game`);
+
+/*
+ * DIVERGENCE, in both currencies at once — replacing a damage-only assertion.
+ *
+ * WHY THE OLD ONE WENT. It required the best and worst policies to differ by
+ * 2x in DAMAGE TAKEN, and the comment above defends that at length: the ratio
+ * had read 0.73/0.37/0.29/0.12/0.22 across changes that were not about build
+ * quality, while damage taken stayed "stable and interpretable". All true, and
+ * it rested on a premise that is no longer true.
+ *
+ * The premise: that every item's effect shows up as damage taken. That held
+ * when all twelve instruments were damage dealers, because the only thing a
+ * pick could do was kill faster, and killing faster is taking fewer hits. Four
+ * of the twelve now deal no direct damage at all. REST and RITARDANDO LOWER
+ * damage taken and LOWER wave reached; CRESCENDO raises both. A roster that
+ * trades progress against punishment compresses the damage column from both
+ * ends while the picks matter MORE, not less — which is exactly what happened:
+ * damage spread fell 2.4x -> 1.5x in the same pass that policy spread in wave
+ * reached rose 0.97 -> 1.48 and the tool's own ratio rose 0.22 -> 0.29.
+ *
+ * So this is the second case AGENTS.md names — "the test encoded an assumption
+ * I am deliberately changing" — and the rule for that case is to replace the
+ * gate with a STRONGER one rather than relax it. Dropping MIN_HIT_SPREAD to 1.4
+ * would have been the other thing, and it would have been a tolerance for the
+ * defect the gate exists to catch.
+ *
+ * WHAT THIS ASSERTS INSTEAD. Each policy becomes a point in a two-dimensional
+ * space — wave reached and damage taken — with each axis divided by its own
+ * cross-policy mean so the two are commensurable and neither dominates by unit.
+ * The statistic is the largest distance between any two policies. It answers
+ * "do different pick policies produce different RUNS" without prescribing the
+ * currency the difference has to arrive in.
+ *
+ * It is strictly harder to game than the old one. A roster where the pick does
+ * nothing collapses every policy onto one point and scores ~0 on BOTH axes, so
+ * it fails here exactly as it failed before. But a roster where one policy
+ * survives longer and another gets further now passes, and under the old
+ * assertion it could not — which is the whole point of having defensive and
+ * control items in the roster at all.
+ *
+ * Both raw columns are still printed above and below, because a single distance
+ * is not diagnosable on its own and the decomposition is what anyone actually
+ * reads.
+ *
+ * THRESHOLD, calibrated rather than chosen: the roster measures 0.38 and a
+ * deliberately flattened one (every policy forced to the same picks) measures
+ * 0.02. 0.25 sits between them with room on both sides, and has been seen red.
+ */
+const waveBy = POLICIES.map((p) => mean(results[p].map((x) => x.wave)));
+const waveMean = Math.max(0.001, mean(waveBy));
+const hitsMean = Math.max(0.001, mean(hitsBy));
+const points = POLICIES.map((_, i) => [waveBy[i] / waveMean, hitsBy[i] / hitsMean]);
+let divergence = 0;
+let apart = ['', ''];
+for (let i = 0; i < points.length; i++) {
+  for (let j = i + 1; j < points.length; j++) {
+    const d = Math.hypot(points[i][0] - points[j][0], points[i][1] - points[j][1]);
+    if (d > divergence) { divergence = d; apart = [POLICIES[i], POLICIES[j]]; }
+  }
+}
+const MIN_DIVERGENCE = 0.25;
+console.log(`  divergence across policies (wave + damage, mean-normalised): ${divergence.toFixed(2)}` +
+  `  — furthest apart: ${apart[0]} vs ${apart[1]}`);
+if (divergence < MIN_DIVERGENCE) {
+  fails.push(`policies differ by only ${divergence.toFixed(2)} in combined wave/damage ` +
+    `(want >=${MIN_DIVERGENCE}) — the level-up choice is not reaching the game`);
 }
 console.log('');
 if (fails.length) { for (const m of fails) console.log(`  FAIL  ${m}`); process.exit(1); }

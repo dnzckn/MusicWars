@@ -73,6 +73,21 @@ export const BulletFlag = {
    * what makes `count` a retinue size instead of a volley.
    */
   Summon: 1 << 6,
+  /**
+   * An enemy bullet RITARDANDO has already slowed.
+   *
+   * The bubble multiplies a bullet's speed once, on the step it enters, and
+   * marks it — without the mark the multiply would compound every frame the
+   * bullet spent inside and stop it dead in about a tenth of a second, which is
+   * a very different item from the one on the card. It is never cleared: what
+   * enters the drag never speeds up again, which is both cheaper than storing
+   * an original speed per bullet and the more legible rule.
+   *
+   * This is the eighth and LAST bit. `BulletPool.flags` is a `Uint8Array`, so a
+   * ninth flag needs the array widened to `Uint16Array` first — cheap, but not
+   * something to discover by watching a flag silently truncate to zero.
+   */
+  Dragged: 1 << 7,
 } as const;
 
 export interface BulletSpawn {

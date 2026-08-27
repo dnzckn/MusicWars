@@ -429,19 +429,234 @@ export type InstrumentShape =
    */
   | 'strike'
   /** A field dropped in the world that stays where it was put. */
-  | 'field';
+  | 'field'
+  /* ---------------------------------------------------------------------- *
+   * THE FIVE SHAPES THAT ARE NOT "DAMAGE IS DEALT IN SHAPE X".
+   *
+   * `docs/plan-items-v2.md` §1 counted the roster and found twelve items and
+   * ONE idea: every entry above answers the question "where does the hitbox
+   * appear", and none of them answers "what does the player DO". Fourteen
+   * distinct geometries is a real achievement and it is still one axis, which
+   * is why the owner's verdict after playing it was "there currently not fun".
+   *
+   * Three of the five below deal NO DAMAGE AT ALL and two of them make other
+   * items fire. That is the second axis, and it is the whole point of this
+   * pass — a roster where the only decision is a delivery angle is a roster
+   * where the level-up screen is a menu of camera angles.
+   * ---------------------------------------------------------------------- */
+  /**
+   * A BAR OF INVULNERABILITY THAT SILENCES YOUR OWN BAND.
+   *
+   * Deals nothing, ever. The roster had zero non-damaging items and
+   * `docs/plan-items-v2.md` §1 calls that the most obvious hole in it: Vampire
+   * Survivors has Laurel, Clock Lancet, Garlic and Tiragisú and this game had
+   * twelve damage dealers. A defensive item is the one card that changes what
+   * the player is ALLOWED to do rather than what they hit.
+   *
+   * The cost is audible, which is the part no competitor can copy: while the
+   * rest is running, `GameSnapshot.tacetStems` carries the whole band and the
+   * mix drops to its drone. You do not get a free bar; you get a bar with the
+   * music taken away, and you can hear it come back.
+   *
+   * `linger` is the length of the rest in BARS (not seconds — a rest that ends
+   * mid-bar is not a rest), `interval` the cooldown, `area` the radius of the
+   * ring that sweeps the field clean when the band comes back in. `damage`,
+   * `count`, `speed`, `pierce`, `bounces`, `arc` and `range` are unread, and
+   * `damage` is unread ON PURPOSE: see `INSTRUMENTS`' row for `nova`.
+   */
+  | 'rest'
+  /**
+   * TIME DRAGS IN A BUBBLE AROUND YOU — INCLUDING YOURS.
+   *
+   * The second non-damaging item, and the one with a real drawback attached
+   * rather than a cooldown. Enemies inside `area` move and shoot at a fraction
+   * of their speed; every instrument in the loadout takes proportionally
+   * longer to come round. Control, bought with rate.
+   *
+   * It is the only item in the table that makes the player WORSE at the thing
+   * the rest of the table does, which is what makes holding it a decision
+   * instead of an acquisition. A build with RITARDANDO and a slow, heavy
+   * loadout barely notices; one with METRONOME on the downbeat and SYNCOPATION
+   * in the gaps is giving up its whole identity.
+   *
+   * `area` is the bubble, `damage` is REUSED AS THE DRAG FRACTION (see the row
+   * in `INSTRUMENTS`, which explains why that is not a hack), `arc` is what it
+   * costs you, `interval` and `linger` drive the visible pulse. `count`,
+   * `speed`, `pierce`, `bounces` and `range` are unread.
+   */
+  | 'drag'
+  /**
+   * THE LAST THING YOU KILLED COMES BACK AND FIGHTS FOR YOU.
+   *
+   * `spawn` is an ally you buy on a timer; this is an ally you EARN, and the
+   * difference is that it makes the corpse a resource. You stop fighting the
+   * nearest thing and start choosing what to kill, because what you kill is
+   * what you get.
+   *
+   * It reuses `BulletFlag.Summon` and `updateSummons` outright — no new
+   * container, no new update loop, and `effectsdraw` already asserts sprite
+   * type 2 exists. The difference from `spawn` is entirely in WHERE and WHEN:
+   * a ghost is pushed at the corpse on the frame of the kill, not at the ship
+   * on a clock.
+   *
+   * IT CANNOT OPEN A RUN. With no other weapon there is no kill, with no kill
+   * there is no ghost, and the deadlock is total — which is why `echoes` had
+   * to leave `STARTERS`. See the note there.
+   *
+   * `count` is the standing retinue, `linger` a ghost's lifetime, `damage` its
+   * hit, `speed` its travel, `interval` the minimum gap between raisings.
+   * `area`, `arc`, `pierce`, `bounces` and `range` are unread.
+   */
+  | 'ghost'
+  /**
+   * YOUR SECOND INSTRUMENT FIRES A COPY WHENEVER YOUR FIRST DOES.
+   *
+   * The first item in the game that modifies another item. Ball x Pit's actual
+   * core is that things compose, and nothing here composed: the rig is twelve
+   * global multipliers, which is the flattest possible version of an item
+   * interacting with a build.
+   *
+   * The interesting consequence is that LOADOUT ORDER becomes a decision, and
+   * order is a thing the player already controls (it is acquisition order) and
+   * has never once had a reason to think about.
+   *
+   * `damage` is the copy's share of the follower's own damage, `count` extra
+   * projectiles on the copy, `interval` a floor on how often a copy may be
+   * struck. Everything else is unread — this shape has no geometry of its own,
+   * which is exactly what makes it a modifier.
+   */
+  | 'counterpoint'
+  /**
+   * EVERY INSTRUMENT FIRES TOGETHER ON THE BAR INSTEAD OF ON ITS OWN TIMER.
+   *
+   * The second modifier, and the one that changes the shape of a whole run. It
+   * converts a trickle into a volley: with UNISON held, breadth beats depth,
+   * because six instruments landing on the same beat is one enormous hit and
+   * six instruments on six timers is a texture.
+   *
+   * RATE-NEUTRAL BY CONSTRUCTION, and this is the part that had to be argued
+   * rather than tuned. Re-clocking an instrument from its own `interval` to
+   * one bar multiplies its activations by `interval / bar`; the routine
+   * therefore multiplies its damage by `bar / interval`, clamped, so nothing
+   * in the loadout gains or loses throughput from the conversion itself. What
+   * UNISON's own ladder then adds is the payment. Without the compensation the
+   * item is a 12x buff to PIZZICATO and a 45% nerf to TIMPANI, which is not a
+   * design, it is an accident of two numbers.
+   *
+   * `damage` is the multiplier on the assembled volley and `count` the extra
+   * projectiles every instrument puts into it. `interval` is read by the
+   * dispatcher and nothing else.
+   */
+  | 'unison'
+  /**
+   * SILENCE ONE LANE OF YOUR OWN SOUNDTRACK, BANK IT, SPEND IT WHEN IT RETURNS.
+   *
+   * A resource loop made out of the arrangement. While the lane is out, charge
+   * accumulates; on the bar it comes back in, the charge is spent as a ring.
+   * The mix visibly and audibly thins while it is banking, so the resource has
+   * a readout that is not a number on the HUD — it is the missing part.
+   *
+   * The only item in the game whose cost is paid in the thing the game is
+   * about. You are choosing to make your own soundtrack worse for a payoff,
+   * which is a decision no purely mechanical roster can offer.
+   *
+   * `damage` is banked per BAR of silence, `linger` how many bars the lane
+   * stays out, `range` the bars it plays before going out again, `area` the
+   * discharge radius, `count` how many lanes go at once. `speed`, `pierce`,
+   * `bounces` and `arc` are unread.
+   */
+  | 'tacet';
+
+/**
+ * WHICH BEAT AN INSTRUMENT IS ALLOWED TO FIRE ON, over and above its interval.
+ *
+ * `docs/plan-items-v2.md` §2: this game generates its soundtrack from play, and
+ * `Transport` has published `bar`, `beat`, `barPhase` and `crossings(div)` since
+ * the project started — and not one weapon has ever read them. The enemy
+ * emitters do; the player's band does not. So the pulse the whole game is built
+ * on is something the player listens to and never plays against.
+ *
+ * A beat lock is a rate limiter that quantises rather than throttling: the
+ * instrument's own `interval` still says how often it MAY fire, and the lock
+ * says the activation waits for the next grid line of the named division. An
+ * instrument whose interval is shorter than its grid therefore fires exactly on
+ * the grid, and one whose interval is longer fires on the first grid line after
+ * it is ready.
+ *
+ * THE RISK, STATED UP FRONT, because it is the one that sinks the whole axis:
+ * a weapon that fires on the downbeat is only interesting if the player can
+ * FEEL the downbeat. If the beat is not legible under combat, METRONOME reads
+ * as "my gun is randomly slow". `tools/beatlock.mjs` proves the distributions
+ * are what they claim; it cannot prove they are audible.
+ */
+export type BeatLock =
+  /** Bar lines. Four beats apart. */
+  | 'bar'
+  /** Bar lines and the half-bar. Two beats apart. */
+  | 'halfbar'
+  /** The eighth-note OFF beats — the "and" of every beat, never the beat. */
+  | 'offbeat';
+
+/**
+ * A multiplier the world applies to an activation from OUTSIDE the stat block.
+ *
+ * Two items scale with something no `Modifiers` field can express, and both of
+ * them invert a curve rather than steepening one.
+ */
+export type Swell =
+  /**
+   * Near-inert outside the drop, the strongest thing in the game inside one.
+   * Reads `MusicalState.section` and `MusicalState.energy`.
+   */
+  | 'drop'
+  /**
+   * Feeble when safe, enormous when surrounded. Reads the world's own
+   * encirclement signal — the same one `tools/arena.mjs` gates the difficulty
+   * curve on — so it needs no snapshot from the music and behaves identically
+   * in a headless run and in a played one.
+   */
+  | 'danger'
+  /**
+   * Full weight out of a bar of silence, 62% of it arriving one beat after
+   * something else fired. Reads `World.beatsQuiet`.
+   *
+   * It exists because two beat-locked weapons on disjoint slices of the bar do
+   * not actually fight — they interleave, which is a synergy, and
+   * `docs/plan-items-v2.md` §3 asks for METRONOME and SYNCOPATION to
+   * anti-synergise on purpose. A downbeat that is worth more the emptier the
+   * bar before it was is the honest version of that: it costs nothing to hold
+   * one of them and something real to hold both.
+   */
+  | 'silence';
 
 export interface LevelStep {
   /** What the player will notice. If this is only a number, redesign the step. */
   note: string;
   add?: Partial<InstrumentStats>;
   mul?: Partial<InstrumentStats>;
+  /**
+   * The beat lock this level and every level above it runs on.
+   *
+   * A rung that moves an instrument from the bar to the half-bar is the largest
+   * legible jump a beat-locked weapon has available — the player HEARS it, and
+   * "twice as often" needs no stat block to read. It is a separate field from
+   * `mul` because a lock is not a number; `beatLockOf` resolves it.
+   */
+  beat?: BeatLock;
 }
 
 export interface InstrumentDef {
   id: InstrumentId | EvolvedId;
   label: string;
   shape: InstrumentShape;
+  /**
+   * Which grid line this instrument's activations are allowed to land on, at
+   * level 1. Absent means "whenever the interval says", which is every
+   * instrument that existed before this pass.
+   */
+  beat?: BeatLock;
+  /** A multiplier the world applies from outside the stat block. */
+  swell?: Swell;
   /** Level 1. Every step below is applied on top of this, in order. */
   base: InstrumentStats;
   /**
@@ -706,6 +921,53 @@ export interface RigDef {
  * Twelve, for six slots. Three of them (drones, nova, blackhole) are existing
  * PowerupKinds reused verbatim, so their audio signature in `layers.ts` keeps
  * working unchanged — the ids are the contract and the ids did not move.
+ *
+ * ---------------------------------------------------------------------------
+ * FOUR OF THE TWELVE NO LONGER DEAL DIRECT DAMAGE, AND `tools/builds.mjs` IS
+ * RED BECAUSE OF IT. Say this plainly; it is the one measured cost of this pass
+ * that has not been paid back.
+ *
+ * REST and RITARDANDO deal nothing at all, and COUNTERPOINT and UNISON deal
+ * nothing of their own — they multiply what is already there. That is the
+ * design (`docs/plan-items-v2.md` §3: the roster had twelve damage dealers and
+ * zero of anything else) and it costs about a fifth of the roster's raw output.
+ * Measured over 900s x 8 seeds x 7 pick policies, before this pass against
+ * after:
+ *
+ *     mean wave reached      24.1  ->  19.2
+ *     policy / seed ratio    0.22  ->  0.34      (the tool's own diagnostic)
+ *     damage taken spread    2.4x  ->  1.5x      (the tool's GATE — bar is 2x)
+ *
+ * The gate is right that the number moved and its diagnosis is the wrong way
+ * round. Its threshold encodes an assumption from a roster with NO defensive
+ * items: that the pick shows up as how much punishment a run costs. Under this
+ * roster the pick shows up as how FAR a run gets — policy spread in wave
+ * reached went 0.97 -> 1.98 and the ratio nearly doubled — and the damage
+ * column compresses from both ends because every policy reaches a lower wave,
+ * which is fewer minutes of late-game pressure for the reckless builds and more
+ * enemies alive for the careful ones. Normalised per wave the spread is 2.14x
+ * -> 1.45x, so it is not purely a survival-time artefact either.
+ *
+ * THREE ATTEMPTS TO CLOSE IT, all recorded so they are not re-tried:
+ *
+ *   REST's cooldown was going DOWN with its ladder, giving 39% of a run
+ *   invulnerable. Fixed (7/12/16%) -> 1.4x -> 1.6x.
+ *   RITARDANDO's bubble was 486px at 72% depth, most of the view. Cut to
+ *   356px at 62% -> no separate effect measurable.
+ *   REST's guns now stop with its band, so it trades damage for safety instead
+ *   of granting safety free -> 1.5x. Within noise of 1.6x.
+ *
+ * WHAT IS NOT DONE, DELIBERATELY: a blanket 20-25% lift on the seven surviving
+ * damage dealers would very likely take the column back over 2x, and it would
+ * be the thing AGENTS.md §3 calls a gate optimised against — moving numbers to
+ * move a metric. It would also push against `tools/arena.mjs`, which measures
+ * the OTHER direction and holds: encirclement p90 went 0.32 -> 0.42 against a
+ * 0.25 bar, and this file's own `INSTRUMENT_MAX_LEVEL` note says in as many
+ * words that the difficulty curve needs the player weaker, not stronger. Two
+ * gates now want opposite things and only one of them can be satisfied by a
+ * number. Whoever takes this next should decide which, on the design, and then
+ * either lift the roster or replace `builds`' threshold with one that is not
+ * blind to a defensive item — not quietly widen the bar.
  * ------------------------------------------------------------------------ */
 
 function stats(p: Partial<InstrumentStats>): InstrumentStats {
@@ -727,14 +989,52 @@ function stats(p: Partial<InstrumentStats>): InstrumentStats {
 export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
     id: 'pizzicato',
-    label: 'PIZZICATO',
+    /*
+     * PIZZICATO IS NOW METRONOME, AND IT IS THE PROOF OF THE WHOLE SECOND AXIS.
+     *
+     * `docs/plan-items-v2.md` §1: twelve items and one idea. Every row in this
+     * table answered "where does the hitbox appear", the geometries were
+     * genuinely distinct after the last pass, and the owner played it and said
+     * "there currently not fun". Distinctness of geometry is not variety of
+     * decision — the player still moves away from things and lets damage
+     * happen, whatever shape the damage is.
+     *
+     * METRONOME is the cheapest possible test of the other axis. It keeps
+     * `seek`, keeps the arp lane, keeps SPICCATO and SNAP as its endings, and
+     * changes exactly one thing: WHEN it is allowed to fire. It goes off on the
+     * bar line and nowhere else, for eight times a normal shot.
+     *
+     * POWER IS UNCHANGED AND THAT IS ARITHMETIC, not a guess. At 128 BPM a bar
+     * is 1.875s against the old 0.22s interval, so it fires 8.5x less often;
+     * damage goes 4 -> 34, which is 8.5x. Nominal throughput at level 1 is
+     * 36.3/s against the old 36.4/s. What changes is that all of it lands at
+     * once, on a beat the player can hear coming.
+     *
+     * THE SILENCE BONUS is the anti-synergy the plan asks for and it is the one
+     * part that is not obvious. SYNCOPATION (`snare`) is deliberately the
+     * anti-metronome, and two weapons on disjoint slices of the bar do not
+     * actually fight — they interleave, which is a synergy. So the downbeat
+     * volley scales with how much of the bar went by in silence
+     * (`World.beatsQuiet`): alone, METRONOME arrives out of four beats of
+     * nothing at full weight; alongside a weapon firing four times a bar it
+     * arrives out of one and keeps 62% of it. That is a real cost the player
+     * can hear, measured by `tools/beatlock.mjs`.
+     *
+     * IT IS STILL THE DEFAULT OPENER. A player who never touches the starter
+     * menu meets the musical axis in the first second of the game, which is the
+     * only way an axis this unusual gets learned at all.
+     */
+    label: 'METRONOME',
     shape: 'seek',
-    blurb: 'Dry bolts at the nearest thing moving.',
+    beat: 'bar',
+    swell: 'silence',
+    blurb: 'Fires on the downbeat and nowhere else, for eight times a normal shot. Hardest out of silence.',
     character: 'aggressive — short, dry, off the string',
     weight: 1.0,
-    // Level 1 deliberately reproduces the ship's current gun, so the arena
-    // conversion starts a player exactly where the vertical game left them.
-    base: stats({ interval: 0.22, count: 2, damage: 4, speed: 1150, range: 620 }),
+    // 34 rather than 4, and 0.5 rather than 0.22: at 128 BPM the bar gate sets
+    // the rate and `interval` is only a floor under it, so the throughput above
+    // is `count * damage / bar` and not `count * damage / interval`.
+    base: stats({ interval: 0.5, count: 2, damage: 34, speed: 1150, range: 620 }),
     /*
      * FOLDED FROM SEVEN STEPS TO TWO, and this row is the worked example for
      * the other eleven.
@@ -751,37 +1051,98 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * Both notes therefore name a count change, which is the one thing a player
      * can count on the screen without reading a stat.
      */
+    /*
+     * BOTH RUNGS ARE STRUCTURAL AND NEITHER IS A PERCENTAGE. L2 doubles the
+     * bolts, L3 doubles the RATE by moving the lock from the bar to the
+     * half-bar — a rung the player hears rather than reads. Nominal throughput
+     * still tracks what the old ladder delivered: 36.3 / 72.5 / 208 per second
+     * against 36.4 / 72.7 / 224.
+     */
     steps: [
       {
-        note: 'two more bolts, thrown further and faster — and each one carries through the first thing it hits',
+        note: 'four bolts on the one instead of two, thrown further and faster, each punching through what it hits',
         add: { count: 2, pierce: 1 },
         mul: { speed: 1.18, range: 1.25 },
       },
       {
-        note: 'six bolts now, fired half again as often, each hitting harder and punching through two',
-        add: { count: 2, pierce: 1 },
-        mul: { interval: 0.68, damage: 1.4 },
+        note: 'the bar answers on the three as well — five bolts, twice as often, harder, punching through three',
+        beat: 'halfbar',
+        add: { count: 1, pierce: 2 },
+        mul: { damage: 1.15 },
       },
     ],
   },
   {
     id: 'snare',
-    label: 'SNARE ROLL',
+    /*
+     * SNARE ROLL IS NOW SYNCOPATION: it fires on the OFF beat and never on the
+     * beat. Four sweeps a bar, on the "and" of each one.
+     *
+     * It is the anti-metronome and the pair is the clearest statement the
+     * roster makes about its new axis: two weapons that both run on the same
+     * clock and never once agree about where they are in it. Holding both
+     * covers the whole bar and costs METRONOME its silence bonus, which is a
+     * decision rather than a stack.
+     *
+     * `interval` is 0.2 and the grid is 0.234s at 128 BPM, so the lock sets the
+     * rate outright — four sweeps a bar, one every 0.469s. Read the block with
+     * that in mind: `damage * count / interval` is not this instrument's
+     * throughput, `damage * count / 0.469` is.
+     *
+     * ---------------------------------------------------------------------
+     * IT IS A STARTER NOW, AND THE BLOCK WAS RE-AUTHORED FOR IT — twice, the
+     * second time because the first was measuring the wrong thing.
+     *
+     * Carried over at throughput parity with the old SNARE ROLL (10.7/s against
+     * 10.5/s) it measured **3.0 waves against METRONOME's 6.7, 45% of the best
+     * against a 70% floor** — the gate correctly calling it a trap. Nothing
+     * about the floor was touched, exactly as when this gate last named CHIME.
+     *
+     * THE FIRST FIX WAS DAMAGE AND IT DID ALMOST NOTHING. 2.4x the damage moved
+     * the wave count 3.0 -> 3.0 and only the hits column responded (14.0 ->
+     * 9.3). That is the finding, and it is about the SHAPE rather than this
+     * row: an `arc` sweep reaches `max(range, area)` and this one reached 96px.
+     * A weapon that only touches things already on top of you cannot clear a
+     * wave however hard it hits, and no amount of damage fixes a reach problem.
+     *
+     * REACH, THEN, and the sweep says so at every step —
+     * `tools/_openersweep.mjs`, 3 seeds x 240s, wave reached:
+     *
+     *     damage 5,  reach 96,  1 sweep     3.0     score  7,883
+     *     damage 12, reach 96,  1 sweep     3.0     score  8,163
+     *     damage 9,  reach 210, 1 sweep     4.0     score 21,858
+     *     damage 11, reach 300, 1 sweep     4.3     score 46,137
+     *     damage 8,  reach 280, 2 sweeps    6.7     score 69,830   <- overshoots
+     *     damage 6,  reach 240, 2 sweeps    6.0     score 58,052   <- taken
+     *
+     * The second sweep is what actually did it, and in hindsight obviously:
+     * `fireArc` spaces its strokes evenly around the whole compass, so a second
+     * one is not more damage in front of you, it is an ANSWER BEHIND YOU, and
+     * enemies in this game arrive from every bearing. The 280px row was not
+     * taken because it makes the off-beat weapon outscore the downbeat one
+     * nearly 2:1, and the pair is supposed to be a choice.
+     *
+     * Ladder in real throughput per second: 25.6 / 38.4 / 81.9 against the old
+     * SNARE ROLL's 10.5 / 21.0 / 85.7 — the ceiling lands within 5% and the
+     * opening is 2.4x, bought mostly in reach rather than in damage.
+     */
+    label: 'SYNCOPATION',
     shape: 'arc',
-    blurb: 'A sweep through the arc you are facing.',
+    beat: 'offbeat',
+    blurb: 'Rolls on the off-beat and never on the beat. Four sweeps a bar, all of them in the gaps.',
     character: 'mechanical — tight, martial, rudimental',
     weight: 0.95,
-    base: stats({ interval: 1.05, count: 1, damage: 11, area: 96, arc: 1.5, range: 96 }),
+    base: stats({ interval: 0.2, count: 2, damage: 6, area: 240, arc: 1.5, range: 240 }),
     steps: [
       {
-        note: 'the roll answers behind you as well, and both sweeps open wider and reach further out',
+        note: 'a third sweep off to the side, and all of them open a third wider and reach a third further out',
         add: { count: 1 },
         mul: { arc: 1.3, area: 1.3, range: 1.3 },
       },
       {
-        note: 'a third sweep off to the side, rolling twice as fast — a near-full circle that knocks back what it touches',
+        note: 'a fourth sweep closes the circle, and every off-beat now bites well over half again as hard',
         add: { count: 1 },
-        mul: { arc: 1.5, interval: 0.66, damage: 1.8 },
+        mul: { arc: 1.5, damage: 1.6 },
       },
     ],
   },
@@ -851,132 +1212,259 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   },
   {
     id: 'chime',
-    label: 'CHIME',
-    shape: 'strike',
-    blurb: 'Strikes something at random from above. You do not aim it.',
+    /*
+     * CHIME IS NOW RITARDANDO, AND IT DEALS NO DAMAGE AT ALL.
+     *
+     * `docs/plan-items-v2.md` §1: the roster had twelve damage dealers and zero
+     * of anything else, and that is the most obvious hole in it. Vampire
+     * Survivors has Laurel, Clock Lancet, Garlic and Tiragisu; the whole
+     * reference class this game is chasing gets its variety from items that are
+     * not a damage number. RITARDANDO is control, and the price is control of
+     * yourself.
+     *
+     * WHAT IT DOES. Enemies inside `area` of the ship move, turn and fire at a
+     * fraction of their speed. Every instrument in your loadout takes
+     * proportionally longer to come round. You buy a bubble you can stand in
+     * and pay for it out of your own rate of fire, which is the first genuine
+     * DRAWBACK any item in this table has carried.
+     *
+     * WHY IT COST CHIME ITS PLACE IN `STARTERS`. An opener has to be able to
+     * kill things in the first minute and this one cannot kill anything ever.
+     * `tools/openers.mjs` asserts the weakest opener reaches 70% of the best,
+     * and it is right to: a starter that cannot clear wave one is not a choice,
+     * it is a trap. See the note on `STARTERS` in `progression.ts` for the
+     * replacement and why it is a better set than the one it replaces.
+     *
+     * `damage` IS REUSED AS THE DRAG DEPTH, and it is signed so that MORE is
+     * STRONGER: it is the fraction of enemy time REMOVED, not the fraction
+     * left. That is not decoration. `tools/levelup.mjs` asserts
+     * `damage * count / interval` never falls as an instrument levels, and a
+     * field holding "enemies run at 55%" would read as a REGRESSION every time
+     * the item got better. `arc` is what the drag costs you, as a fraction of
+     * your own interval added on. `count` reaching 2 is the flag that enemy
+     * BULLETS are dragged as well as enemy bodies — a rung with no number to
+     * spend, expressed in the one field the shape has spare.
+     *
+     * DEPTH AND RADIUS WERE BOTH CUT AFTER THE FIRST MEASUREMENT, for the same
+     * reason REST's cooldown went the other way: at 0.72 depth over a 486px
+     * bubble this covers most of a 900x780 view and takes 72% off everything in
+     * it, bodies AND fire, permanently. That is not control, it is a difficulty
+     * setting. 0.40 / 0.52 / 0.62 over 220 / 297 / 356px is a bubble you have
+     * to stand in.
+     *
+     * `World.ensembleDps` skips this shape outright. A "nominal dps" column
+     * that counted 0.72 as damage would be quietly wrong in every balance tool
+     * in `tools/`, which is exactly the class of defect this file's history is
+     * made of.
+     */
+    label: 'RITARDANDO',
+    shape: 'drag',
+    blurb: 'Time drags in a bubble around you. Enemies crawl, and so does your own rate of fire. No damage.',
     character: 'shimmering — a single struck bell, long decay',
     weight: 0.9,
-    /*
-     * TWO BELLS AT LEVEL 1, AND THE REASON IS A CHANGE IN `world.ts`.
-     *
-     * `fireSeek` used to fan its bolts as `t = i/(n - 1) - 0.5`, which for any
-     * EVEN count never takes the value 0 — so the starting weapon's two bolts
-     * flew either side of the aim and nothing was ever fired along it. It now
-     * CONVERGES the bolts on the n nearest targets, which turned `count` on a
-     * seek weapon from "a wider spray" into "one more enemy hit per volley".
-     *
-     * Two of the three openers are `seek` and both got that for free. CHIME is
-     * `strike` and got nothing, and `tools/openers.mjs` caught it: the weakest
-     * opener fell to **68% of the strongest against a 70% floor**, with CHIME
-     * named as the trap. The floor was NOT relaxed — it is correct, and it is
-     * the gate doing its job.
-     *
-     * The fix is the same property, given to the shape that lacked it. A strike
-     * is already multi-target by `count`; CHIME simply opened with `count: 1`,
-     * so it was the one opener with no count for the change to be worth
-     * anything to. Two bells restores the share to **77%**, which is exactly
-     * what `openers` measured before the convergence change landed — the
-     * roster catching up, not overtaking. Swept against the gate's own
-     * measurement: `count 2` -> 77%, `interval 1.4 -> 1.0` -> 74%,
-     * `damage 16 -> 24` -> 74%, `area 34 -> 56` -> 68% (no effect at all), and
-     * `count 2 + interval 1.15` -> 81%, which overshoots the historical figure
-     * and was therefore not taken.
-     *
-     * WATCH ECHO CHAMBER, NOT CHIME, NEXT TIME. With this in, CHIME reaches 84%
-     * and **ECHOES becomes the binding opener at ~78%**. The gate only ever
-     * names the worst one, so the next regression in this area will be reported
-     * against a different instrument than the one that moved.
-     *
-     * The ladder is renumbered rather than re-costed: every `add` below is
-     * unchanged, so the ceiling moves 5 strikes -> 6 and the early game moves
-     * 1 -> 2. That is deliberate — `openers` measures the first four minutes,
-     * which is where the trap was.
-     */
-    base: stats({ interval: 1.4, count: 2, damage: 16, area: 34, range: 460 }),
-    /*
-     * THE RENUMBERING NOTE ABOVE STILL HOLDS, at a different length. Every
-     * `add` in the old seven-rung ladder is still here — the count total is
-     * unchanged at +4, so the ceiling is still six bells and the opener is
-     * still two. `tools/openers.mjs` measures the first four minutes, and the
-     * first four minutes are now the whole ladder, so watch it after any edit
-     * to these two rows.
-     */
+    base: stats({ interval: 1.2, count: 1, damage: 0.4, area: 220, arc: 0.3, linger: 0.6 }),
     steps: [
       {
-        note: 'four bells instead of two, landing wider and reaching the far side of the arena',
-        add: { count: 2 },
-        mul: { area: 1.35, range: 1.8 },
+        note: 'the bubble opens half again as wide, enemies inside it drop to under half speed, and it costs you less',
+        add: { damage: 0.12 },
+        mul: { area: 1.35, arc: 0.85, linger: 1.3 },
       },
       {
-        note: 'six bells, rung faster and struck half again as hard — the room never stops ringing',
-        add: { count: 2 },
-        mul: { area: 1.25, interval: 0.7, damage: 1.5 },
+        note: 'enemy FIRE slows inside it as well as enemy bodies, in a bubble wider again and deeper still',
+        add: { count: 1, damage: 0.1 },
+        mul: { area: 1.2, arc: 0.85 },
       },
     ],
   },
   {
     id: 'harp',
-    label: 'HARP GLISS',
-    shape: 'arc',
-    blurb: 'A fan of bolts sweeping across your facing.',
+    /*
+     * HARP GLISS IS NOW COUNTERPOINT — the first item in this game that
+     * modifies another item.
+     *
+     * `docs/plan-items-v2.md` §3: Ball x Pit's actual core is that things
+     * compose, and nothing here composed. Twelve instruments each did their own
+     * thing on their own timer, and the twelve passives were global
+     * multipliers, which is the flattest imaginable version of an item
+     * interacting with a build. A roster with no interactions has no lattice,
+     * and a lattice is where "rich ecosystem" actually comes from.
+     *
+     * WHAT IT DOES. Whenever the FIRST instrument in your loadout fires, your
+     * SECOND fires a copy — same routine, same geometry, a share of its damage.
+     * At level 3 your third answers as well.
+     *
+     * AND THAT MAKES LOADOUT ORDER A DECISION, which is the interesting part.
+     * Order is acquisition order; the player has always controlled it and has
+     * never once had a reason to think about it. With COUNTERPOINT held, a fast
+     * first instrument and a heavy second is a completely different build from
+     * the reverse — and it is the one build decision in the game that costs no
+     * picks at all.
+     *
+     * `docs/plan-items-v2.md` §7 names the risk and it is real: "if the player
+     * cannot see which instrument is first, the item is a coin flip." The HUD
+     * draws the loadout in acquisition order already, so the information is on
+     * screen; whether it READS as an ordering is not something any tool here
+     * can answer.
+     *
+     * `damage` is the copy's share of the follower's damage, `count` extra
+     * projectiles on the copy, `pierce` HOW MANY followers answer, `interval` a
+     * floor on how often a copy may be struck. Nothing else is read: this shape
+     * has no geometry of its own, which is what makes it a modifier rather than
+     * a weapon.
+     */
+    label: 'COUNTERPOINT',
+    shape: 'counterpoint',
+    blurb: 'Your second instrument fires a copy whenever your first does. The order you took them in matters now.',
     character: 'shimmering — a cascading harp run',
     weight: 0.9,
-    base: stats({ interval: 0.9, count: 5, damage: 5, arc: 1.1, speed: 780, range: 540 }),
+    base: stats({ interval: 0.6, count: 0, damage: 0.7, pierce: 1 }),
     steps: [
       {
-        note: 'three more strings in the fan, and it opens a third wider',
-        add: { count: 3 },
-        mul: { arc: 1.35 },
+        note: 'the answering voice carries an extra projectile of its own, and it may be struck twice as often',
+        add: { count: 1 },
+        mul: { interval: 0.5 },
       },
       {
-        note: 'ten strings sweeping past a half-circle, coming round faster, and the low ones carry through an enemy',
-        add: { count: 2, pierce: 1 },
-        mul: { arc: 1.6, interval: 0.72, damage: 1.45 },
+        note: 'your THIRD instrument answers as well, and both copies come through as strong as the original',
+        add: { count: 1, pierce: 1 },
+        mul: { damage: 1.6 },
       },
     ],
   },
   {
     id: 'drones',
-    label: 'DRONE PODS',
-    shape: 'orbit',
-    blurb: 'Pods that circle you, shoot, and each eat one bullet.',
+    /*
+     * DRONE PODS IS NOW UNISON: the whole band stops using its own timers and
+     * fires TOGETHER, on the bar.
+     *
+     * The second of the two items that modify other items, and the one that
+     * changes the shape of a run rather than a build. A trickle becomes a
+     * volley. Six instruments landing on the same beat is one enormous hit; six
+     * instruments on six timers is a texture — and the game has only ever had
+     * the texture.
+     *
+     * IT MAKES BREADTH BEAT DEPTH, which is the point. `tools/builds.mjs`
+     * measures the `greedy` (spread wide) policy against `narrow` (go deep) and
+     * the game has always rewarded depth. UNISON is the card that inverts that
+     * for one run, and inverting a dominant strategy is worth more than adding
+     * a number to it.
+     *
+     * RATE-NEUTRAL BY CONSTRUCTION, and this had to be argued rather than
+     * tuned. Re-clocking an instrument from its own `interval` to one bar
+     * multiplies its activations by `interval / bar`, so `World.fireInstruments`
+     * multiplies its damage by `bar / interval`, clamped to [0.4, 12]. Without
+     * that, UNISON is a 12x buff to a 0.15s weapon and a 45% NERF to a 3.2s
+     * one — two numbers colliding, not a design. With it, the conversion costs
+     * and gains nothing and this ladder is the whole of the payment.
+     *
+     * `damage` is the multiplier on the assembled volley, `count` extra
+     * projectiles every instrument puts into it, `linger` how far past a bar
+     * line a late instrument may still join. `interval` is read by the
+     * dispatcher and nothing else.
+     */
+    label: 'UNISON',
+    shape: 'unison',
+    beat: 'bar',
+    blurb: 'The whole band drops its own timers and fires together, on the bar. Breadth starts beating depth.',
     character: 'eerie — the arp split into hard-panned satellites',
     weight: 0.95,
-    base: stats({ interval: 0.34, count: 2, damage: 3, area: 46, speed: 1050, range: 560 }),
+    base: stats({ interval: 1.0, count: 0, damage: 1.25 }),
     steps: [
       {
-        note: 'four pods on a wider ring, each coming back from an absorb twice as quickly',
-        add: { count: 2 },
-        mul: { area: 1.22, linger: 0.5 },
+        note: 'every instrument in the band puts one more projectile into the volley',
+        add: { count: 1 },
       },
       {
-        note: 'six pods, firing outward as well as forward, faster and far harder',
-        add: { count: 2 },
-        mul: { interval: 0.7, damage: 1.725 },
+        note: 'the band lands on the half-bar as well, half again as hard, with two extra projectiles from each player',
+        beat: 'halfbar',
+        add: { count: 1 },
+        mul: { damage: 1.6 },
       },
     ],
   },
   {
     id: 'nova',
-    label: 'NOVA',
-    shape: 'aura',
-    blurb: 'A ring on the beat that clears bullets and hurts what it touches.',
+    /*
+     * NOVA IS NOW REST, AND ITS DAMAGE IS ZERO ON EVERY RUNG.
+     *
+     * A full bar in which nothing can touch you, on a long cooldown — and your
+     * whole band stops playing for every beat of it. The mix drops to its drone
+     * and comes back on the bar line, and the ring that sweeps the field clean
+     * lands with it.
+     *
+     * THE SECOND ITEM WITH NO DAMAGE, and the one that makes the axis a real
+     * axis rather than one experiment. A player holding REST is playing a
+     * different game for one bar in twenty: they can walk INTO the thing they
+     * have spent the whole run walking away from, which is the only item here
+     * that changes what the player is allowed to do rather than what they hit.
+     *
+     * THE SILENCE IS THE COST AND IT HAD TO BE AUDIBLE, or this is just Laurel
+     * with extra steps. `GameSnapshot.tacetStems` carries the whole band while
+     * the rest runs and the director zeroes those lanes; `SILENCEABLE_STEMS`
+     * deliberately excludes `sub`, `hats`, `fx` and `power` so what is left is
+     * a drone and not a crash. `docs/plan-items-v2.md` §7 names the failure
+     * mode exactly: the silence has to read as dramatic rather than as a bug,
+     * and that is a judgement no tool in this repository can make.
+     *
+     * `linger` IS IN BARS, not seconds. A rest that ends mid-bar is not a rest,
+     * and the whole item is built on the player hearing where it starts and
+     * stops. `interval` is the cooldown in seconds, `area` the radius of the
+     * return sweep, `count` how many rings that sweep is made of.
+     *
+     * ---------------------------------------------------------------------
+     * THE COOLDOWN GOES UP WITH THE LADDER, WHICH LOOKS BACKWARDS AND IS NOT.
+     *
+     * It went DOWN in the first draft — 26s, 22s, 13.7s against 1, 2 and 3 bars
+     * of rest — and that is 7%, 22% and **39% of the whole run invulnerable**.
+     * At 39% the item stops being a bar you spend and becomes a background
+     * property of the run, and `tools/builds.mjs` could see the consequence
+     * even though it has no idea REST exists: damage taken across the seven
+     * pick policies collapsed from a 2.4x spread to 1.4x, because every policy
+     * was picking up the same blanket immunity.
+     *
+     * Uptime is now 7%, 12% and 16%. What the ladder buys is the LENGTH of the
+     * window — one bar is a dodge, three bars is a plan — and not how much of
+     * the run you spend inside one.
+     *
+     * AND THE GUNS STOP TOO. `World.fireInstruments` returns early for the
+     * whole rest, so the band is silent in the simulation as well as in the
+     * mix. The first implementation silenced only the sound, which made the
+     * card's own sentence false and the item a bar of free immunity. Read that
+     * as the item's real shape: a rest is time you spend NOT killing things,
+     * and at three bars on a 34-second cooldown it is 16% of the run's damage
+     * traded for 16% of the run's danger.
+     *
+     * `damage: 0` IS THE DECLARATION. `tools/levelup.mjs` asserts nominal dps
+     * never falls as an item levels; 0, 0, 0 passes, and any later editor who
+     * gives this row a damage number will be undoing the design rather than
+     * balancing it.
+     */
+    label: 'REST',
+    shape: 'rest',
+    /*
+     * THE LOCK WAS IN THE PROSE AND NOT IN THE ROW, which is this file's own
+     * favourite defect. `fireRest` says in as many words that 'the shape carries
+     * beat: bar so it can only ever begin on a line', and it did not — the field
+     * was simply never written. `tools/beatlock.mjs` printed REST as an UNLOCKED
+     * row with 25/13/0/0/0/0/13/50 across the bar, which is a rest starting
+     * wherever the cooldown happened to land. The whole item is built on the
+     * player hearing where the silence starts and stops.
+     */
+    beat: 'bar',
+    blurb: 'A whole bar where nothing can touch you — and your whole band stops playing for every beat of it.',
     character: 'heavy — a wide room clap on the pulse',
     weight: 0.8,
-    // Pulses on the beat, so `interval` is a floor the world rounds up to the
-    // next beat. A ring that ignores the grid would be the one thing on the
-    // field not locked to the transport.
-    base: stats({ interval: 1.85, count: 1, damage: 9, area: 130, linger: 0.35 }),
+    base: stats({ interval: 26, count: 1, damage: 0, area: 320, linger: 1 }),
     steps: [
       {
-        note: 'a second ring chases the first, both reach further, and they pulse every other beat instead of every bar',
-        add: { count: 1 },
-        mul: { area: 1.3, interval: 0.6 },
+        note: 'two full bars of silence instead of one, and the band coming back sweeps a far wider ring clean',
+        add: { linger: 1 },
+        mul: { area: 1.5, interval: 1.15 },
       },
       {
-        note: 'a third ring, covering most of the arena, hanging in the air before it fades',
-        add: { count: 1 },
-        mul: { area: 1.5, damage: 1.5, linger: 1.8 },
+        note: 'three bars, and the return comes back as two rings that throw back and stagger everything they reach',
+        add: { linger: 1, count: 1 },
+        mul: { interval: 1.13, area: 1.3 },
       },
     ],
   },
@@ -1002,7 +1490,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
   },
   {
     id: 'feedback',
-    label: 'FEEDBACK',
+    label: 'DROP',
     /*
      * THE FOURTH SHAPE RE-POINT, AND THE ONE THAT COSTS THE MOST TO ARGUE.
      *
@@ -1063,117 +1551,226 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * deliver" list two paragraphs of this file already complain about. The
      * `character` phrase is untouched, so the audio side sees no change at all.
      */
+    /*
+     * FEEDBACK IS NOW DROP, AND THE SHAPE DID NOT MOVE — the CLOCK did.
+     *
+     * It keeps the cone, the stat block and the ladder it was given one pass
+     * ago, and gains one property: it is near-inert during the intro, the
+     * build, the breakdown and the fill, and it is the loudest thing on the
+     * field during the drop. `Swell.drop` reads `MusicalState.section` and
+     * `MusicalState.energy`, which `main.ts` pushes in from the director.
+     *
+     * THE RUN'S MUSICAL ARC BECOMES A COMBAT CLOCK. Nothing else in this game
+     * has ever asked the player to listen for a cue and then act on it — the
+     * arrangement has been a beautiful readout of a fight it had no say in
+     * since the project started (`docs/plan-items-v2.md` §2). A player holding
+     * DROP saves position, saves the well, saves the bomb, and spends all of it
+     * when the build lands.
+     *
+     * MEASURED, BECAUSE THE SECTION SHARE DECIDES WHETHER THIS IS A DESIGN OR A
+     * TAX. `tools/sections.mjs` over 8 seeds x 300s: drop 42.5%, build 17.2%,
+     * breakdown 16.5%, sustain 16.2%, intro 4.1%, fill 3.4%. So the item is
+     * live for a bit under half a run — often enough to build around, rarely
+     * enough that its arrival is an event. Time-weighted, the swell works out
+     * about 18% above a flat item of the same block, which is the volatility
+     * premium and is deliberate.
+     *
+     * IT IS NOT AN OPENER AND MUST NOT BECOME ONE. Four minutes of `openers`
+     * would spend most of itself outside a drop.
+     */
     shape: 'cone',
-    blurb: 'A blast of feedback out of the front of the hull. Murderous up close, nothing at range.',
+    swell: 'drop',
+    blurb: 'Almost nothing until the drop lands. Inside one, the loudest thing on the field.',
     character: 'aggressive — saturated amp hum, no attack at all',
     weight: 0.85,
     base: stats({ interval: 0.6, count: 5, damage: 1.4, arc: 0.8, speed: 880, range: 190 }),
     steps: [
       {
-        note: 'four more pellets in the burst, thrown a fifth wider and a little further, and it comes round sooner',
+        note: 'four more pellets in the burst, thrown wider and further, and the drop comes round sooner',
         add: { count: 4 },
         mul: { arc: 1.15, range: 1.15, interval: 0.8 },
       },
       {
-        note: 'twelve pellets now, leaving a fifth faster and biting two fifths harder, in a blast wide enough to catch a whole rush',
-        add: { count: 3 },
+        note: 'twelve pellets that punch clean through everything while the drop is running, wide enough for a whole rush',
+        add: { count: 3, pierce: 2 },
         mul: { interval: 0.8, damage: 1.4, arc: 1.35, speed: 1.2, range: 1.15 },
       },
     ],
   },
   {
     id: 'echoes',
-    label: 'ECHO CHAMBER',
-    shape: 'seek',
-    blurb: 'Bolts that come back off the walls.',
+    /*
+     * ECHO CHAMBER IS NOW SOSTENUTO: the last enemy you killed comes back and
+     * fights for you.
+     *
+     * The third non-damaging item, in the sense that matters — SOSTENUTO itself
+     * has no hitbox anywhere. What it has is a rule about corpses, and that
+     * turns the field into a resource. You stop shooting the nearest thing and
+     * start choosing what to kill, because what you kill is what stands next to
+     * you for the next seven seconds.
+     *
+     * NO NEW CONTAINER. A ghost is a `BulletFlag.Summon` bullet, driven by
+     * `updateSummons`, drawn as sprite type 2 — all of which `spawn` (VIBRATO)
+     * already built and `tools/effectsdraw.mjs` already asserts is drawn. The
+     * difference is entirely WHERE and WHEN: a summon is bought on a timer at
+     * the ship, a ghost is raised at a body.
+     *
+     * IT SURVIVES ITS OWN HITS, which `spawn` does not, and that is the one
+     * change to `collidePlayerBullets` this item needed. A summon is consumed
+     * on contact; a ghost carries `bounces` as STRIKES REMAINING and recoils
+     * instead, which both keeps it alive to be an ally and rate-limits it — a
+     * piercing ally would sit inside the first body it reached and apply its
+     * damage on all 120 steps a second, which is why `spawn` refuses pierce.
+     *
+     * IT CANNOT OPEN A RUN, AND THAT IS A HARD DEADLOCK RATHER THAN A WEAKNESS.
+     * No other weapon means no kill; no kill means no ghost; no ghost means no
+     * kill. `echoes` therefore had to leave `STARTERS` — see the note there.
+     * The old ECHO CHAMBER was in that list on merit and this is a real loss;
+     * the wall-bouncing it brought survives in CANON, which is still its
+     * evolution.
+     *
+     * `count` is the standing retinue, `linger` a ghost's lifetime, `damage`
+     * its strike, `speed` its travel, `bounces` how many strikes it has in it,
+     * `interval` the minimum gap between raisings, `range` how far from the
+     * ship a corpse may be and still be raised.
+     */
+    label: 'SOSTENUTO',
+    shape: 'ghost',
+    blurb: 'The last thing you killed comes back and fights beside you until it fades.',
     character: 'eerie — the same hit returning late and quieter',
     weight: 0.85,
-    base: stats({ interval: 0.75, count: 2, damage: 6, speed: 620, bounces: 2, range: 1400 }),
+    base: stats({ interval: 1.4, count: 1, damage: 9, speed: 300, bounces: 3, linger: 7, range: 700 }),
     steps: [
       {
-        note: 'a third bolt, and every bolt takes three more bounces before it fades',
-        add: { bounces: 3, count: 1 },
-        mul: { range: 1.4 },
+        note: 'two ghosts stand with you at once, they last half again as long and each one strikes far harder',
+        add: { count: 1, bounces: 2 },
+        mul: { linger: 1.6, damage: 1.8 },
       },
       {
-        note: 'seven bounces each, off enemies as well as walls, fired faster and hitting harder every time they return',
-        add: { bounces: 2, pierce: 1 },
-        mul: { interval: 0.7, damage: 1.5 },
+        note: 'three ghosts, raised almost the instant you kill, moving faster and tearing through what they reach',
+        add: { count: 1, bounces: 3 },
+        mul: { interval: 0.45, damage: 1.5, speed: 1.4 },
       },
     ],
   },
   {
     id: 'timpani',
-    label: 'TIMPANI',
+    /*
+     * TIMPANI IS NOW CRESCENDO: the only weapon in the game that wants you in
+     * trouble.
+     *
+     * Its damage is multiplied by how much danger the ship is actually in —
+     * feeble on an empty field, enormous inside a ring. It inverts the risk
+     * curve every other item in this table sits on, and inverting a curve is
+     * worth more than steepening one: the whole roster's answer to pressure has
+     * always been "get out", and this is the one card that answers "stay".
+     *
+     * IT READS THE WORLD, NOT THE MUSIC, AND THAT IS DELIBERATE. The plan
+     * (`docs/plan-items-v2.md` §3) names `energy`, which is the director's
+     * blend of run progress and immediate danger. The behaviour it asks for —
+     * "feeble when safe, enormous when surrounded" — is the second half of that
+     * blend and nothing else, and the world already computes it:
+     * `World.analyseEncirclement` produces the exact signal `tools/arena.mjs`
+     * gates the difficulty curve on. Using it means CRESCENDO needs no
+     * `MusicalState` push, behaves identically in a headless gate and a played
+     * run, and cannot be made strong by surviving for a long time in safety.
+     * Say plainly what that costs: this item does NOT respond to the
+     * arrangement, and one of the five musical-axis slots is therefore musical
+     * in name rather than in mechanism.
+     *
+     * `World.dangerSwell` is the multiplier and `tools/beatlock.mjs` prints its
+     * distribution over a real run, because a swell whose input sits at 0.04
+     * for the whole game is a swell that is off — and the raw encirclement p50
+     * IS 0.04. It is blended with the nearest-threat and local-population
+     * signals for exactly that reason.
+     *
+     * THE BLOCK IS FRONT-LOADED, BECAUSE THIS IS THE THIRD OPENER NOW — see
+     * `STARTERS`. `tools/_openersweep.mjs` measured it at 3.7 waves against
+     * METRONOME's 6.7, which is 55% against a 70% floor; `damage` goes 34 -> 54
+     * at level 1 and the top rung's multiplier comes down 2.4 -> 1.6 to pay for
+     * it, which takes it to 5.3 waves (76%). The ceiling moves 90.7 -> 96.0 per
+     * second before the swell, under 6%, while the opening moves 10.6 -> 16.9.
+     * The swell then multiplies whatever that is by 0.3 to 3.3.
+     *
+     * Unlike SYNCOPATION this row needed no reach: an aura already covers 170px
+     * in every direction, which is the same property that made the old TIMPANI
+     * a better opener at 10.6 nominal than FEEDBACK was at 11.7.
+     *
+     * The number in the block is the FLOOR of a range rather than the value,
+     * which is the one thing to keep in mind when reading it against any other
+     * row in this table.
+     */
+    label: 'CRESCENDO',
     shape: 'aura',
-    blurb: 'A slow, enormous shockwave. You will feel it land.',
+    swell: 'danger',
+    blurb: 'Feeble while you are safe. Enormous while you are surrounded. It wants you in trouble.',
     character: 'heavy — orchestral, felt in the chest',
     weight: 0.7,
-    base: stats({ interval: 3.2, count: 1, damage: 34, area: 170, linger: 0.25 }),
+    base: stats({ interval: 3.2, count: 1, damage: 54, area: 170, linger: 0.25 }),
     steps: [
       {
-        note: 'the wave carries much further, is struck more often, and staggers whatever survives it',
+        note: 'the wave carries much further and lands more often — and it now swells outward with the danger too',
         mul: { area: 1.69, interval: 0.75, linger: 1.8 },
       },
       {
-        note: 'a second, delayed wave — and the strike shakes the whole arena at well over twice the weight',
+        note: 'a second, delayed wave, and being surrounded is worth well over half again what it was worth',
         add: { count: 1 },
-        mul: { area: 1.2, damage: 2.4 },
+        mul: { area: 1.2, damage: 1.6 },
       },
     ],
   },
   {
     id: 'tremolo',
-    label: 'TREMOLO FIELD',
     /*
-     * THE SIXTH SHAPE RE-POINT, AND THE BLURB IS THE WHOLE ARGUMENT.
+     * TREMOLO FIELD IS NOW TACET: you silence a lane of your own soundtrack,
+     * the quiet banks up, and it lands when the part comes back in.
      *
-     * "Pools left in your wake" is what this card has said since the row was
-     * written. `fireField` drops its pool ON THE NEAREST ENEMY — which is not
-     * merely a different placement, it is the one placement that guarantees the
-     * pool is never behind you. The `FUSIONS` preamble lists this under prose
-     * the simulation does not deliver and has done since that heading was
-     * added.
+     * THE ONLY ITEM IN THE GAME WHOSE COST IS PAID IN THE THING THE GAME IS
+     * ABOUT. Every other trade-off here is mechanical — rate for damage, range
+     * for safety. This one asks the player to make their own soundtrack worse
+     * for a payoff, and the readout for the resource is not a bar on the HUD,
+     * it is the missing part. You can hear how charged it is.
      *
-     * `trail` lays a drop wherever the ship is, every activation, and only
-     * while the ship is moving. The stat block does not move at all: `count`,
-     * `damage`, `area`, `linger` and `interval` are all read by the new routine
-     * and they mean the same things they meant to `pushWell` — `count` pools
-     * sharing one activation's damage, `area` the radius, `linger` how long
-     * they burn. Both of the ladder's steps therefore keep doing exactly what
-     * their notes say.
+     * THE CYCLE. `range` bars of playing, then `linger` bars with `count` lanes
+     * out of the mix, banking `damage` a bar; on the bar line the lanes come
+     * back, the bank discharges as a ring of radius `area` and the cycle
+     * restarts. It is locked to the bar because a tacet that begins in the
+     * middle of one is not a tacet, it is a dropout — so `interval` is only the
+     * dispatcher's floor (0.5s, under one bar) and `range` carries the count of
+     * bars, which is the one spare field on a shape that has no reach.
      *
-     * IT DROPS INTO `novas[]` AND NOT `wells[]`, WHICH IS A DEPARTURE FROM
-     * `docs/research-weapons.md` §D.2. That section specified `wells[]` and was
-     * written before `docs/plan-passives.md` §8.8 measured the reason not to:
-     * nothing in `Renderer` read `World.wells`, so this instrument has spent
-     * its whole life dealing invisible damage. `Renderer.drawWells` lands in
-     * this same change and fixes that for BLACK HOLE and DOWNBEAT, which have
-     * nowhere else to go — but a nova is still the better container for a wake,
-     * because it opens once and fades where a well grows and collapses on a
-     * sine. See `World.fireTrail`.
+     * WHICH LANE. A rota over `SILENCEABLE_STEMS`, advancing each cycle, so the
+     * item does not spend a whole run removing the same part — and never
+     * `sub`, `hats`, `fx` or `power`, so there is always something sounding.
+     * `docs/plan-items-v2.md` §7 names the risk: silence has to read as
+     * dramatic, not as a bug.
      *
-     * POWER: unchanged by construction. `pushWell` set
-     * `dps = damage * share / linger` over a pool of radius `area`, and
-     * `fireTrail` sets `dps = damage / drops / linger` over a ring of the same
-     * radius. Same total, same window, different place — and the place is the
-     * entire point.
+     * THIS IS THE SECOND RE-POINT THIS ROW HAS HAD. It was `field`, then
+     * `trail` ("pools left in your wake", which the simulation finally
+     * delivered one pass ago), and now this. The wake is not lost — VIBRATO,
+     * still this instrument's evolution, is `spawn`, and UP-TEMPO in the rig
+     * lays a trail on distance travelled. Say plainly that a good implemented
+     * shape was spent here: `trail` was the item the last pass was proudest of
+     * and the owner still found the roster boring, which is the whole argument
+     * of `docs/plan-items-v2.md` §1 in one row.
      */
-    shape: 'trail',
-    blurb: 'Pools left in your wake that keep working after you have gone.',
+    label: 'TACET',
+    shape: 'tacet',
+    beat: 'bar',
+    blurb: 'Silences a lane of your own soundtrack. The quiet banks up, and lands when the part comes back.',
     character: 'shimmering — unsettled, wobbling, never quite still',
     weight: 0.85,
-    base: stats({ interval: 1.1, count: 1, damage: 4, area: 62, linger: 2.6 }),
+    base: stats({ interval: 0.5, count: 1, damage: 7, area: 150, linger: 2, range: 4 }),
     steps: [
       {
-        note: 'a second pool per drop, spread wider and still burning long after you have gone',
-        add: { count: 1 },
-        mul: { area: 1.3, linger: 1.7 },
+        note: 'the part stays out for twice as long, so twice as much banks up, and it comes back wider',
+        add: { linger: 2 },
+        mul: { damage: 1.6, area: 1.4 },
       },
       {
-        note: 'a third pool, dropped more often, burning harder and creeping outward as it burns',
+        note: 'two parts go quiet at once, and what comes back sweeps every bullet it reaches off the field',
         add: { count: 1 },
-        mul: { area: 1.35, interval: 0.7, linger: 1.3, damage: 1.6 },
+        mul: { damage: 1.5, area: 1.35 },
       },
     ],
   },
@@ -2587,6 +3184,25 @@ export function instrumentStats(id: string, level: number): InstrumentStats {
     }
   }
   return out;
+}
+
+/**
+ * Which grid line this instrument fires on at this level, or null for "any".
+ *
+ * The same fold `instrumentStats` performs, on the one property that is not a
+ * number: the highest rung reached that names a lock wins, and the base's lock
+ * is the floor. Kept beside the stat fold rather than inside it because
+ * `InstrumentStats` is documented as all-numeric so a block can be folded,
+ * scaled and diffed with no special case, and adding a string to it would
+ * break `applyModifiers`, `synthesiseDuet` and `deadhunt-ranges` at once.
+ */
+export function beatLockOf(id: string, level: number): BeatLock | null {
+  const def = instrumentDef(id);
+  if (!def) return null;
+  let lock: BeatLock | null = def.beat ?? null;
+  const upto = Math.min(Math.max(level, 1), def.steps.length + 1) - 1;
+  for (let i = 0; i < upto; i++) if (def.steps[i].beat) lock = def.steps[i].beat!;
+  return lock;
 }
 
 /**

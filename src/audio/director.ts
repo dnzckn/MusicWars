@@ -1593,6 +1593,47 @@ export class MusicDirector {
        * rebuild that brings the part back on the phrase line.
        */
       if (id === tacet) want = 0;
+      /*
+       * THE PLAYER'S OWN TACET, applied after the arrangement's, and last of
+       * everything for the reason the two rules above it are.
+       *
+       * `GameSnapshot.tacetStems` is the one channel by which an ITEM reaches
+       * into the mix — TACET (`tremolo`) takes a lane out and banks the silence,
+       * REST (`nova`) takes the whole band out for the bar it is invulnerable.
+       * `SILENCEABLE_STEMS` keeps `sub`, `hats`, `fx` and `power` out of reach,
+       * so what is left is a drone rather than digital silence: the cost has to
+       * read as the band stopping and not as the audio crashing.
+       *
+       * A hard zero, like the rota's, and for the same reason: it is transient
+       * by construction — the world rebuilds the array from state every step
+       * and clears it on death — so there is nothing here that can stick.
+       *
+       * `includes` over an array of at most seven strings, once per lane per
+       * frame. The guard in front of it is what makes the ordinary case (nobody
+       * holding either item) a single length check.
+       *
+       * MEASURED AT THE FADER, in a real browser, with TACET and REST both at
+       * their ceiling — 3,810 frames, 2,360 of them with something hushed:
+       *
+       *     lane      fader while hushed    otherwise
+       *     arp                   0.0041       0.3220
+       *     clap                  0.0048       0.6684
+       *     kick                  0.0143       1.1726
+       *     chords                0.0341       0.8975
+       *     lead                  0.0270       0.8439
+       *     motifs                0.0025       0.7414
+       *     bass                  0.0169       0.5095
+       *     sub / hats / fx / power   never hushed
+       *
+       * The residue is the fader glide rather than a leak. Recorded because the
+       * chain from an ITEM to a lane crosses three files and nothing in
+       * `tools/` walks it: everything node-only stops at the snapshot, and a
+       * mute that never reached this line would be an item whose entire
+       * identity was a comment.
+       */
+      if (snap.tacetStems.length > 0 && (snap.tacetStems as readonly string[]).includes(id)) {
+        want = 0;
+      }
 
       wants[id] = want;
     }

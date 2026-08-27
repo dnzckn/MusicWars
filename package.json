@@ -167,7 +167,8 @@
     "gridcost": "node --experimental-transform-types tools/gridcost.mjs",
     "gridraster": "node tools/gridraster.mjs",
     "gridview": "node --experimental-transform-types tools/gridview.mjs",
-    "spawnring": "node --experimental-transform-types tools/spawnring.mjs"
+    "spawnring": "node --experimental-transform-types tools/spawnring.mjs",
+    "beatlock": "node --experimental-transform-types tools/beatlock.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",

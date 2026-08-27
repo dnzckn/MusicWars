@@ -12,10 +12,13 @@
 import {
   EventBus,
   emptySnapshot,
+  SILENCEABLE_STEMS,
   type AbilityId,
   type EnemyArchetype,
   type GameSnapshot,
   type InstrumentId,
+  type MusicalState,
+  type SilenceableStem,
 } from '../core/events';
 import { clamp, clamp01, damp, dist2, TAU } from '../core/math';
 import { Rng } from '../core/rng';
@@ -47,11 +50,14 @@ import {
 import * as prog from './progression';
 import {
   applyModifiers,
+  beatLockOf,
   instrumentDef,
   instrumentStats,
   labelOf,
   noModifiers,
   noRules,
+  type BeatLock,
+  type InstrumentDef,
   type InstrumentStats,
   type Modifiers,
   type Rules,
@@ -65,6 +71,26 @@ import {
   type SpawnRing,
   type WavePlan,
 } from './waves';
+
+/**
+ * One instrument as `fireInstruments` folds it: the table row, the level it is
+ * held at, and the stat block this step will fire it with.
+ *
+ * A NAMED TYPE AND NOT AN INLINE ONE, and the reason is a tool rather than
+ * taste. `tools/deadhunt-ranges.mjs` slices a firing routine's body out of this
+ * file by finding the first `{` after the routine's name and brace-matching
+ * from there, so a parameter list containing an object type ends the "body" in
+ * the middle of the signature. Measured: with `fireCounterpoint` declared as
+ * `(s, voices: { id: string; ... }[])` the audit read an empty body and printed
+ * `harp.count`, `harp.damage` and `harp.pierce` as DEAD stats when all three
+ * are read on the next line.
+ */
+export interface BandVoice {
+  id: string;
+  level: number;
+  def: InstrumentDef;
+  s: InstrumentStats;
+}
 
 /** What a centre-screen announcement is about. */
 export type BannerKind = 'wave' | 'boss' | 'phase' | 'grade' | 'archetype' | 'item';
@@ -553,6 +579,123 @@ export class World {
    */
   private overchargeVolley = false;
 
+  /* ---------------------------------------------------------------------- *
+   * THE SECOND AXIS: the state five of the twelve instruments run on.
+   *
+   * `docs/plan-items-v2.md` §1 counted the roster and found twelve items and
+   * one idea. Everything below exists so that an item can be about WHEN, about
+   * WHETHER, or about ANOTHER ITEM, rather than about where the hitbox appears.
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * Where the arrangement is, as far as the simulation is concerned.
+   *
+   * `main.ts` pushes the director's real readout into this once a frame. It is
+   * the only inbound channel in the whole game/music boundary and it is a plain
+   * value object by design — the world holds no director, cannot ask it a
+   * question, and `src/game/` still never imports `src/audio/`.
+   *
+   * WITH NOBODY CONDUCTING IT FREE-RUNS, and that decision has to be stated
+   * plainly because it is the one place this pass invents music inside the game
+   * layer. Every headless tool in `tools/` builds a `World` and no director:
+   * benchmarked, running a real `MusicDirector` alongside the simulation costs
+   * **11.5x** the step time (`world only 136ms / world + director 1560ms` over
+   * 7,200 steps), which `tools/builds.mjs` — 7 policies x 8 seeds x 900s —
+   * cannot afford. A default of "always intro" would leave DROP inert in every
+   * gate the project has, which is a worse lie than a stand-in.
+   *
+   * So the stand-in is CALIBRATED rather than invented: `tools/sections.mjs`
+   * measures the real arranger at drop 42.5%, build 17.2%, breakdown 16.5%,
+   * sustain 16.2% over 8 seeds x 300s, and `freeRunMusic` reproduces a drop
+   * share of 43% off the eight-bar phrase. It is NOT a copy of
+   * `Arranger.maybeAdvance` and must never become one; it is the world's own
+   * coarse idea of the form, used only when nothing better has been pushed.
+   */
+  readonly musical: MusicalState = { section: 'sustain', energy: 0.45 };
+  private musicalPushed = false;
+
+  /**
+   * The transport beat at the last activation of ANY instrument.
+   *
+   * METRONOME's silence bonus reads it. See `Swell` in `weapons.ts`: two
+   * beat-locked weapons on disjoint slices of the bar interleave rather than
+   * conflict, so the anti-synergy the design asks for has to be stated as a
+   * real cost, and "how much of the bar went by in silence" is the honest one.
+   */
+  private lastVolleyBeat = 0;
+
+  /** Beats since anything in the band last fired, capped at one bar. */
+  get beatsQuiet(): number {
+    return Math.min(BEATS_PER_BAR, Math.max(0, this.transport.beat - this.lastVolleyBeat));
+  }
+
+  /* RITARDANDO's bubble, folded once per step from the loadout. */
+  private dragRadius = 0;
+  /** Fraction of enemy time REMOVED inside the bubble, 0..1. */
+  private dragDepth = 0;
+  /** Multiplier on every instrument's own interval. 1 when nothing drags. */
+  private dragSelf = 1;
+  /** True once the bubble reaches enemy fire as well as enemy bodies. */
+  private dragBullets = false;
+  private dragPulseAt = 0;
+
+  /** SOSTENUTO: where the last thing the player killed fell. */
+  private corpseX = 0;
+  private corpseY = 0;
+  private corpseHue = 0;
+  private hasCorpse = false;
+
+  /** COUNTERPOINT: the earliest time the answering voice may be struck again. */
+  private counterpointAt = 0;
+
+  /* REST: the rest itself, and the sweep that lands when the band comes back. */
+  private restUntil = -1;
+  private restSweep: { at: number; area: number; rings: number; dps: number; hue: number } | null = null;
+
+  /*
+   * TACET's cycle. `tacetBars` counts down bars in whichever half of the cycle
+   * is running; `tacetQuiet` says which half that is.
+   */
+  private tacetQuiet = false;
+  private tacetBars = 0;
+  private tacetBank = 0;
+  private tacetRota = 0;
+  private readonly tacetLanes: SilenceableStem[] = [];
+
+  /**
+   * Called once per instrument activation, if anything set it.
+   *
+   * `tools/beatlock.mjs` is the reason it exists: a beat-locked weapon that
+   * fires uniformly is this repository's classic silent defect, and NO existing
+   * gate can see it — `rulefire` watches the rig, `deadhunt-ranges` watches
+   * stats, and neither knows what a bar is. Proving the claim needs the phase
+   * of every activation, which is not derivable from anything the world already
+   * publishes.
+   *
+   * Public and optional in the same style as `isFirstDiscovery`. Unset it costs
+   * one comparison per activation.
+   */
+  onActivation: ((id: string, barPhase: number, damage: number) => void) | undefined = undefined;
+
+  /**
+   * How many activations each beat lock allowed, and how many it held back.
+   *
+   * The cheap half of the same question, always on, so a lock that has silently
+   * stopped gating is visible without a browser or a bespoke tool.
+   */
+  readonly beatFires = { bar: 0, halfbar: 0, offbeat: 0, free: 0, held: 0 };
+
+  /*
+   * Fire counts for the four items whose whole identity is a branch that might
+   * never be taken. Same argument as `ruleFires`: an item installed and never
+   * triggered is the same defect as a stat nothing reads, and it is a likelier
+   * one. `tools/beatlock.mjs` prints all four with denominators.
+   */
+  counterpointCopies = 0;
+  ghostsRaised = 0;
+  tacetDischarges = 0;
+  dragsApplied = 0;
+
   /**
    * Flags every player bolt is spawned with.
    *
@@ -789,6 +932,18 @@ export class World {
    * 12; see `fireSpawn` for why the count is not per instrument.
    */
   static readonly MAX_SUMMONS = 12;
+  /*
+   * The bounds on UNISON's rate compensation. Both are reachable and neither is
+   * decorative: SPICCATO under RAPID reaches a 0.062s interval (enumerated by
+   * `deadhunt-ranges`), which asks for 30x, and BLACK HOLE opens at 6.5s, which
+   * asks for 0.29x. See `World.fireUnison`.
+   */
+  static readonly UNISON_MAX = 12;
+  static readonly UNISON_MIN = 0.4;
+  /** How far a ghost is thrown back by its own strike, in px. See `fireGhost`. */
+  static readonly GHOST_RECOIL = 44;
+  /** Shapes whose `damage` field is not damage. See `ensembleDps`. */
+  static readonly NO_DPS: ReadonlySet<string> = new Set(['rest', 'drag', 'unison', 'counterpoint']);
   /**
    * rad/s a summon can turn. Half `steerPlayerBullets`' hardcoded 6, because an
    * ally that turns as fast as a homing bolt sticks to its target's back and
@@ -995,6 +1150,33 @@ export class World {
     for (const k of Object.keys(this.shotCount)) delete this.shotCount[k];
     this.trailSince = 0;
     this.stillTime = 0;
+    /*
+     * The second axis' state, all of it, because the retry button is this same
+     * call: a rest still running, a lane still muted or a corpse still banked
+     * from the previous run would all survive into the next one, and the muted
+     * lane would survive VISIBLY — a fresh run opening with a hole in the mix.
+     */
+    this.lastVolleyBeat = 0;
+    this.dragRadius = 0;
+    this.dragDepth = 0;
+    this.dragSelf = 1;
+    this.dragBullets = false;
+    this.dragPulseAt = 0;
+    this.hasCorpse = false;
+    this.counterpointAt = 0;
+    this.restUntil = -1;
+    this.restSweep = null;
+    this.tacetQuiet = false;
+    this.tacetBars = 0;
+    this.tacetBank = 0;
+    this.tacetRota = 0;
+    this.tacetLanes.length = 0;
+    this.snapshot.tacetStems.length = 0;
+    this.counterpointCopies = 0;
+    this.ghostsRaised = 0;
+    this.tacetDischarges = 0;
+    this.dragsApplied = 0;
+    for (const k of Object.keys(this.beatFires) as (keyof typeof this.beatFires)[]) this.beatFires[k] = 0;
     for (const k of Object.keys(this.ruleFires) as (keyof typeof this.ruleFires)[]) this.ruleFires[k] = 0;
     for (const k of Object.keys(this.ruleChances) as (keyof typeof this.ruleChances)[]) this.ruleChances[k] = 0;
     // In place, never reassigned: see the field's comment, and the
@@ -1525,7 +1707,18 @@ export class World {
     // timewarp rather than rescaled per-step, so they can never drift off it.
     this.warpedBeat += (this.transport.beat - this.lastBeat) * fireScale;
     this.lastBeat = this.transport.beat;
+    /*
+     * Where the arrangement is, for the two items that ask.
+     *
+     * A no-op the moment `main.ts` has pushed a real readout; see the `musical`
+     * field for why the stand-in exists and why it is calibrated against
+     * `tools/sections.mjs` rather than invented.
+     */
+    this.freeRunMusic();
     this.updateEnemies(simDt, this.warpedBeat, moveScale);
+    // RITARDANDO's third rung. Guarded so the ordinary loadout pays one boolean
+    // and not a walk of the enemy pool looking for a flag nothing set.
+    if (this.dragBullets && this.dragRadius > 0) this.dragEnemyFire();
     this.updateWave(simDt);
     /*
      * BULLETS LIVE AND BOUNCE AGAINST THE VIEW, NOT THE FIELD, AND THAT IS
@@ -1619,6 +1812,9 @@ export class World {
     // advanced on the same step rather than sitting at r=0 for a frame.
     this.updateShells(simDt);
     if (this.summonsActive) this.updateSummons(simDt);
+    // Before `updateNova`, so the sweep the band comes back with is advanced on
+    // the step it is pushed rather than sitting at r=0 for a frame.
+    this.updateRest();
     this.updateNova(simDt);
     this.updateNotes(simDt);
     this.particles.update(simDt);
@@ -1674,6 +1870,15 @@ export class World {
      */
     const slowSq = this.rules.slowRadius * this.rules.slowRadius;
     const slowTo = this.mods.enemyTime;
+    /*
+     * RITARDANDO's bubble, hoisted for exactly the reason TIMEWARP's is: the
+     * loop already runs at 39 enemies and this is the cheapest place in it to be
+     * careless. Deliberately a SECOND bubble rather than folded into the first —
+     * one is a passive's rule and one is an instrument, they have different
+     * radii and different depths, and a player holding both should get both.
+     */
+    const dragSq = this.dragRadius * this.dragRadius;
+    const dragTo = Math.max(0.05, 1 - this.dragDepth);
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       e.prevX = e.x;
@@ -1802,6 +2007,11 @@ export class World {
           scale *= slowTo;
           this.ruleFires.slowed++;
         }
+      }
+      if (dragSq > 0) {
+        const ddx = e.x - this.player.x;
+        const ddy = e.y - this.player.y;
+        if (ddx * ddx + ddy * ddy <= dragSq) scale *= dragTo;
       }
       e.move(e, dt * scale, ctx);
 
@@ -3140,6 +3350,28 @@ export class World {
   private onEnemyKilled(e: Enemy): void {
     this.killsThisStep++;
     /*
+     * SOSTENUTO FIRES OFF THIS, in place, at the line that already knows an
+     * enemy has died — the same rule the rig's trigger surface follows and for
+     * the same reason: `core/events.ts` says the simulation emits and never
+     * receives, and a listener in `main.ts` reaching back into the world to
+     * raise a ghost would invert that boundary and buy a frame of latency for
+     * nothing.
+     *
+     * A POSITION, NOT A GHOST. Raising here would make the retinue a function
+     * of the kill rate rather than of the item's own clock, so this records the
+     * corpse and `fireGhost` decides on its interval whether to use it. It is
+     * one struct's worth of state and it is overwritten by the next kill, which
+     * is what "the LAST enemy you killed" means.
+     *
+     * Unconditional, because the alternative is scanning the loadout on every
+     * death to find out whether anyone cares. Four number writes against a
+     * measured 1.5-2.8 kills a second.
+     */
+    this.corpseX = e.x;
+    this.corpseY = e.y;
+    this.corpseHue = e.hue;
+    this.hasCorpse = true;
+    /*
      * `MAX_MULTIPLIER` is applied HERE as well, and until now it was not.
      *
      * The cap was written at the shard-pickup site in `updateNotes` and this,
@@ -3450,6 +3682,28 @@ export class World {
           if (this.rules.killEcho > 0 && !(pb.flags[i] & BulletFlag.Echo)) {
             this.fireKillEcho(e, pb.damage[i], pb.speed[i], pb.radius[i]);
           }
+        }
+        /*
+         * A GHOST STRIKES AND RECOILS; everything else is consumed.
+         *
+         * SOSTENUTO's allies carry `bounces` as STRIKES REMAINING, and an ally
+         * deleted by its own first hit is a homing bolt with a long fuse rather
+         * than something that fights beside you. The recoil is not decoration:
+         * it is the rate limiter. A summon left overlapping the body it just
+         * struck would re-hit on all 120 steps a second, which is exactly why
+         * `fireSpawn`'s own note refuses `pierce` for this shape — so the ghost
+         * is thrown back out of contact and has to come in again.
+         *
+         * VIBRATO's retinue is untouched: `fireSpawn` sets no `bounces`, so its
+         * summons arrive at zero and fall through to the removal below, which
+         * is the behaviour that shipped.
+         */
+        if (pb.flags[i] & BulletFlag.Summon && pb.bounces[i] > 0) {
+          pb.bounces[i]--;
+          pb.x[i] -= Math.cos(pb.angle[i]) * World.GHOST_RECOIL;
+          pb.y[i] -= Math.sin(pb.angle[i]) * World.GHOST_RECOIL;
+          pb.target[i] = -1;
+          break;
         }
         // Piercing shots keep going; everything else is consumed.
         if (pb.type[i] !== 1) {
@@ -4371,6 +4625,97 @@ export class World {
    * them adds a render contract. `docs/MASTER_PLAN.md` G5's "2-3 new shapes,
    * not 20" is respected in the letter and the reason.
    */
+  /**
+   * Push the arrangement's current position into the simulation.
+   *
+   * The ONE inbound call in the game/music boundary, and it is a value copy
+   * rather than a reference so nothing on the audio side can be mutated from
+   * here by accident. `main.ts` calls it once a frame with the previous frame's
+   * readout — one frame of latency against a section that holds for a minimum
+   * of four bars (`arrangement.ts` MIN_BARS), which is 7.5 seconds at 128 BPM.
+   */
+  setMusicalState(m: MusicalState): void {
+    this.musical.section = m.section;
+    this.musical.energy = m.energy;
+    this.musicalPushed = true;
+  }
+
+  /**
+   * The stand-in form, for a world with nobody conducting it.
+   *
+   * See the `musical` field for why this exists at all and why it is calibrated
+   * rather than invented. One eight-bar phrase: build, drop, sustain,
+   * breakdown, in shares of 22 / 43 / 22 / 13 against the arranger's measured
+   * 17.2 / 42.5 / 16.2 / 16.5. Energy rises across the phrase and peaks in the
+   * drop, which is what the arranger's own does.
+   */
+  private freeRunMusic(): void {
+    if (this.musicalPushed) return;
+    const p = this.transport.phrasePhase;
+    this.musical.section = p < 0.22 ? 'build' : p < 0.65 ? 'drop' : p < 0.87 ? 'sustain' : 'breakdown';
+    this.musical.energy = clamp01(0.3 + 0.55 * Math.sin(Math.PI * Math.min(1, p / 0.65)));
+  }
+
+  /**
+   * DROP's multiplier: near-inert outside the drop, the loudest thing in it.
+   *
+   * Two numbers rather than one, because "near-inert" has to mean something a
+   * player notices without reading a stat: outside the drop the cone fires a
+   * QUARTER as often for a SIXTH of the damage, so it is a stutter you can hear
+   * stop. Inside, it scales with the arrangement's own energy, so the peak of
+   * the drop is the peak of the item.
+   */
+  private dropSwell(): { damage: number; interval: number } {
+    if (this.musical.section === 'drop') {
+      return { damage: 1.6 + 1.8 * clamp01(this.musical.energy), interval: 1 };
+    }
+    return { damage: 0.15, interval: 4 };
+  }
+
+  /**
+   * CRESCENDO's multiplier: how much trouble the ship is actually in, 0..1.
+   *
+   * A BLEND, AND THE REASON IS A MEASUREMENT. `encirclement` alone reads p50
+   * 0.04 / p90 0.32 over a real run (`tools/arena.mjs`), so an item keyed on it
+   * would sit at its floor for essentially the whole game — a swell that never
+   * swells, which is this repository's most-repeated defect. `nearestThreat` is
+   * 1 when nothing is close and reads p50 0.83 / p10 0.34, and the local
+   * population is the third view of the same question. The max of the three is
+   * "am I in trouble by any reading", which is what the card promises.
+   *
+   * `tools/beatlock.mjs` prints the distribution of the returned multiplier
+   * over a real run, because the whole point is that it must not be a constant.
+   */
+  private dangerSwell(): number {
+    const near = this.populationNearPlayer();
+    const danger = clamp01(
+      Math.max(this.encirclement * 1.6, 1 - this.nearestThreat, near / 7),
+    );
+    return 0.3 + 3.0 * danger;
+  }
+
+  /** True if the last `advance()` crossed a half-bar line (beats 1 and 3). */
+  private crossedHalfBar(): boolean {
+    return this.transport.crossings(2 / BEATS_PER_BAR) > 0;
+  }
+
+  /**
+   * True if the last `advance()` crossed an OFF-beat eighth — the "and" of a
+   * beat, never the beat itself.
+   *
+   * `Transport.crossings(2)` counts eighth-note boundaries and cannot say which
+   * one, so the parity is taken from where the transport now IS: the newest
+   * boundary crossed has index `floor(beat * 2)`, and an odd index is an
+   * off-beat. Two or more crossings in one step means both parities went by, so
+   * an off-beat is among them — at 120 Hz and 128 BPM an eighth is 28 steps
+   * wide, so that arm is a correctness guard rather than a live path.
+   */
+  private crossedOffbeat(): boolean {
+    const n = this.transport.crossings(2);
+    if (n <= 0) return false;
+    return n >= 2 || Math.floor(this.transport.beat * 2) % 2 === 1;
+  }
+
   private fireInstruments(dt: number): void {
     const held = prog.activeInstruments(this.progression);
     let fired = false;
@@ -4382,19 +4727,16 @@ export class World {
      * interval — the rarest thing that fired, not the first.
      *
      * "First" is the natural choice and it is the worst one available here,
-     * because `held` is in acquisition order and index 0 is always PIZZICATO:
-     * every run starts holding it, and at 0.22s falling to 0.062 under RAPID it
-     * fires four to ten times more often than anything else in the ensemble. So
-     * a first-wins tiebreak resolves every collision in favour of the sound the
-     * player has already heard a thousand times, and it does it most reliably at
-     * the exact moment it matters least.
+     * because `held` is in acquisition order and index 0 is always the opener:
+     * every run starts holding it, so a first-wins tiebreak resolves every
+     * collision in favour of the sound the player has already heard a thousand
+     * times, and it does it most reliably at the exact moment it matters least.
      *
-     * Rarest-wins costs the frequent voice nothing — PIZZICATO gets another
-     * chance in a fifth of a second — and it protects the voices that only
-     * speak every few seconds, where losing one appearance costs a third of the
-     * instrument's presence in the mix. It is the same reason an arranger does
-     * not let the hi-hat mask the timpani: the event that happens least is the
-     * event carrying information.
+     * Rarest-wins costs the frequent voice nothing and it protects the voices
+     * that only speak every few seconds, where losing one appearance costs a
+     * third of the instrument's presence in the mix. It is the same reason an
+     * arranger does not let the hi-hat mask the timpani: the event that happens
+     * least is the event carrying information.
      *
      * It also fixes a systematic case rather than only a statistical one. A
      * newly recruited instrument has its timer set to 0 so it sounds
@@ -4412,93 +4754,238 @@ export class World {
      * ship that never held still.
      *
      * It builds and holds rather than being spent on the next activation. The
-     * band fires constantly — PIZZICATO every 0.15s — so a charge that were
-     * consumed would never reach a few per cent before something ate it, and
-     * the passive would be inert for exactly the reason this pass exists. See
-     * the item's row in `weapons.ts` for why this cannot become a camping
-     * reward: the whole ladder completes inside `IDLE_GRACE_S`.
+     * band fires constantly, so a charge that were consumed would never reach a
+     * few per cent before something ate it, and the passive would be inert for
+     * exactly the reason this pass exists. See the item's row in `weapons.ts`
+     * for why this cannot become a camping reward: the whole ladder completes
+     * inside `IDLE_GRACE_S`.
      */
     const charge =
       this.rules.chargeSeconds > 0 ? clamp01(this.stillTime / this.rules.chargeSeconds) : 0;
     const chargeMul = 1 + charge * (this.rules.chargeDamage - 1);
+
+    /*
+     * THE BEAT GRID FOR THIS STEP.
+     *
+     * `dt <= 0` is the level-up pause: `update` zeroes `simDt` while an offer is
+     * open and lets the transport run on, so a bar line DOES cross while the
+     * world is stopped. Without this guard a beat-locked weapon would fire
+     * through a pause the whole rest of the game holds still for — and the
+     * timer-driven instruments cannot, because their countdown is fed the same
+     * zero. Same rule for both, stated once.
+     */
+    const live = dt > 0;
+    const grid: Record<BeatLock, boolean> = {
+      bar: live && this.transport.crossedBar(),
+      halfbar: live && this.crossedHalfBar(),
+      offbeat: live && this.crossedOffbeat(),
+    };
+    const barSecs = (BEATS_PER_BAR * 60) / this.transport.bpm;
+
+    /*
+     * ONE FOLD OF THE LOADOUT, then two passes over it.
+     *
+     * `applyModifiers` is called once per instrument here rather than once in
+     * each pass. The first pass is for the items that are not voices — the ones
+     * that modify the band or the room — because two of them change what the
+     * voices are about to do and all of them have to be resolved before a
+     * single shot is fired.
+     */
+    const band: BandVoice[] = [];
     for (const { id, level } of held) {
       const def = instrumentDef(id);
       if (!def) continue;
-      const s = applyModifiers(instrumentStats(id, level), this.mods);
+      band.push({ id, level, def, s: applyModifiers(instrumentStats(id, level), this.mods) });
+    }
+
+    let unison: { lock: BeatLock; s: InstrumentStats } | null = null;
+    let counterpoint: InstrumentStats | null = null;
+    this.dragRadius = 0;
+    this.dragDepth = 0;
+    this.dragSelf = 1;
+    this.dragBullets = false;
+    for (const v of band) {
+      if (v.def.shape === 'unison') {
+        unison = { lock: beatLockOf(v.id, v.level) ?? 'bar', s: v.s };
+      } else if (v.def.shape === 'counterpoint') {
+        counterpoint = v.s;
+      } else if (v.def.shape === 'drag') {
+        this.fireDrag(v.id, v.s, dt);
+      }
+    }
+    /*
+     * The voices, in acquisition order, and this ORDER IS NOW A GAME MECHANIC.
+     *
+     * `activeInstruments` returns the loadout in the order it was picked up, and
+     * COUNTERPOINT reads index 0 as the leader and 1 and 2 as the answering
+     * voices. It has always been an order; until now nothing looked at it.
+     *
+     * The three modifier/room shapes are filtered out rather than sorted to the
+     * back, so holding UNISON does not silently change which instrument
+     * COUNTERPOINT considers to be first.
+     */
+    const voices = band.filter(
+      (v) => v.def.shape !== 'unison' && v.def.shape !== 'counterpoint' && v.def.shape !== 'drag',
+    );
+
+    /*
+     * A REST IS A REST. THE BAND STOPS, AND SO DO THE GUNS.
+     *
+     * The card says "your band stops playing for every beat of it" and the
+     * first implementation only stopped the SOUND — the mix thinned and the
+     * weapons went on firing. That is the failure mode this repository has a
+     * name for: prose the simulation does not deliver, and it made REST a bar
+     * of free invulnerability with a mood attached.
+     *
+     * IT ALSO SHOWED UP IN A GATE THAT KNOWS NOTHING ABOUT ANY OF THIS.
+     * `tools/builds.mjs` measures the spread in damage taken across seven pick
+     * policies, because a pick that does not change how much punishment a run
+     * costs is a pick that is not reaching the game. Free invulnerability
+     * available to every policy compresses that spread from the outside: it
+     * read 2.4x before this pass, 1.4x with REST at 39% uptime, and 1.6x after
+     * the cooldown was fixed. A REST that costs you your damage is a REST that
+     * separates builds again, because a run that spends 16% of itself not
+     * firing has to make that back somewhere.
+     *
+     * The modifier pass above still runs, so the drag bubble and the tacet rota
+     * keep their state across a rest rather than resetting on the far side.
+     */
+    if (this.restUntil > this.time) {
+      this.beatFires.held += voices.length;
+      return;
+    }
+
+    for (const v of voices) {
+      const { id, level, def } = v;
+      const s = v.s;
 
       if (def.shape === 'orbit') {
         // Pods exist continuously; only their shooting is on a clock.
         this.player.podCount = Math.max(1, Math.round(s.count));
         this.player.podRadius = Math.max(28, s.area);
-        /*
-         * The pods spin only if the instrument moves at all.
-         *
-         * This was a hardcoded 1.6 for every orbit instrument, which meant the
-         * shape had nowhere to express a stationary satellite — and CHORALE's
-         * evolution line is exactly that: "the satellites stop moving and
-         * start singing". With its `speed` now explicitly 0 (see `weapons.ts`)
-         * the pods hold their compass positions instead of sweeping, and DRONE
-         * PODS at speed 1050 is unchanged.
-         *
-         * A boolean rather than a rate scaled from `speed`, because there is
-         * no honest scale to divide by: 1.6 and 1050 are in unrelated units,
-         * and inventing a conversion between them would be a made-up number
-         * dressed as a derivation.
-         */
+        // A boolean rather than a rate scaled from `speed`: 1.6 and 1050 are in
+        // unrelated units and inventing a conversion between them would be a
+        // made-up number dressed as a derivation. CHORALE's satellites hold
+        // station (`speed: 0`); DRONE-lineage ones sweep.
         this.player.podSpin = s.speed > 0 ? 1.6 : 0;
       }
 
-      const left = (this.instrumentTimers[id] ?? 0) - dt;
-      if (left > 0) {
-        this.instrumentTimers[id] = left;
-        continue;
-      }
       /*
-       * Floored, so a fully-stacked cooldown reduction cannot ask for a volley
-       * every simulation step and saturate the bullet pool in half a second.
-       *
-       * THE FLOOR ITSELF NEVER BINDS, and the claim above is true for a
-       * different reason than it appears to be. The shortest interval any legal
-       * loadout can produce is SPICCATO's 0.1 under RAPID at level 5, which is
-       * 0.062 — enumerated exhaustively over every instrument, every level and
-       * every rig extreme by `tools/deadhunt-ranges.mjs`, which reports the
-       * 0.05 as unreachable. What actually keeps the pool safe is that
-       * `rigModifiers` has a single cooldown contributor (see its comment) and
-       * that a 120Hz step is 0.0083s, so even the fastest instrument fires
-       * every seventh step rather than every step.
-       *
-       * Left as written. It costs nothing and it is the correct guard the day a
-       * second cooldown item lands; the note is here so nobody reads 0.05 as a
-       * measured lower bound on anything.
+       * UNISON RE-CLOCKS THE BAND, and it does it before anything reads
+       * `s.interval`, because the compensation it applies is computed from the
+       * interval it is replacing.
        */
-      this.instrumentTimers[id] = Math.max(0.05, s.interval);
+      const conducted = unison !== null;
+      let lock = beatLockOf(id, level);
+      if (unison) {
+        lock = unison.lock;
+        this.fireUnison(unison.s, s, barSecs);
+      }
 
       /*
-       * LASER FIRES HERE, and the two rules that modify an activation are
-       * applied to `s` — the stat block this instrument is about to be fired
-       * with — rather than to `this.mods`.
-       *
-       * That is the load-bearing detail. `Modifiers` is folded once per step
-       * and shared by four instruments, the enemy clock and the player; a rule
-       * that reached into it would apply to whatever else happened to read it
-       * that frame. `s` is a fresh object per instrument per activation, so
-       * mutating it here is scoped to exactly the volley the rule is about.
-       *
-       * The counter is PER INSTRUMENT (`shotCount[id]`), so each voice has its
-       * own cadence. A single global counter would spend nearly every
-       * overcharge on the fastest instrument in the band, which is the same
-       * failure the rarest-wins tiebreak above exists to avoid.
-       *
-       * `pierce = 99` rather than a flag: `fireSeek`, `fireArc`, `firePods`,
-       * `fireCone` and `fireSpray` all already read `s.pierce > 1` to choose a
-       * piercing bullet type and a fatter radius, so the overcharged volley is
-       * visibly thicker as well as unstoppable, and no routine needed a new
-       * argument. This is where `Modifiers.pierce` went when it was deleted.
+       * RITARDANDO TAXES ITS OWN SIDE, and under UNISON it has to take the
+       * payment somewhere else: a conducted band ignores its intervals
+       * entirely, so a rate tax would simply evaporate and the item's whole
+       * drawback with it. Same cost, charged against the volley instead.
        */
-      const n = this.shotCount[id] = (this.shotCount[id] ?? 0) + 1;
+      if (this.dragSelf > 1) {
+        if (conducted) s.damage /= this.dragSelf;
+        else s.interval *= this.dragSelf;
+      }
+
+      // DROP is the one swell that moves the CLOCK as well as the damage, which
+      // is what "near-inert" has to mean to be noticeable.
+      if (def.swell === 'drop') {
+        const sw = this.dropSwell();
+        s.damage *= sw.damage;
+        s.interval *= sw.interval;
+      }
+
+      /*
+       * A CONDUCTED INSTRUMENT HAS NO TIMER. That sentence is the whole of
+       * UNISON: "instead of on its own timer" is not a figure of speech, and
+       * leaving the countdown in would make a 3.2s instrument skip every other
+       * bar while a 0.15s one fired on all of them — which is the trickle the
+       * item exists to remove.
+       */
+      if (!conducted) {
+        const left = (this.instrumentTimers[id] ?? 0) - dt;
+        if (left > 0) {
+          this.instrumentTimers[id] = left;
+          continue;
+        }
+      }
+
+      /*
+       * THE BEAT LOCK. Ready is not the same as allowed.
+       *
+       * The timer is left at zero rather than restarted, so the instrument
+       * re-asks on every step until its grid line comes round. That is what
+       * makes `interval` a FLOOR under a locked instrument rather than a second
+       * clock fighting the first: METRONOME at 0.5s is ready three times a bar
+       * and fires once, and its damage is set against the bar it actually gets.
+       */
+      if (lock && !grid[lock]) {
+        if (!conducted) this.instrumentTimers[id] = 0;
+        this.beatFires.held++;
+        continue;
+      }
+      this.instrumentTimers[id] = conducted ? 0 : Math.max(0.05, s.interval);
+      this.beatFires[lock ?? 'free']++;
+
+      /*
+       * THE TWO SWELLS THAT SCALE DAMAGE FROM OUTSIDE THE STAT BLOCK.
+       *
+       * Applied to `s` — the block this instrument is about to be fired with —
+       * and never to `this.mods`, for the same reason LASER's overcharge is:
+       * `Modifiers` is folded once per step and shared by every instrument, the
+       * enemy clock and the player, so a rule that reached into it would apply
+       * to whatever else happened to read it that frame.
+       */
+      if (def.swell === 'danger') {
+        s.damage *= this.dangerSwell();
+        // The wave swells outward as well from L2, which is what that rung's
+        // note promises. Level-gated because the L1 card does not claim it.
+        if (level >= 2) s.area *= 0.85 + 0.4 * clamp01((this.dangerSwell() - 0.3) / 3);
+      }
+      if (def.swell === 'silence') {
+        /*
+         * METRONOME'S SILENCE BONUS, and the anti-synergy the plan asks for.
+         *
+         * Out of a full bar of nothing the downbeat lands at its full weight;
+         * arriving straight after something else fired it keeps 70%. That is
+         * what makes SYNCOPATION a genuine cost rather than free interleaving:
+         * four sweeps a bar hold `beatsQuiet` near zero all game.
+         *
+         * THE DEPTH WAS HALVED AFTER MEASURING IT. At `0.5 + 0.5x` a band —
+         * ANY band, since every run starts holding this instrument and almost
+         * every run adds a second voice — held `beatsQuiet` near 0.2 beats and
+         * so ran METRONOME at 52% for the entire game. That is not an
+         * anti-synergy with SYNCOPATION, it is a 48% tax on the starting weapon
+         * payable by owning a second instrument of any kind, and it is a large
+         * part of why the first draft of this roster reached wave 18.6 where
+         * the old one reached 24.1. 30% is a cost you can weigh; 48% is a rule
+         * against having a band.
+         */
+        s.damage *= 0.7 + 0.3 * (this.beatsQuiet / BEATS_PER_BAR);
+      }
+
+      /*
+       * LASER FIRES HERE. The counter is PER INSTRUMENT (`shotCount[id]`), so
+       * each voice has its own cadence — a single global counter would spend
+       * nearly every overcharge on the fastest instrument in the band, which is
+       * the same failure the rarest-wins tiebreak above exists to avoid.
+       *
+       * `pierce = 99` rather than a flag: five routines already read
+       * `s.pierce > 1` to choose a piercing bullet type and a fatter radius, so
+       * the overcharged volley is visibly thicker as well as unstoppable, and no
+       * routine needed a new argument.
+       */
+      const n = (this.shotCount[id] = (this.shotCount[id] ?? 0) + 1);
       this.ruleChances.overcharge++;
       this.ruleChances.charged++;
-      const overcharged = this.rules.overchargeEvery > 0 && n % Math.round(this.rules.overchargeEvery) === 0;
+      const overcharged =
+        this.rules.overchargeEvery > 0 && n % Math.round(this.rules.overchargeEvery) === 0;
       if (overcharged) {
         s.pierce = Math.max(s.pierce, 99);
         s.damage *= this.rules.overchargeDamage;
@@ -4509,73 +4996,34 @@ export class World {
         // Counted at half, not at any — see `ruleFires.charged`.
         if (charge >= 0.5) this.ruleFires.charged++;
       }
-      /*
-       * `overcharged` is stashed on the instance rather than threaded through
-       * ten routine signatures, and it is cleared at the bottom of this
-       * iteration. The three projectile routines read it to flag their bolts
-       * `Seeking`; the field, aura and strike shapes have nothing to steer and
-       * ignore it, which is correct — an overcharged bell is a bell that hits
-       * three times as hard, and there is no bolt to aim.
-       */
       this.overchargeVolley = overcharged;
-
-      switch (def.shape) {
-        case 'seek':
-          this.fireSeek(s);
-          break;
-        case 'arc':
-          this.fireArc(id, s);
-          break;
-        case 'beam':
-          this.fireBeam(id, s);
-          break;
-        case 'lance':
-          this.fireLance(id, s);
-          break;
-        case 'cone':
-          this.fireCone(s);
-          break;
-        case 'spray':
-          this.fireSpray(id, s);
-          break;
-        case 'trail':
-          this.fireTrail(id, s);
-          break;
-        case 'chain':
-          this.fireChain(id, s);
-          break;
-        case 'mortar':
-          this.fireMortar(id, s);
-          break;
-        case 'spawn':
-          this.fireSpawn(s);
-          break;
-        case 'orbit':
-          this.firePods(s);
-          break;
-        case 'aura':
-          this.fireAura(id, s);
-          break;
-        case 'strike':
-          this.fireStrike(id, s);
-          break;
-        case 'field':
-          this.fireField(id, s);
-          break;
-      }
+      this.fireShape(id, def, s);
       this.overchargeVolley = false;
+
+      /*
+       * COUNTERPOINT ANSWERS THE LEADER, on the leader's own activation.
+       *
+       * Here rather than after the loop, so the copy lands on the same step as
+       * the thing it is answering — a frame of separation would read as two
+       * weapons that happen to be fast, which is precisely what the item is
+       * not.
+       */
+      if (counterpoint && v === voices[0] && voices.length > 1) {
+        this.fireCounterpoint(counterpoint, voices);
+      }
+
+      this.lastVolleyBeat = this.transport.beat;
+      if (this.onActivation) this.onActivation(id, this.transport.barPhase, s.damage);
       fired = true;
       // The rarest thing that fired this tick gets the voice; see above.
-      // `held` is the player's instrument list, so this id is an `InstrumentId`
-      // by construction; the loop simply types it as a bare string.
       if (s.interval > firedInterval) {
         firedInterval = s.interval;
         firedId = id as InstrumentId;
       }
     }
     // Nothing holds an orbit instrument: retire the pods rather than leaving
-    // the last set circling forever after a fusion consumed DRONE PODS.
-    if (!held.some(({ id }) => instrumentDef(id)?.shape === 'orbit')) this.player.podCount = 0;
+    // the last set circling forever after a fusion consumed them.
+    if (!voices.some((v) => v.def.shape === 'orbit')) this.player.podCount = 0;
     /*
      * And the same for lances, for the same reason and with sharper teeth.
      *
@@ -4584,11 +5032,7 @@ export class World {
      * when a recipe lands, so ROSIN BOW evolving into HARMONICS would otherwise
      * leave the bow's line hanging in the arena, still tracking the aim and
      * still dealing damage, for a second and a half. It would expire on its
-     * own; it should not have to. `firePods` retires its pods on the same
-     * argument two lines above.
-     *
-     * Guarded on there being one at all, so the ordinary case — no lance in
-     * the loadout — costs one boolean and not a scan of the effects array.
+     * own; it should not have to.
      */
     if (this.effects.length > 0) {
       for (const fx of this.effects) {
@@ -4599,34 +5043,413 @@ export class World {
       }
     }
     /*
-     * `voice` is the instrument's character FAMILY, and until now it was never
-     * sent.
-     *
-     * `src/audio/sfx.ts` builds a per-family voice table precisely so that
-     * every instrument sounds like itself without anyone remembering to add a
-     * row, and `src/core/events.ts` declares this field with nine lines
-     * explaining that it travels on the event because `src/audio/` must not
-     * import `src/game/`. This emit did not set it, so `SHOT_FAMILIES` was
-     * unreachable: `docs/research-weapons.md` §0.2 measured 6,185 shots in a
-     * real ten-minute run and 0 of them carried a voice, which meant the 19 of
-     * 27 instruments with no bespoke `SHOT_VOICES` row all fired with
-     * PIZZICATO's pluck. Every fusion in the game sounded like the starting
+     * `voice` is the instrument's character FAMILY. `src/audio/sfx.ts` builds a
+     * per-family voice table precisely so that every instrument sounds like
+     * itself without anyone remembering to add a row, and `src/core/events.ts`
+     * declares this field because `src/audio/` must not import `src/game/`.
+     * This emit did not set it for most of the project's life, so `SHOT_FAMILIES`
+     * was unreachable and every fusion in the game sounded like the starting
      * weapon.
-     *
-     * The three shapes added in this change would have inherited that, which
-     * is why it is fixed here rather than filed: a lance, a cone and a spray
-     * that all sound like a plucked string are three shapes the player cannot
-     * hear apart. All 27 `character` strings already begin with a family word
-     * — that was measured in the same probe — so this one expression covers
-     * the whole roster, duets included, since `synthesiseDuet` builds its
-     * `character` as "familyA + familyB — ..." and the first word is still a
-     * family.
      */
     if (fired) {
       const family = firedId
         ? instrumentDef(firedId)?.character.split('—')[0].trim().split(/\s+/)[0]
         : undefined;
       this.bus.emit('player:shoot', { id: firedId ?? undefined, voice: family || undefined });
+    }
+  }
+
+  /**
+   * The dispatch, extracted so COUNTERPOINT can re-enter it.
+   *
+   * It was the `switch` at the bottom of `fireInstruments` and nothing else has
+   * changed about it. Pulling it out is what lets one instrument's activation
+   * produce another instrument's geometry without a second copy of the table —
+   * a copy that would go stale the first time a shape was added, which is a
+   * failure mode `src/render/levelup.ts` already demonstrates for the fusion
+   * rules and `npm run mirror` exists to catch.
+   */
+  private fireShape(id: string, def: InstrumentDef, s: InstrumentStats): void {
+    switch (def.shape) {
+      case 'seek':
+        this.fireSeek(s);
+        break;
+      case 'arc':
+        this.fireArc(id, s);
+        break;
+      case 'beam':
+        this.fireBeam(id, s);
+        break;
+      case 'lance':
+        this.fireLance(id, s);
+        break;
+      case 'cone':
+        this.fireCone(s);
+        break;
+      case 'spray':
+        this.fireSpray(id, s);
+        break;
+      case 'trail':
+        this.fireTrail(id, s);
+        break;
+      case 'chain':
+        this.fireChain(id, s);
+        break;
+      case 'mortar':
+        this.fireMortar(id, s);
+        break;
+      case 'spawn':
+        this.fireSpawn(s);
+        break;
+      case 'orbit':
+        this.firePods(s);
+        break;
+      case 'aura':
+        this.fireAura(id, s);
+        break;
+      case 'strike':
+        this.fireStrike(id, s);
+        break;
+      case 'field':
+        this.fireField(id, s);
+        break;
+      case 'rest':
+        this.fireRest(id, s);
+        break;
+      case 'ghost':
+        this.fireGhost(id, s);
+        break;
+      case 'tacet':
+        this.fireTacet(id, s);
+        break;
+      /*
+       * The three that are resolved in `fireInstruments`' first pass and have no
+       * activation of their own. Listed rather than defaulted, so the day a
+       * fifteenth shape is added the compiler names the omission instead of the
+       * weapon silently doing nothing — which is the single most repeated defect
+       * in this file's history.
+       */
+      case 'drag':
+      case 'counterpoint':
+      case 'unison':
+        break;
+    }
+  }
+
+  /**
+   * UNISON's conversion, applied to ONE instrument's block.
+   *
+   * `ratio` is the whole argument for why this item is buildable at all.
+   * Re-clocking an instrument from `interval` to one bar multiplies its
+   * activations by `interval / bar`, so its damage is multiplied by
+   * `bar / interval` and the conversion is throughput-neutral before the
+   * ladder's own multiplier is applied. Without it UNISON is a 12x buff to a
+   * 0.15s weapon and a 45% nerf to a 3.2s one in the same loadout — two numbers
+   * colliding, not a design.
+   *
+   * CLAMPED AT BOTH ENDS. The upper bound stops a rig-boosted 0.05s instrument
+   * asking for a 37x volley, which would put one activation past anything the
+   * damage popup can render; the lower stops a very slow instrument being
+   * gutted for the crime of already being slower than a bar.
+   *
+   * The parameter is called `s` and not `u` on purpose: `deadhunt-ranges` greps
+   * a routine body for `s.<stat>` to decide which stats a shape reads, so a
+   * conventionally-named block is the difference between UNISON's ladder being
+   * audited and being invisible. Both bounds are
+   * reachable — SPICCATO under RAPID sits at 0.062s (`deadhunt-ranges`
+   * enumerates it) and BLACK HOLE at level 1 sits at 6.5s — so neither is
+   * decorative.
+   */
+  private fireUnison(s: InstrumentStats, target: InstrumentStats, barSecs: number): void {
+    const ratio = clamp(barSecs / Math.max(0.05, target.interval), World.UNISON_MIN, World.UNISON_MAX);
+    target.damage *= ratio * Math.max(0.1, s.damage);
+    target.count = Math.max(1, Math.round(target.count + Math.max(0, s.count)));
+  }
+
+  /**
+   * COUNTERPOINT: the answering voices, fired on the leader's activation.
+   *
+   * `s.pierce` is HOW MANY answer — the one spare field on a shape with no
+   * geometry, and the level step that buys the third voice has nowhere else to
+   * put itself. `voices` arrives in acquisition order with the leader at index
+   * 0, which is what makes loadout order the decision this item is about.
+   *
+   * REST AND TACET ARE NOT COPYABLE and the refusal is not squeamishness: both
+   * are state machines driven one step per activation (a rest that starts
+   * twice, a cycle that advances twice), so a copy would corrupt them rather
+   * than duplicate them. Everything with an actual hitbox is fair game,
+   * including the ones that place allies and wells.
+   *
+   * BUDGET: one extra activation per follower per `s.interval`, floored at
+   * 0.05s and reaching 0.45s at level 3 — so at most two extra volleys every
+   * 0.45s, which is well under what a single fast instrument already produces.
+   * It cannot recurse: COUNTERPOINT is filtered out of `voices` before this is
+   * called, so a follower can never be another copier.
+   */
+  private fireCounterpoint(s: InstrumentStats, voices: BandVoice[]): void {
+    if (this.time < this.counterpointAt) return;
+    this.counterpointAt = this.time + Math.max(0.05, s.interval);
+    const followers = Math.max(1, Math.round(s.pierce));
+    for (let k = 1; k <= followers && k < voices.length; k++) {
+      const f = voices[k];
+      if (f.def.shape === 'rest' || f.def.shape === 'tacet') continue;
+      const c = applyModifiers(instrumentStats(f.id, f.level), this.mods);
+      c.damage *= Math.max(0, s.damage);
+      c.count = Math.max(1, Math.round(c.count + Math.max(0, s.count)));
+      this.fireShape(f.id, f.def, c);
+      this.counterpointCopies++;
+    }
+  }
+
+  /**
+   * RITARDANDO: the drag bubble, folded and drawn.
+   *
+   * Called EVERY STEP from `fireInstruments`' first pass rather than on the
+   * interval, because the bubble is a continuous state and not an activation —
+   * the same treatment `orbit` gets for its pods, and for the same reason. The
+   * visible pulse is what `interval` and `linger` are for, and it is a ring
+   * with `dps: 0`: this item deals no damage, and a bubble that quietly did
+   * some would make the card a lie.
+   *
+   * `s.damage` IS THE DRAG DEPTH and it is signed so more is stronger — the
+   * fraction of enemy time REMOVED. See the row in `weapons.ts`: a field
+   * holding "enemies run at 55%" would read as a regression to
+   * `tools/levelup.mjs` every time the item improved.
+   *
+   * `s.arc` is what it costs the player, as a fraction added to every
+   * instrument's own interval. Folded with `Math.max` rather than multiplied,
+   * because two drag sources are one bubble and not two.
+   */
+  private fireDrag(id: string, s: InstrumentStats, dt: number): void {
+    this.dragRadius = Math.max(this.dragRadius, Math.max(40, s.area));
+    this.dragDepth = Math.max(this.dragDepth, clamp01(s.damage));
+    this.dragSelf = Math.max(this.dragSelf, 1 + Math.max(0, s.arc));
+    if (Math.round(s.count) >= 2) this.dragBullets = true;
+    if (dt <= 0 || this.time < this.dragPulseAt) return;
+    this.dragPulseAt = this.time + Math.max(0.2, s.interval);
+    if (this.novas.length >= World.MAX_NOVAS) return;
+    const maxR = Math.max(40, s.area);
+    this.novas.push({
+      x: this.player.x,
+      y: this.player.y,
+      r: 0,
+      alive: true,
+      maxR,
+      speed: maxR / Math.max(0.3, s.linger),
+      dps: 0,
+      hold: 0,
+      hue: this.hueOf(id),
+      clears: false,
+    });
+  }
+
+  /**
+   * REST: a whole bar in which nothing can touch you, and the band stops.
+   *
+   * `s.linger` IS IN BARS and is converted here, because a rest that ends
+   * mid-bar is not a rest — the entire item is built on the player hearing
+   * where it starts and where it stops, and the shape carries `beat: 'bar'` so
+   * it can only ever begin on a line.
+   *
+   * The silence itself is published by `writeSnapshot` off `restUntil`, not
+   * from here: a mute that is set on an activation and cleared on a timer is a
+   * mute that survives a death, a fusion or a pause, and this game has already
+   * shipped one stale-reference bug of exactly that shape
+   * (`tools/everypowerup.mjs` exists because of it).
+   *
+   * `s.damage` is read and IS ZERO on every rung of the ladder. It is the
+   * return sweep's dps, so the sweep clears bullets and hurts nothing — and if
+   * a later editor puts a number in that field they will be undoing the design
+   * rather than balancing it, which is the reason to read it rather than
+   * ignore it.
+   */
+  private fireRest(id: string, s: InstrumentStats): void {
+    const bars = Math.max(1, Math.round(s.linger));
+    const secs = bars * ((BEATS_PER_BAR * 60) / this.transport.bpm);
+    this.restUntil = this.time + secs;
+    this.player.invuln = Math.max(this.player.invuln, secs);
+    this.restSweep = {
+      at: this.restUntil,
+      area: Math.max(60, s.area),
+      rings: clamp(Math.round(s.count) || 1, 1, 4),
+      dps: Math.max(0, s.damage),
+      hue: this.hueOf(id),
+    };
+    this.camera.shake(0.18);
+    this.particles.burst(this.rng, this.player.x, this.player.y, 26, 200, this.hueOf(id), 0.6, 3);
+  }
+
+  /**
+   * The bar line the band comes back in on, and the sweep that arrives with it.
+   *
+   * Separate from `fireRest` because it has to happen whether or not the item
+   * is still held, still due, or still in the loadout at all — a player who
+   * fuses REST away mid-rest must still get their band back.
+   */
+  private updateRest(): void {
+    const sw = this.restSweep;
+    if (!sw || this.time < sw.at) return;
+    this.restSweep = null;
+    this.cancelBullets();
+    for (let i = 0; i < sw.rings; i++) {
+      if (this.novas.length >= World.MAX_NOVAS) break;
+      this.novas.push({
+        x: this.player.x,
+        y: this.player.y,
+        r: -i * 30,
+        alive: true,
+        maxR: sw.area,
+        speed: 620,
+        dps: sw.dps,
+        hold: 0,
+        hue: sw.hue,
+        clears: true,
+      });
+    }
+    this.shock(this.player.x, this.player.y, sw.area * 1.2, 1400);
+    this.camera.shake(0.3);
+  }
+
+  /**
+   * SOSTENUTO: raise the last thing the player killed.
+   *
+   * A ghost is an ordinary `BulletFlag.Summon` bullet — same pool, same
+   * `updateSummons` steering, same sprite type 2 that `tools/effectsdraw.mjs`
+   * already asserts exists. NO NEW CONTAINER, which is the cost model
+   * `docs/research-weapons.md` §D.10 sets for any new shape.
+   *
+   * What is different is `bounces`, which for a summon is otherwise unused and
+   * here means STRIKES REMAINING. `collidePlayerBullets` recoils a ghost
+   * instead of consuming it while it has strikes left, so it fights rather than
+   * being a homing bolt with a long fuse — and the recoil is what rate-limits
+   * it, because a piercing ally would sit inside the first body it reached and
+   * apply its damage on all 120 steps a second.
+   *
+   * WORST CASE is `count` ghosts alive at once, capped at `World.MAX_SUMMONS`
+   * (the same cap VIBRATO's retinue runs under), so three at level 3 and never
+   * more however many things die. The corpse is consumed on use, so a run of
+   * kills does not queue up a mob.
+   */
+  private fireGhost(_id: string, s: InstrumentStats): void {
+    if (!this.hasCorpse) return;
+    const p = this.player;
+    const reach = s.range > 0 ? s.range : 700;
+    if (dist2(this.corpseX, this.corpseY, p.x, p.y) > reach * reach) {
+      // Too far to raise. The corpse is spent either way: a body kept in the
+      // bank until the player happens to walk past it would make the item a
+      // delayed-action mine rather than an ally.
+      this.hasCorpse = false;
+      return;
+    }
+    const pb = this.playerBullets;
+    const want = clamp(Math.round(s.count) || 1, 1, World.MAX_SUMMONS);
+    let alive = 0;
+    for (let i = 0; i < pb.count; i++) if (pb.flags[i] & BulletFlag.Summon) alive++;
+    if (alive >= want) return;
+    this.hasCorpse = false;
+    this.summonsActive = true;
+    pb.spawn({
+      x: this.corpseX,
+      y: this.corpseY,
+      angle: Math.atan2(p.y - this.corpseY, p.x - this.corpseX),
+      speed: Math.max(120, s.speed),
+      radius: 8,
+      ttl: Math.max(1, s.linger),
+      damage: s.damage,
+      type: 2,
+      flags: BulletFlag.Summon,
+      bounces: clamp(Math.round(s.bounces) || 1, 1, 200),
+    });
+    this.particles.emit(this.corpseX, this.corpseY, 0, -40, 0.45, 6, this.corpseHue, ParticleShape.Ring, 2);
+    this.ghostsRaised++;
+  }
+
+  /**
+   * TACET: one bar of the silence cycle.
+   *
+   * Called on every bar line, because the shape declares `beat: 'bar'` and its
+   * `interval` is only a floor beneath it. The cycle is `range` bars playing,
+   * then `linger` bars with `count` lanes out of the mix banking `damage` a
+   * bar, then the lanes return and the bank is spent as a ring.
+   *
+   * THE LANES ARE A ROTA over `SILENCEABLE_STEMS` so a long run does not spend
+   * itself removing the same part; `SILENCEABLE_STEMS` itself keeps `sub`,
+   * `hats`, `fx` and `power` out of reach so there is always something
+   * sounding. The mute is published by `writeSnapshot` off `tacetLanes`, for
+   * the same staleness reason `fireRest` gives.
+   *
+   * The bank is spent as `dps` over the ring's crossing, which is the division
+   * `fireAura` makes: the number in the table is what a target standing in it
+   * takes, rather than a rate that scales with how far the ring travels.
+   */
+  private fireTacet(id: string, s: InstrumentStats): void {
+    if (this.tacetBars > 0) {
+      this.tacetBars--;
+      if (this.tacetQuiet) this.tacetBank += Math.max(0, s.damage);
+      return;
+    }
+    if (this.tacetQuiet) {
+      this.tacetQuiet = false;
+      this.tacetLanes.length = 0;
+      this.tacetBars = Math.max(1, Math.round(s.range));
+      const maxR = Math.max(50, s.area);
+      if (this.tacetBank > 0 && this.novas.length < World.MAX_NOVAS) {
+        this.novas.push({
+          x: this.player.x,
+          y: this.player.y,
+          r: 0,
+          alive: true,
+          maxR,
+          speed: 460,
+          dps: this.tacetBank / Math.max(0.08, maxR / 460),
+          hold: 0,
+          hue: this.hueOf(id),
+          // At two lanes the return sweeps the field as well as burning it.
+          clears: Math.round(s.count) >= 2,
+        });
+        this.camera.shake(0.22);
+        this.shock(this.player.x, this.player.y, maxR, 900);
+      }
+      this.tacetBank = 0;
+      this.tacetDischarges++;
+      return;
+    }
+    this.tacetQuiet = true;
+    this.tacetBars = Math.max(1, Math.round(s.linger));
+    this.tacetBank = 0;
+    const lanes = clamp(Math.round(s.count) || 1, 1, SILENCEABLE_STEMS.length);
+    this.tacetLanes.length = 0;
+    for (let k = 0; k < lanes; k++) {
+      this.tacetLanes.push(SILENCEABLE_STEMS[(this.tacetRota + k) % SILENCEABLE_STEMS.length]);
+    }
+    this.tacetRota = (this.tacetRota + lanes) % SILENCEABLE_STEMS.length;
+  }
+
+  /**
+   * RITARDANDO's third rung: enemy FIRE slows inside the bubble too.
+   *
+   * ONCE PER BULLET, marked with `BulletFlag.Dragged`, and it does not come
+   * back when the bullet leaves. That is a deliberate simplification and it is
+   * also the more legible rule — what enters the bubble never speeds up again,
+   * so the field the player is standing in visibly fills with slow fire rather
+   * than shimmering at the boundary. Restoring on exit would need the original
+   * speed stored per bullet, which is a fifteenth array for one rung.
+   *
+   * Only walked when the rung is actually held: the loop is over live enemy
+   * bullets, which peak at 221 in an eight-minute run.
+   */
+  private dragEnemyFire(): void {
+    const b = this.enemyBullets;
+    const rSq = this.dragRadius * this.dragRadius;
+    const keep = Math.max(0.1, 1 - this.dragDepth);
+    for (let i = 0; i < b.count; i++) {
+      if (b.flags[i] & BulletFlag.Dragged) continue;
+      const dx = b.x[i] - this.player.x;
+      const dy = b.y[i] - this.player.y;
+      if (dx * dx + dy * dy > rSq) continue;
+      b.speed[i] *= keep;
+      b.flags[i] |= BulletFlag.Dragged;
+      this.dragsApplied++;
     }
   }
 
@@ -5994,6 +6817,27 @@ export class World {
     s.invulnerable = this.player.invuln > 0;
     s.focused = this.player.focused;
     /*
+     * WHICH LANES OF THE PLAYER'S OWN SOUNDTRACK ARE OUT.
+     *
+     * Rebuilt from state every step rather than written at the moment REST or
+     * TACET fires, and that is the whole reason it lives here. A mute set on an
+     * activation and cleared on a timer is a mute that survives a death, a
+     * fusion that eats the item, and the level-up pause; this cannot, because
+     * the two conditions are re-read from scratch on every frame and both
+     * evaluate to "nothing" once the run is over.
+     *
+     * REST wins outright while it is running — the whole band is already out,
+     * so a tacet lane inside it is not a second statement.
+     *
+     * MUTATED IN PLACE. The director holds this array across frames.
+     */
+    const hushed = s.tacetStems;
+    hushed.length = 0;
+    if (this.phase !== 'over' && !this.player.dead) {
+      if (this.restUntil > this.time) for (const lane of SILENCEABLE_STEMS) hushed.push(lane);
+      else for (const lane of this.tacetLanes) hushed.push(lane);
+    }
+    /*
      * DEPRECATED, and kept populated only so nothing downstream breaks on the
      * frame this lands.
      *
@@ -6143,6 +6987,19 @@ export class World {
     for (const { id, level } of prog.activeInstruments(this.progression)) {
       const def = instrumentDef(id);
       if (!def) continue;
+      /*
+       * THE FOUR SHAPES WHOSE `damage` IS NOT DAMAGE ARE SKIPPED.
+       *
+       * REST is 0 and would contribute nothing anyway; RITARDANDO's `damage` is
+       * the drag depth, UNISON's is a multiplier and COUNTERPOINT's is a share.
+       * Summing those into a column labelled "nominal dps" would put a drag
+       * fraction of 0.72 and a volley multiplier of 1.45 into every balance
+       * tool in `tools/` as if they were hit points, and this column feeds
+       * `tools/arena.mjs`, the HUD and the run summary. A number that is wrong
+       * in an obvious unit is much less dangerous than one that is wrong by a
+       * factor nobody notices.
+       */
+      if (World.NO_DPS.has(def.shape)) continue;
       const s = applyModifiers(instrumentStats(id, level), this.mods);
       total += (s.damage * Math.max(1, Math.round(s.count))) / Math.max(0.05, s.interval);
     }

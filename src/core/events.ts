@@ -143,6 +143,59 @@ export type GraceKind = 'rest' | 'bomb' | 'shards';
 
 export type SectionName = 'intro' | 'build' | 'drop' | 'sustain' | 'breakdown' | 'fill' | 'collapse';
 
+/**
+ * WHERE THE ARRANGEMENT IS, AS A PLAIN VALUE THE SIMULATION MAY READ.
+ *
+ * The whole game flows one way — the world emits, the director listens, and the
+ * comment at the top of this file says that narrow boundary is why either half
+ * can be rewritten. `docs/plan-items-v2.md` §2 measured the consequence: every
+ * musical signal this project publishes is output only, so the soundtrack is a
+ * readout of a fight it has no say in.
+ *
+ * DROP (`feedback`) is the first item that needs it back. It is near-inert
+ * outside the drop and the strongest thing in the game inside one, and there is
+ * no way to know which without asking the arrangement.
+ *
+ * IT IS A PUSHED VALUE OBJECT, NOT A CALL. `main.ts` writes a snapshot into
+ * `World` once a frame — the same direction `GameSnapshot` already travels in,
+ * only inbound — and `src/game/` still never imports `src/audio/`. The world
+ * does not hold a director, cannot ask it a question, and works with nobody
+ * conducting at all (see `World.musical`).
+ *
+ * TWO FIELDS, AND BOTH ARE READ. `DirectorReadout` also publishes `act`,
+ * `tension`, `tacet`, `runPhrase`, `modeBias` and six more; none of them has a
+ * reader on this side, and a field nothing reads is the single most-recorded
+ * defect in this repository (AGENTS.md §3, "unmeasured properties rot"). Add
+ * one when an item wants it, not before.
+ */
+export interface MusicalState {
+  /** Which part of the arrangement is sounding. */
+  section: SectionName;
+  /** 0..1. The value the arrangement runs its dynamics on. */
+  energy: number;
+}
+
+/**
+ * The lanes an ITEM is allowed to silence, and the four it may not.
+ *
+ * TACET (`tremolo`) and REST (`nova`) both work by taking parts out of the
+ * arrangement, which means the game layer has to be able to name a lane. The
+ * names live here rather than in `audio/layers.ts` for the same reason
+ * `ShardTier` does: this is the shared vocabulary, and `src/game/` may not
+ * import `src/audio/`. The director validates the strings against its own
+ * `StemId` before acting on them, so a typo here silences nothing rather than
+ * throwing.
+ *
+ * `sub`, `hats`, `fx` and `power` are DELIBERATELY ABSENT. An item that can
+ * produce literal digital silence is an item that reads as the audio having
+ * crashed — `docs/plan-items-v2.md` §7 names exactly that risk ("the silence
+ * reads as dramatic rather than as a bug"). Leaving the drone, the pad and the
+ * hats means REST sounds like the band stopping and not like the game
+ * stopping.
+ */
+export const SILENCEABLE_STEMS = ['kick', 'clap', 'bass', 'chords', 'arp', 'lead', 'motifs'] as const;
+export type SilenceableStem = (typeof SILENCEABLE_STEMS)[number];
+
 export type GameEvents = {
   'run:start': { seed: number };
   'run:over': { score: number; wave: number };
@@ -511,6 +564,20 @@ export interface GameSnapshot {
   choosing: boolean;
   /** Fusions completed this run. */
   fusions: number;
+  /**
+   * Lanes the PLAYER is currently holding silent, from `SILENCEABLE_STEMS`.
+   *
+   * The only channel in this file by which an item reaches into the mix. TACET
+   * banks charge while a lane is out and spends it when the lane returns; REST
+   * takes the whole band out for the bar it is invulnerable. Both are supposed
+   * to be heard, so this is a mute the director applies rather than a duck the
+   * game applies — the arrangement keeps playing the part, it just does not
+   * sound, which is what a tacet is.
+   *
+   * MUTATED IN PLACE, like `abilities` and `powerups` above and for the same
+   * reason: the director holds this reference across frames.
+   */
+  tacetStems: SilenceableStem[];
 }
 
 export function emptySnapshot(): GameSnapshot {
@@ -571,5 +638,6 @@ export function emptySnapshot(): GameSnapshot {
     rigSlots: 3,
     choosing: false,
     fusions: 0,
+    tacetStems: [],
   };
 }

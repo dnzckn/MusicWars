@@ -738,6 +738,18 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
     aura: 'fireAura',
     strike: 'fireStrike',
     field: 'fireField',
+    /*
+     * The five shapes the second-axis pass added. Three of them deal no damage
+     * and two of them make OTHER instruments fire, but every one still folds a
+     * stat block, so every one can still promise a number nothing reads —
+     * which is the only question this table asks.
+     */
+    rest: 'fireRest',
+    drag: 'fireDrag',
+    ghost: 'fireGhost',
+    counterpoint: 'fireCounterpoint',
+    unison: 'fireUnison',
+    tacet: 'fireTacet',
   };
   {
     const shapes = [...new Set(W.INSTRUMENTS.map((d) => d.shape))].sort();
