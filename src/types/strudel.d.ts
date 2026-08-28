@@ -12,6 +12,12 @@
  */
 
 declare module '@strudel/core' {
+  /*
+   * Re-exported from `pattern.mjs` by index.mjs line 19, but absent from the
+   * hand-written half of these declarations. Needed to memoise the
+   * mini-notation parser — see the note in `src/audio/engine.ts`.
+   */
+  export function setStringParser(parser: (...strings: string[]) => unknown): void;
   /** Anything accepted where a pattern is expected. Strings go through mini-notation. */
   export type Patternable = number | string | Pattern;
 

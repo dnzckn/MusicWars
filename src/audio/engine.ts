@@ -18,7 +18,7 @@
  */
 
 import { setTime, type Pattern, type Repl } from '@strudel/core';
-import { miniAllStrings } from '@strudel/mini';
+import { mini, miniAllStrings } from '@strudel/mini';
 import {
   getAudioContext,
   initAudio,
@@ -29,10 +29,65 @@ import {
   setMaxPolyphony,
   webaudioRepl,
 } from '@strudel/webaudio';
+import { setStringParser } from '@strudel/core';
 import { BEATS_PER_BAR, type Transport } from '../core/transport';
 
 // Safe at module load: pure string-parser wiring, no AudioContext, no DOM.
 miniAllStrings();
+
+/*
+ * MEMOISE THE MINI-NOTATION PARSER. A frame-time fix, not an audio one.
+ *
+ * `npm run jank` measures the frame-time TAIL rather than the median, and found
+ * p99 60-69ms with a locked 16.7ms median. A CDP allocation profile put
+ * essentially all of it in Strudel, the single largest site being
+ * `@strudel/mini` at 25% of everything sampled. `mini()` runs a full krill PEG
+ * parse on every call, and `miniAllStrings()` installs it as the parser for
+ * EVERY string used as a pattern. The score is built almost entirely from
+ * string literals, so the same handful are re-parsed continuously, each parse
+ * allocating an AST and a pattern tree that is discarded moments later.
+ *
+ * THIS WAS TRIED ONCE AND SILENTLY DID NOTHING. The first attempt imported
+ * `setStringParser` from '@strudel/core/pattern.mjs' because the package's
+ * hand-written type declarations were missing it. That deep path resolves to a
+ * DIFFERENT module instance from the one `@strudel/mini` mutates, so the
+ * override was installed on a copy nobody reads: counters showed parses 0,
+ * hits 0, size 0 while the frame numbers moved by less than noise and could
+ * have been read either way. index.mjs line 19 does `export * from
+ * './pattern.mjs'`, so the package index has it and only the TYPE was absent —
+ * which is now declared instead of routed around.
+ *
+ * WHY CACHING IS SAFE. A Strudel pattern is a pure function of a time span, and
+ * every operator returns a NEW pattern rather than mutating the receiver, so
+ * two call sites handed the same parsed pattern cannot observe each other. If
+ * that ever stopped being true the symptom would be one lane inheriting
+ * another's controls, which `wiring` and `stemprobe` both watch for.
+ *
+ * The cache is unbounded deliberately: the keys are the score's own string
+ * literals plus the small set the director generates, so the population is
+ * bounded by the source rather than by the run.
+ */
+const miniCache = new Map<string, unknown>();
+let miniParses = 0;
+let miniHits = 0;
+
+setStringParser((...strings: string[]) => {
+  const key = strings.length === 1 ? strings[0] : strings.join('|~|');
+  const hit = miniCache.get(key);
+  if (hit !== undefined) {
+    miniHits++;
+    return hit;
+  }
+  miniParses++;
+  const pat = mini(...strings);
+  miniCache.set(key, pat);
+  return pat;
+});
+
+/** Parser-cache counters. A cache that never fires must be visible as one. */
+export function miniCacheStats(): { parses: number; hits: number; size: number } {
+  return { parses: miniParses, hits: miniHits, size: miniCache.size };
+}
 
 export type AudioStatus = 'idle' | 'booting' | 'running' | 'failed';
 

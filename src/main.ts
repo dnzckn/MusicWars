@@ -23,6 +23,7 @@ import {
   audioSuspended,
   bootAudio,
   getRepl,
+  miniCacheStats,
   pauseAudio,
   playPattern,
   resumeAudio,
@@ -1060,6 +1061,7 @@ if (import.meta.env.DEV) {
     loop,
     startRun,
     readout: () => director.readout(world.transport),
+    miniCacheStats,
     // What ?seed= actually resolved to, so a capture can record the seed that
     // produced the file rather than the one it hoped for.
     seed: () => (Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : null),
