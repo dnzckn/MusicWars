@@ -351,17 +351,24 @@ export type GameEvents = {
   'enemy:spawn': { id: number; archetype: EnemyArchetype };
   'enemy:death': { id: number; archetype: EnemyArchetype; byPlayer: boolean };
   /**
-   * An enemy just loosed a volley. The audio side turns this into a pitched
-   * note, so the shot you see telegraphed is the note you hear.
+   * An enemy just committed a LUNGE — the telegraphed dash that replaced its
+   * volley. The audio side turns this into a pitched note, so the charge you
+   * see winding up is the note you hear.
+   *
+   * WAS `enemy:fire`, and the rename is the same discipline that renamed `pan`
+   * below: nothing shoots any more, so a listener called "fire" would be
+   * describing a subsystem that does not exist while quietly still working.
+   * `tools/battlefield.mjs`, `tools/firstminute.mjs`, `tools/pause.mjs` and
+   * `main.ts` all had to be edited to keep receiving it, which is the point.
    *
    * `pan` is 0..1, hard left to hard right, and is **which side of the PLAYER**
-   * the shot came from — not a position in the world and not a fraction of the
-   * field. It was called `x` and was `e.x / world.width`, which meant the same
-   * thing only while the field was exactly one screen wide. Renamed rather than
-   * redefined in place so that every reader has to look: the old name let
+   * the attack came from — not a position in the world and not a fraction of
+   * the field. It was called `x` and was `e.x / world.width`, which meant the
+   * same thing only while the field was exactly one screen wide. Renamed rather
+   * than redefined in place so that every reader has to look: the old name let
    * `tools/battlefield.mjs` keep printing a column after its definition moved.
    */
-  'enemy:fire': { archetype: EnemyArchetype; pan: number };
+  'enemy:lunge': { archetype: EnemyArchetype; pan: number };
   /** A player shot connected. Answers the shot musically. */
   'enemy:hit': { archetype: EnemyArchetype; lethal: boolean };
 
@@ -557,14 +564,32 @@ export interface GameSnapshot {
   /** How far up the playfield the player is, 0 at the bottom, 1 at the top. */
   playerHeight: number;
 
-  /** Total live enemy bullets on screen. */
-  bulletCount: number;
-  /** Enemy bullets within the "danger" radius of the player. */
-  bulletsNear: number;
-  /** Enemy bullets within the tighter "panic" radius. */
-  bulletsVeryNear: number;
-  /** Seconds until the soonest bullet on a collision course arrives; Infinity when clear. */
-  timeToImpact: number;
+  /* ---------------------------------------------------------------------- *
+   * PRESSURE — four numbers that used to count enemy bullets and now count
+   * bodies. All four were renamed rather than repointed in place.
+   *
+   * `bulletCount`, `bulletsNear`, `bulletsVeryNear` and `timeToImpact` fed
+   * `tension.density`, `tension.crowding` and `tension.imminence` — three of
+   * the arrangement's inputs. With enemy fire deleted they would all have read
+   * zero forever, and the music would have gone quietly slack while every
+   * declaration in this file still argued they were live. That is exactly the
+   * failure `tools/deadconditions.mjs` exists to find.
+   *
+   * The thresholds they are read against MOVED with them (see `tension.ts`),
+   * because a screen holding 30 bodies is not the same number as a screen
+   * holding 30 bullets.
+   * ---------------------------------------------------------------------- */
+  /** Live enemies anywhere in the field — the crowd term. Was `bulletCount`. */
+  pressureCount: number;
+  /** Enemies within the "danger" radius of the player. Was `bulletsNear`. */
+  threatsNear: number;
+  /** Enemies within the tighter "panic" radius. Was `bulletsVeryNear`. */
+  threatsVeryNear: number;
+  /**
+   * Seconds until the soonest body on a collision course reaches the ship;
+   * Infinity when clear. Was `timeToImpact`.
+   */
+  timeToContact: number;
 
   enemyCount: number;
   /** Sum of remaining enemy HP as a fraction of the wave's starting HP. */
@@ -727,10 +752,10 @@ export function emptySnapshot(): GameSnapshot {
     invulnerable: false,
     focused: false,
     playerHeight: 0,
-    bulletCount: 0,
-    bulletsNear: 0,
-    bulletsVeryNear: 0,
-    timeToImpact: Infinity,
+    pressureCount: 0,
+    threatsNear: 0,
+    threatsVeryNear: 0,
+    timeToContact: Infinity,
     enemyCount: 0,
     enemyThreat: 0,
     enemies: { pluck: 0, stutter: 0, arpeggiator: 0, glissando: 0, subdrop: 0, echo: 0, rush: 0, conductor: 0 },

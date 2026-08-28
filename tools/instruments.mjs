@@ -91,8 +91,8 @@ const { World } = await import('../src/game/world.ts');
 /*
  * THE SNAPSHOT COMES FROM A REAL WORLD, and the first version hand-wrote one.
  *
- * `GameSnapshot` has around thirty numeric fields — `bulletsVeryNear`,
- * `timeToImpact`, `enemyThreat`, `playerMaxHp` and so on. A literal with the
+ * `GameSnapshot` has around thirty numeric fields — `threatsVeryNear`,
+ * `timeToContact`, `enemyThreat`, `playerMaxHp` and so on. A literal with the
  * dozen obvious ones leaves the rest `undefined`, and undefined in arithmetic
  * is NaN: driven that way the director produced NaN levels for `sub`, `kick`
  * and `bass`. They print as `null` through JSON, which is how it went unnoticed

@@ -108,10 +108,11 @@ for (const policy of POLICIES) {
       else inp.choice = -1;
       w.update(DT, inp);
       if (i % 30 === 0) {
-        const bl = w.enemyBullets;
+        // PRESSURE is bodies within THREAT_RADIUS, not bullets. Contact damage
+        // means a body inside that ring is the threat a bullet used to be.
         let near = 0;
-        for (let k = 0; k < bl.count; k++) {
-          const dx = bl.x[k] - w.player.x, dy = bl.y[k] - w.player.y;
+        for (const e of w.enemies) {
+          const dx = e.x - w.player.x, dy = e.y - w.player.y;
           if (dx * dx + dy * dy < THREAT_RADIUS * THREAT_RADIUS) near++;
         }
         press += near; pn++;

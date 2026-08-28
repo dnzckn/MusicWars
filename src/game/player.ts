@@ -58,11 +58,68 @@ const TURN_RATE_FOCUSED = 9;
 /** Below this the stick is noise and the facing is left exactly where it was. */
 const FACING_DEADZONE = 0.22;
 
-/** Danmaku convention: the hitbox is far smaller than the sprite. */
-export const PLAYER_HITBOX = 3.5;
+/**
+ * How big the ship is for the purposes of being touched. 3.5 -> 11.
+ *
+ * `PLAYER_HITBOX = 3.5` was the danmaku convention — "the hitbox is far
+ * smaller than the sprite" — and it was exactly right for its one consumer: a
+ * pinpoint hitbox is what makes threading a wall of bullets possible, and the
+ * renderer draws the dot so the player can see where it is.
+ *
+ * IT IS THE WRONG CONVENTION FOR CONTACT DAMAGE, and the measurement is
+ * unambiguous. With the roster converted to contact-only, three 300-second runs
+ * of the dodging bot against a mean of 16-21 live enemies produced **zero
+ * contacts** — not few, zero. At 3.5 the test was `d < e.radius * 0.62 + 3.5`,
+ * which for a pluck is 12.8 pixels: the ship had to pass within thirteen pixels
+ * of an enemy's centre, and bodies that orbit and lead their target simply
+ * never do. The one damage source in the game could not fire.
+ *
+ * 11 is the drawn hull: `Renderer.drawPlayer` strokes a triangle 18px forward
+ * and 12px to each side. A survivors-like is a game about where your BODY is,
+ * so the body is what touches things, and it is the size it looks.
+ *
+ * RENAMED, not retuned in place. A constant called `PLAYER_HITBOX` sitting at
+ * 11 would read as a broken danmaku hitbox to everyone who has ever seen one;
+ * `PLAYER_CONTACT` says what it now decides.
+ */
+export const PLAYER_CONTACT = 11;
 export const GRAZE_RADIUS = 26;
 
-export const INVULN_ON_HIT = 3.2;
+/**
+ * Seconds of invulnerability after a hit lands. 3.2 -> 1.2.
+ *
+ * THIS NUMBER WAS SIZED FOR BULLETS AND IS NOW SIZED FOR BODIES, and the two
+ * are different problems. Against fire, 3.2 seconds bought the player time to
+ * re-read a screen whose contents had just been deleted by `cancelBullets` and
+ * would take that long to fill again. Against contact there is nothing to
+ * refill: the crowd that hit you is still standing on you, so a long grant is
+ * simply free passage through the thing that is supposed to be dangerous — the
+ * ship walks out through the middle of a swarm and the swarm is scenery.
+ *
+ * DERIVED, THEN MEASURED. `World.onPlayerHit` throws every body within
+ * `CLEAR_RADIUS` outward at 700 px/s for 0.35s, which covers about 200px after
+ * the coast decay. A mob walks back at 245-330 px/s, so the crowd is on the
+ * ship again 0.6-0.8s later; add the flight and the floor is about 1.0s. Below
+ * that the grant expires while the bodies are still in the air and the player
+ * is hit again by the same crowd on the same spot, which reads as the game
+ * cheating rather than as a mistake.
+ *
+ * Swept on `tools/arena.mjs`, 3 runs x 10 simulated minutes, everything else
+ * held, hits taken as card-0 / builder:
+ *
+ *     3.2s   5.0 hits / 12.0     (this is close to free passage)
+ *     1.2s   5.0 / 12.0
+ *     0.8s   7.0 / 11.3
+ *
+ * 1.2 is the smallest value above the derived floor. The measured difference
+ * between 1.2 and 0.8 is inside the run-to-run spread of this column, so the
+ * derivation is what chooses between them rather than the numbers.
+ *
+ * The x1.5 grant on losing a life (below) is unchanged in FORM and therefore
+ * comes down with it, which is correct for the same reason: a life lost in a
+ * crowd should hand back position, not immunity.
+ */
+export const INVULN_ON_HIT = 1.2;
 
 /** Shortest signed angular distance from `a` to `b`, in (-PI, PI]. */
 export function angleDelta(a: number, b: number): number {

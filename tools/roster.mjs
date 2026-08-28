@@ -5,7 +5,7 @@
  * Every existing balance tool measures the *result* of the roster — bullets on
  * screen, hits taken, wave length — and none of them measures the roster
  * itself. So "enemies that shoot should be rare, they should move slower, and
- * take a few more hits" had no instrument at all: `armedChance` could be read
+ * take a few more hits" had no instrument at all: `lungeChance` could be read
  * from the source, but the number a player meets is not that function, it is
  * that function plus `spawnGroup`'s guarantee that the first enemy of every
  * group is armed regardless. Measured, those differ by a lot at low chances.
@@ -75,7 +75,8 @@ const raw = await p.evaluate(async ({ mins }) => {
       seen.add(e.id);
       let r = live.get(e.id);
       if (!r) {
-        r = { archetype: e.archetype, armed: !!e.armed && e.emitters.length > 0, maxHp: e.maxHp,
+        // `armed` now means "this body carries a lunge". See enemies.ts.
+        r = { archetype: e.archetype, armed: e.lunge !== null, maxHp: e.maxHp,
               wave: w.waveIndex, born: now, firstHit: 0, dist: 0, time: 0, lastHp: e.hp,
               x: e.x, y: e.y, hits: 0, dmg: 0 };
         live.set(e.id, r);
@@ -101,11 +102,11 @@ const raw = await p.evaluate(async ({ mins }) => {
       done.push(r);
       live.delete(id);
     }
-    pressure.bullets += w.enemyBullets.count;
+    pressure.bullets += w.enemies.length;
     pressure.enemies += w.enemies.length;
     pressure.n++;
     const pw = (perWave[w.waveIndex] ??= { bullets: 0, enemies: 0, n: 0, seconds: 0 });
-    pw.bullets += w.enemyBullets.count;
+    pw.bullets += w.enemies.length;
     pw.enemies += w.enemies.length;
     pw.seconds += dt;
     pw.n++;
@@ -179,6 +180,6 @@ if (waves.length >= 4) {
   console.log(`curve: late third is ${rise.toFixed(1)}x the early third (curve.mjs gates this above 1.3)`);
 }
 console.log(`reached wave ${raw.reached + 1} | ${all.length} enemies observed | mode ${MODE}`);
-console.log(`shooters ${pct(all, (r) => r.armed).toFixed(0)}% of enemies | mean screen speed ${mean(all, (r) => r.dist / r.time).toFixed(0)} px/s | mean damage absorbed ${mean(all, (r) => r.dmg).toFixed(1)} (time-to-kill lives in ttk.mjs, not here)`);
+console.log(`lungers ${pct(all, (r) => r.armed).toFixed(0)}% of enemies | mean screen speed ${mean(all, (r) => r.dist / r.time).toFixed(0)} px/s | mean damage absorbed ${mean(all, (r) => r.dmg).toFixed(1)} (time-to-kill lives in ttk.mjs, not here)`);
 if (reloads()) console.log(`WARNING: the page reloaded ${reloads()} times mid-run; these numbers are fiction`);
 console.log(`on screen: ${raw.bullets.toFixed(1)} bullets, ${raw.enemies.toFixed(1)} enemies | pressure ${(raw.bullets + raw.enemies * 3).toFixed(1)}`);

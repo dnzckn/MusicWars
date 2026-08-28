@@ -106,7 +106,7 @@ const measure = async (label, ms, hold) => {
   const readout = await page.evaluate(() => {
     const r = window.__musicwars.readout();
     const s = window.__musicwars.world.snapshot;
-    return { section: r.section, tension: +r.tension.toFixed(3), bpm: r.bpm, bullets: s.bulletCount, enemies: s.enemyCount };
+    return { section: r.section, tension: +r.tension.toFixed(3), bpm: r.bpm, bullets: s.pressureCount, enemies: s.enemyCount };
   });
   console.log(
     `${label.padEnd(26)} rms=${avg.toFixed(4)} peak=${stats.peak.toFixed(3)} crest=${crest.toFixed(1)}dB ` +

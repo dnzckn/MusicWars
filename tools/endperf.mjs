@@ -20,7 +20,7 @@ const probe = async (label, setup) => {
     const s = mw.world.snapshot;
     return { fps: +(frames / ((performance.now() - t0) / 1000)).toFixed(1),
       upd: +mw.loop.updateMs.toFixed(2), ren: +mw.loop.renderMs.toFixed(2),
-      enemies: s.enemyCount, bullets: s.bulletCount, particles: mw.world.particles.count, notes: mw.world.notes.length };
+      enemies: s.enemyCount, bullets: s.pressureCount, particles: mw.world.particles.count, notes: mw.world.notes.length };
   });
   console.log(`${label.padEnd(24)} fps=${String(r.fps).padStart(5)} update=${String(r.upd).padStart(5)}ms render=${String(r.ren).padStart(5)}ms  e=${r.enemies} b=${r.bullets} p=${r.particles} n=${r.notes}`);
   return r.fps;

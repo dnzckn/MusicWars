@@ -44,10 +44,19 @@ const rows = [];
 for (const [wave, name] of [[0, 'fourfloor'], [2, 'trap'], [4, 'gallop'], [6, 'swing']]) {
   await p.evaluate((w) => { const wd = window.__musicwars.world; wd.jumpToWave(w); wd.player.lives = 4; }, wave);
   await p.waitForTimeout(7000);
-  // Guarantee bullets to sample.
+  /*
+   * Guarantee THREATS to sample.
+   *
+   * It used to plant a ring of 40 enemy bullets, one of each of the four
+   * sprite types. There are no enemy bullets: the thing a player has to see
+   * against the playfield is now the BODY, so the ring is a ring of enemies —
+   * one of each of the four hues the roster actually uses, which is the same
+   * question ("is the threat legible on this palette") asked of the object that
+   * carries the threat.
+   */
   const pts = await p.evaluate(async () => {
     const w = window.__musicwars.world;
-    const bl = w.enemyBullets;
+    const mod = await import('/src/game/enemies.ts');
     /*
      * The ring centre was (360, 420) — the middle of the 720x960 field this was
      * written against — then `w.width/2, w.height/2`, the middle of the field.
@@ -57,23 +66,26 @@ for (const [wave, name] of [[0, 'fourfloor'], [2, 'trap'], [4, 'gallop'], [6, 's
      * screenshot contains.
      */
     const cx = w.camera.viewX + w.viewW / 2, cy = w.camera.viewY + w.viewH / 2;
+    const kinds = ['pluck', 'arpeggiator', 'glissando', 'subdrop'];
+    w.enemies.length = 0;
     for (let i = 0; i < 40; i++) {
       const a = (i / 40) * Math.PI * 2;
-      bl.spawn({ x: cx + Math.cos(a) * 180, y: cy + Math.sin(a) * 180, angle: a, speed: 0,
-        radius: 5, ttl: 30, type: i % 4 });
+      const e = mod.spawnEnemy(kinds[i % 4], cx + Math.cos(a) * 180, cy + Math.sin(a) * 180, 0.5, false);
+      e.move = () => {};
+      w.enemies.push(e);
     }
     /*
      * Freeze the world before reading positions.
      *
      * A first version read coordinates and screenshotted 120ms later: real
-     * bullets travel 200-300 px/s, so they had moved 25-35px and the sampler
+     * threats travel 200-300 px/s, so they had moved 25-35px and the sampler
      * was reading empty background, reporting a contrast of 2 on palettes where
-     * the bullets are plainly visible.
+     * they are plainly visible.
      */
     w.frozen = true;
     await new Promise((r) => setTimeout(r, 250));
     const out = [];
-    for (let i = 0; i < bl.count; i++) out.push({ x: bl.x[i], y: bl.y[i], t: bl.type[i] });
+    for (const e of w.enemies) out.push({ x: e.x, y: e.y, t: kinds.indexOf(e.archetype) });
     const wd = window.__musicwars.world;
     // Read AFTER the freeze, so the rect returned is the one the screenshot
     // below is taken of. A camera that was still following would put every

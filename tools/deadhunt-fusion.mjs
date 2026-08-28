@@ -119,30 +119,24 @@ function drive(w, inp, pickCard) {
   let ry = 0;
   let danger = 0;
   let closest = 1e9;
-  const bl = w.enemyBullets;
-  for (let i = 0; i < bl.count; i++) {
-    const dx = px - bl.x[i];
-    const dy = py - bl.y[i];
-    const d2 = dx * dx + dy * dy;
-    if (d2 > 190 * 190) continue;
-    const d = Math.sqrt(d2) || 1;
-    closest = Math.min(closest, d);
-    const vx = Math.cos(bl.angle[i]) * bl.speed[i];
-    const vy = Math.sin(bl.angle[i]) * bl.speed[i];
-    const closing = (-dx * vx - dy * vy) / d;
-    if (closing <= 0) continue;
-    const weight = (1 - d / 190) ** 2 * (1 + closing / 300);
-    rx += (dx / d) * weight;
-    ry += (dy / d) * weight;
-    if (d < 90) danger += weight;
-  }
+  // Bodies, not bullets — enemies damage by contact now and there is no enemy
+  // bullet pool. Kept written out rather than imported, exactly as the eight
+  // copies of the old bullet policy were; `tools/lib/bot-brain.mjs` carries the
+  // full reasoning and is the version to keep this in step with.
   for (const e of w.enemies) {
     const dx = px - e.x;
     const dy = py - e.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d > e.radius + 70) continue;
-    rx += (dx / d) * 1.5;
-    ry += (dy / d) * 1.5;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 240 * 240) continue;
+    const d = Math.sqrt(d2) || 1;
+    const edge = Math.max(1, d - e.radius * 0.62);
+    closest = Math.min(closest, edge);
+    const closing = (-dx * (e.x - e.prevX) - dy * (e.y - e.prevY)) / d;
+    const weight =
+      (1 - Math.min(1, edge / 240)) ** 2 * (1 + Math.max(0, closing) / 2.5) * (e.lungeTime > 0 ? 2.4 : 1);
+    rx += (dx / d) * weight;
+    ry += (dy / d) * weight;
+    if (edge < 110) danger += weight;
   }
   let ax = 0;
   let ay = 0;

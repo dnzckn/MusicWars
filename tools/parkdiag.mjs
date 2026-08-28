@@ -63,9 +63,9 @@ for (; i < STEPS; i++) {
   w.update(DT, inp);
   w.shocks.length = 0;
   if (i % 60 === 0) {
-    nearSum += w.snapshot.bulletsNear ?? 0;
-    nearMax = Math.max(nearMax, w.snapshot.bulletsNear ?? 0);
-    veryNearSum += w.snapshot.bulletsVeryNear ?? 0;
+    nearSum += w.snapshot.threatsNear ?? 0;
+    nearMax = Math.max(nearMax, w.snapshot.threatsNear ?? 0);
+    veryNearSum += w.snapshot.threatsVeryNear ?? 0;
     samples++;
   }
   if (w.waveIndex !== lastWave) {
@@ -82,7 +82,7 @@ console.log(`\nPARKDIAG — mitigation events behind the parked-ship survival nu
 console.log(`${MINUTES} min parked run: wave ${w.waveIndex + 1}, died ${w.isOver}, elapsed ${f(i * DT)}s`);
 console.log(`totals: hits ${hits}  extends ${extends_}  bomb-events(player:bomb) ${bombEvents}  encore pickups ${encorePickups}  grace-rest cards ${graceRests}`);
 console.log(`final: hp ${w.player.hp}/${w.player.maxHp}  lives ${w.player.lives}  bombs ${w.player.bombs}`);
-console.log(`avg bulletsNear (sampled every 0.5s) ${f(nearSum / samples, 2)}  max ${nearMax}  avg bulletsVeryNear ${f(veryNearSum / samples, 2)}  n=${samples}`);
+console.log(`avg threatsNear (sampled every 0.5s) ${f(nearSum / samples, 2)}  max ${nearMax}  avg threatsVeryNear ${f(veryNearSum / samples, 2)}  n=${samples}`);
 
 console.log(`\nreconciliation: of ${hits} 'player:hit' events, ${bombEvents} were auto-bomb rescues (hp restored to max instead of -1)`);
 const rawHpLoss = hits - bombEvents;

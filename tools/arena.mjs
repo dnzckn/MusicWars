@@ -117,30 +117,22 @@ function drive(w, inp, pickCard) {
   let danger = 0;
   let closest = 1e9;
 
-  const bl = w.enemyBullets;
-  for (let i = 0; i < bl.count; i++) {
-    const dx = px - bl.x[i];
-    const dy = py - bl.y[i];
-    const d2 = dx * dx + dy * dy;
-    if (d2 > 190 * 190) continue;
-    const d = Math.sqrt(d2) || 1;
-    closest = Math.min(closest, d);
-    const vx = Math.cos(bl.angle[i]) * bl.speed[i];
-    const vy = Math.sin(bl.angle[i]) * bl.speed[i];
-    const closing = (-dx * vx - dy * vy) / d;
-    if (closing <= 0) continue;
-    const weight = (1 - d / 190) ** 2 * (1 + closing / 300);
-    rx += (dx / d) * weight;
-    ry += (dy / d) * weight;
-    if (d < 90) danger += weight;
-  }
+  // Bodies, not bullets. See `tools/lib/bot-brain.mjs` for the full reasoning;
+  // this is the same policy written out, as the header above requires.
   for (const e of w.enemies) {
     const dx = px - e.x;
     const dy = py - e.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d > e.radius + 70) continue;
-    rx += (dx / d) * 1.5;
-    ry += (dy / d) * 1.5;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 240 * 240) continue;
+    const d = Math.sqrt(d2) || 1;
+    const edge = Math.max(1, d - e.radius * 0.62);
+    closest = Math.min(closest, edge);
+    const closing = (-dx * (e.x - e.prevX) - dy * (e.y - e.prevY)) / d;
+    const weight =
+      (1 - Math.min(1, edge / 240)) ** 2 * (1 + Math.max(0, closing) / 2.5) * (e.lungeTime > 0 ? 2.4 : 1);
+    rx += (dx / d) * weight;
+    ry += (dy / d) * weight;
+    if (edge < 110) danger += weight;
   }
 
   let ax = 0;
@@ -296,8 +288,15 @@ function runOnce(seed, pickCard) {
    */
   const alive = [];
   const onScreen = [];
-  const bullets = [];
-  const bulletsOnScreen = [];
+  /*
+   * WAS `bullets` AND `bulletsOnScreen`. There are no enemy bullets.
+   *
+   * The column is replaced rather than dropped, because "how much is attacking
+   * you right now" is the question those two were really answering and it still
+   * has an answer: how many bodies are mid-charge. Dropping it would have left
+   * this file silent about the one enemy action in the game.
+   */
+  const lunging = [];
   const inView = (x, y) =>
     x >= w.camera.viewX && x <= w.camera.viewX + w.viewW && y >= w.camera.viewY && y <= w.camera.viewY + w.viewH;
   let choosingSteps = 0;
@@ -316,12 +315,9 @@ function runOnce(seed, pickCard) {
       near.push(w.threatDistance);
       alive.push(w.enemies.length);
       onScreen.push(w.enemies.reduce((n, e) => n + (inView(e.x, e.y) ? 1 : 0), 0));
-      bullets.push(w.enemyBullets.count);
-      let bv = 0;
-      for (let k = 0; k < w.enemyBullets.count; k++) {
-        if (inView(w.enemyBullets.x[k], w.enemyBullets.y[k])) bv++;
-      }
-      bulletsOnScreen.push(bv);
+      let lg = 0;
+      for (const e of w.enemies) if (e.lungeTime > 0) lg++;
+      lunging.push(lg);
     }
     // Sampled by step index, not by comparing accumulated float seconds to a
     // whole number — `i * DT` lands on 59.99999 far more often than on 60.
@@ -366,8 +362,7 @@ function runOnce(seed, pickCard) {
     near: quantiles(near),
     alive: quantiles(alive),
     onScreen: quantiles(onScreen),
-    bullets: quantiles(bullets),
-    bulletsOnScreen: quantiles(bulletsOnScreen),
+    lunging: quantiles(lunging),
   };
 }
 
@@ -458,8 +453,7 @@ console.log(`  encirclement    ${q((r) => r.enc)}`);
 console.log(`  nearest threat  ${q((r) => r.near)}`);
 console.log(`  enemies alive   ${q((r) => r.alive, f1)}   (anywhere in the ${new World(1).width}x${new World(1).height} field)`);
 console.log(`  enemies ON SCREEN ${q((r) => r.onScreen, f1)}   <- the density number`);
-console.log(`  bullets alive   ${q((r) => r.bullets, f1)}`);
-console.log(`  bullets ON SCREEN ${q((r) => r.bulletsOnScreen, f1)}`);
+console.log(`  bodies MID-CHARGE ${q((r) => r.lunging, f1)}   (was "bullets alive"; see the source)`);
 
 console.log('\nBOSSES (seconds from arrival to kill; STUCK is a fight still running at the end)');
 for (const [i, r] of rows.entries()) {

@@ -55,7 +55,6 @@ const rows = await p.evaluate(async (TYPES) => {
   const STANDOFF = 392;
   for (const t of TYPES) {
     w.enemies.length = 0;
-    w.enemyBullets.clear();
     w.player.x = LANE_X; w.player.y = SHIP_Y;
     w.player.invuln = 999;
     // Park one directly above the ship so every shot connects.

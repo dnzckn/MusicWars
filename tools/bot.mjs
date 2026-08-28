@@ -39,7 +39,7 @@ for (const wave of WAVES) {
   const r = await p.evaluate(() => {
     const mw = window.__musicwars, s = mw.world.snapshot;
     return { wave: s.wave + 1, hits: window.__hits0 ?? 0, lives: s.lives, score: s.score,
-      enemies: s.enemyCount, bullets: s.bulletCount, fps: Math.round(mw.loop.fps) };
+      enemies: s.enemyCount, bullets: s.pressureCount, fps: Math.round(mw.loop.fps) };
   });
   rows.push(r);
 }

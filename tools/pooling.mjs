@@ -18,12 +18,26 @@ const r = await p.evaluate(async () => {
     for (let i = 0; i < w.particles.count; i++) if (w.particles.shape[i] === 2) rings++;
     peakRings = Math.max(peakRings, rings);
   }, 40);
-  // Sustained grazing: a continuous stream past the ship, plus explosions.
+  /*
+   * Sustained grazing, plus explosions.
+   *
+   * It used to feed a stream of enemy BULLETS past the ship, because grazing
+   * meant near-missing a bullet. There is no enemy bullet pool; a graze is now
+   * a BODY entering the annulus around the ship and leaving it again
+   * (`World.collidePlayer`), so the feed parks bodies at graze range and clears
+   * their latch each tick, which is the same "one graze per pass" stream at a
+   * far higher rate than play produces.
+   */
+  const mod = await import('/src/game/enemies.ts');
   const feed = setInterval(() => {
     for (let i = 0; i < 6; i++) {
-      w.enemyBullets.spawn({ x: w.player.x + (i % 2 ? 21 : -21), y: w.player.y - 120,
-        angle: Math.PI / 2, speed: 300, radius: 4, ttl: 3, type: 0 });
+      const a = (i / 6) * Math.PI * 2;
+      const e = mod.spawnEnemy('stutter', w.player.x + Math.cos(a) * 22, w.player.y + Math.sin(a) * 22, 0.5, false);
+      e.move = () => {};
+      w.enemies.push(e);
     }
+    for (const e of w.enemies) e.grazed = false;
+    w.player.invuln = 1;
     w.particles.burst(w.rng, 360, 400, 40, 300, 20, 0.7, 4);
   }, 60);
   await new Promise((res) => setTimeout(res, 12000));

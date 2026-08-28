@@ -44,9 +44,9 @@ await page.evaluate(() => {
   setInterval(() => {
     const s = mw.world.snapshot;
     const r = mw.readout();
-    peak.bullets = Math.max(peak.bullets, s.bulletCount);
+    peak.bullets = Math.max(peak.bullets, s.pressureCount);
     peak.enemies = Math.max(peak.enemies, s.enemyCount);
-    peak.near = Math.max(peak.near, s.bulletsNear);
+    peak.near = Math.max(peak.near, s.threatsNear);
     peak.tension = Math.max(peak.tension, r.tension); peak.energy = Math.max(peak.energy ?? 0, r.energy);
     peak.score = Math.max(peak.score, s.score);
     peak.stems = Math.max(peak.stems, Object.values(r.levels).filter((v) => v > 0.05).length);
@@ -85,8 +85,8 @@ const sample = async (label, ms) => {
       rawTension: +r.rawTension.toFixed(3),
       wave: w.snapshot.wave,
       enemies: w.snapshot.enemyCount,
-      bullets: w.snapshot.bulletCount,
-      near: w.snapshot.bulletsNear,
+      bullets: w.snapshot.pressureCount,
+      near: w.snapshot.threatsNear,
       score: w.snapshot.score,
       lives: w.snapshot.lives,
       liveStems: Object.entries(r.levels).filter(([, v]) => v > 0.05).map(([k]) => k),

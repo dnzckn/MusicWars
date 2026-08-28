@@ -27,7 +27,7 @@ await p.evaluate(() => {
    * the player, which is what a listener actually hears, instead of whether
    * the enemies happened to be spread across the arena.
    */
-  mw.world.bus.on('enemy:fire', (e) => window.__fire.push({ b: mw.world.warpedBeatNow, a: e.archetype, pan: +e.pan.toFixed(2) }));
+  mw.world.bus.on('enemy:lunge', (e) => window.__fire.push({ b: mw.world.warpedBeatNow, a: e.archetype, pan: +e.pan.toFixed(2) }));
   setInterval(() => window.__motif.push({ n: mw.world.snapshot.enemyCount, lvl: mw.readout().levels.motifs }), 200);
 });
 /*

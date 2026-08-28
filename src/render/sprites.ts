@@ -213,13 +213,6 @@ type Shape = 'notehead' | 'eighth' | 'staccato' | 'sharp' | 'beam';
  * the bright core. Hue separation is what distinguishes threats from each other
  * and from pickups — a different job from being visible at all.
  */
-const ENEMY_TYPES: { hue: number; radius: number; shape: Shape }[] = [
-  { hue: 350, radius: 5.6, shape: 'notehead' },
-  { hue: 28, radius: 5.5, shape: 'eighth' },
-  { hue: 310, radius: 3.6, shape: 'staccato' },
-  { hue: 5, radius: 4.8, shape: 'sharp' },
-];
-
 const PLAYER_TYPES: { hue: number; radius: number; shape: Shape }[] = [
   // The player answers in eighth notes. Costs 16 pre-rendered frames and makes
   // the exchange read as a duel between two players rather than gunfire.
@@ -270,13 +263,13 @@ function buildSet(defs: { hue: number; radius: number; shape: Shape }[]): Bullet
   return { frames, rotating };
 }
 
-let enemySet: BulletSpriteSet | null = null;
 let playerSet: BulletSpriteSet | null = null;
 
-export function enemyBulletSprites(): BulletSpriteSet {
-  enemySet ??= buildSet(ENEMY_TYPES);
-  return enemySet;
-}
+/*
+ * `enemyBulletSprites()` stood here and built four rotating frame sets — 4 x
+ * ROTATIONS canvases — for a pool that no longer exists. `ENEMY_TYPES` goes
+ * with it. See `src/game/enemies.ts` for why nothing shoots any more.
+ */
 
 export function playerBulletSprites(): BulletSpriteSet {
   playerSet ??= buildSet(PLAYER_TYPES);

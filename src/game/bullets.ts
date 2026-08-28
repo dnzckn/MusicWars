@@ -33,12 +33,22 @@ export const BulletFlag = {
   None: 0,
   /** Removed when it leaves the playfield rather than clamped/reflected. */
   DespawnOffscreen: 1 << 0,
-  /** Has already awarded a graze; do not award again. */
-  Grazed: 1 << 1,
-  /** Turns into score items on a bomb instead of vanishing. */
-  Cancellable: 1 << 2,
-  /** Ignores the bomb clear (boss lasers, etc). */
-  Indestructible: 1 << 3,
+  /*
+   * BITS 1, 2 AND 3 ARE FREE, and what used to be in them is worth recording.
+   *
+   * `Grazed` (1) latched the graze award per bullet, `Cancellable` (2) marked
+   * a bullet a bomb turned into score, and `Indestructible` (3) exempted boss
+   * lasers from that clear. All three described ENEMY bullets and there are no
+   * enemy bullets — the pool, the emitters and the archetype tables are gone.
+   * The graze latch now lives on the enemy (`Enemy.grazed`, and it has to be
+   * released as well as set, because a body can pass you twice); the clear
+   * became a knockback (`World.repel`), which nothing is exempt from.
+   *
+   * Left as a gap rather than renumbered: this is a `Uint8Array` with all eight
+   * bits spoken for below, the remaining five are load-bearing on the PLAYER
+   * pool, and renumbering them to close a hole would rewrite five live
+   * constants to save nothing.
+   */
   /**
    * Player bolt that steers toward the nearest enemy every frame.
    *
@@ -73,21 +83,17 @@ export const BulletFlag = {
    * what makes `count` a retinue size instead of a volley.
    */
   Summon: 1 << 6,
-  /**
-   * An enemy bullet RITARDANDO has already slowed.
+  /*
+   * BIT 7 IS FREE. It was `Dragged` — an enemy bullet RITARDANDO had already
+   * slowed, marked so the multiply could not compound every frame it spent
+   * inside the bubble. RITARDANDO's bubble reaches bodies only now (see
+   * `World.dragDeepens`), and a body's slow is a `scale` recomputed from
+   * scratch every step, so there is nothing to latch.
    *
-   * The bubble multiplies a bullet's speed once, on the step it enters, and
-   * marks it — without the mark the multiply would compound every frame the
-   * bullet spent inside and stop it dead in about a tenth of a second, which is
-   * a very different item from the one on the card. It is never cleared: what
-   * enters the drag never speeds up again, which is both cheaper than storing
-   * an original speed per bullet and the more legible rule.
-   *
-   * This is the eighth and LAST bit. `BulletPool.flags` is a `Uint8Array`, so a
-   * ninth flag needs the array widened to `Uint16Array` first — cheap, but not
-   * something to discover by watching a flag silently truncate to zero.
+   * `BulletPool.flags` is a `Uint8Array`. A ninth flag would need it widened to
+   * `Uint16Array` — cheap, but not something to discover by watching a flag
+   * silently truncate to zero. There are four spare bits now.
    */
-  Dragged: 1 << 7,
 } as const;
 
 export interface BulletSpawn {

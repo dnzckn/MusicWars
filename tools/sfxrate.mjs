@@ -15,7 +15,7 @@ for (const wave of [4, 12, 22]) {
     w.jumpToWave(wv); w.player.lives = 4;
     await new Promise((r) => setTimeout(r, 2500));
     const c = {};
-    const names = ['enemy:hit','enemy:death','enemy:fire','enemy:spawn','player:hit','graze','powerup:pickup'];
+    const names = ['enemy:hit','enemy:death','enemy:lunge','enemy:spawn','player:hit','graze','powerup:pickup'];
     const offs = names.map((n) => { c[n] = 0; const h = () => c[n]++; w.bus.on(n, h); return [n, h]; });
     const secs = 8;
     await new Promise((r) => setTimeout(r, secs * 1000));

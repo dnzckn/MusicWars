@@ -99,7 +99,7 @@ const steer = (tSec) => {
 };
 
 const en = [], te = [], rw = [], fl = [], drivers = new Map();
-const FIELDS = ['bulletsNear','bulletsVeryNear','timeToImpact','bulletCount','combo','killRate','bossHp','bossPhases','timeSinceHit','grazeRate','enemyThreat','enemyCount','playerHp','lives','maxLives','playerMaxHp','waveProgress'];
+const FIELDS = ['threatsNear','threatsVeryNear','timeToContact','pressureCount','combo','killRate','bossHp','bossPhases','timeSinceHit','grazeRate','enemyThreat','enemyCount','playerHp','lives','maxLives','playerMaxHp','waveProgress'];
 const samples = Object.fromEntries(FIELDS.map((f) => [f, []]));
 const lv = {};
 let hits = 0;

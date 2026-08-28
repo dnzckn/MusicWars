@@ -28,17 +28,17 @@ import { Camera } from './camera';
 import { PLAYFIELD_H, PLAYFIELD_W, VIEW_H, VIEW_W } from './field';
 import {
   ARCHETYPE_INFO,
-  armedChance,
   commitBossPhase,
+  SPEED_CEILING,
+  lungeChance,
   markBossPhasePending,
   spawnBoss,
   spawnEnemy,
   type Enemy,
   type EnemyContext,
 } from './enemies';
-import { burstOnce } from './emitters';
 import { ParticlePool, ParticleShape } from './particles';
-import { angleDelta, PLAYER_HITBOX, Player } from './player';
+import { angleDelta, PLAYER_CONTACT, Player } from './player';
 import {
   pickPowerup,
   powerupDef,
@@ -209,7 +209,6 @@ const THREAT_SCALE = 520;
 /** Highest multiplier a run can reach. Beyond this, notes still score. */
 const MAX_MULTIPLIER = 60;
 
-const MAX_ENEMY_BULLETS = 3000;
 /**
  * 400 -> 700, because `spray` landed and 400 was already being hit.
  *
@@ -424,7 +423,17 @@ export class World {
   readonly rng: Rng;
 
   readonly player = new Player();
-  readonly enemyBullets = new BulletPool(MAX_ENEMY_BULLETS);
+  /*
+   * THERE IS NO ENEMY BULLET POOL.
+   *
+   * `readonly enemyBullets = new BulletPool(3000)` stood here for the whole
+   * life of the project. 3000 slots — 22 typed arrays of it — against a
+   * measured on-screen peak of 186, plus its per-step update, its cull, its
+   * collision sweep against the player, its graze annulus, its draw loop and
+   * every archetype's `EmitterSpec` table. All of it is gone; see the head of
+   * `enemies.ts` for why, and `docs/plan-refactor-3.md` §1b for the budget it
+   * hands to enemy count.
+   */
   readonly playerBullets = new BulletPool(MAX_PLAYER_BULLETS);
   readonly particles = new ParticlePool(2600);
   readonly camera = new Camera();
@@ -825,8 +834,19 @@ export class World {
   private dragDepth = 0;
   /** Multiplier on every instrument's own interval. 1 when nothing drags. */
   private dragSelf = 1;
-  /** True once the bubble reaches enemy fire as well as enemy bodies. */
-  private dragBullets = false;
+  /**
+   * L6 USED TO REACH ENEMY FIRE AND NOW REACHES DEEPER INTO BODIES.
+   *
+   * `dragBullets` slowed every enemy bullet that entered the bubble, once per
+   * bullet, permanently. That was RITARDANDO's third rung and there is nothing
+   * left for it to slow, so the rung buys the same thing in the only currency
+   * on the field: the bubble's depth against BODIES goes half again as deep at
+   * two lanes. The movement half of the bubble was always there — see the
+   * `dragSq` block in `updateEnemies` — so this is a strengthening of an
+   * existing effect rather than a new one, which is what stops the item's card
+   * from describing a mechanism the simulation no longer has.
+   */
+  private dragDeepens = false;
   private dragPulseAt = 0;
 
   /** SOSTENUTO: where the last thing the player killed fell. */
@@ -884,6 +904,22 @@ export class World {
   counterpointCopies = 0;
   ghostsRaised = 0;
   tacetDischarges = 0;
+  /**
+   * Bodies inside RITARDANDO's bubble this step, summed over the run.
+   *
+   * Was `dragsApplied`, a count of enemy BULLETS the bubble had slowed, latched
+   * once per bullet with `BulletFlag.Dragged`. There are no enemy bullets, and
+   * the item's third rung no longer reaches fire — it deepens the slow on
+   * bodies instead (see `dragDeepens`). This counts what the bubble now does,
+   * so `tools/beatlock.mjs` can still answer the question it was written to
+   * ask: does this item's identity ever actually happen?
+   *
+   * Not latched, because a body is not consumed by being slowed: the same body
+   * counts on every step it spends inside, which makes this "body-steps
+   * dragged" rather than "bodies dragged". That is the honest unit for a
+   * continuous effect and it is stated here because the number is otherwise
+   * unreadably large.
+   */
   dragsApplied = 0;
 
   /**
@@ -981,7 +1017,10 @@ export class World {
   frozen = false;
 
   /** Whether this wave has produced an armed enemy yet; see spawnGroup. */
-  private waveHasShooter = false;
+  private waveHasLunger = false;
+  /** Beat the next boss-fight top-up is allowed at, and which entry it takes. */
+  private bossEscortBeat = 0;
+  private bossEscortCursor = 0;
 
   /** Beats the spawn schedule has been slid forward because the stage emptied. */
   private waveBeatBias = 0;
@@ -1025,15 +1064,22 @@ export class World {
     hold: number;
     hue: number;
     /**
-     * Whether the expanding edge deletes enemy bullets.
+     * Whether the expanding edge THROWS BODIES OUTWARD.
      *
-     * True for an aura, because NOVA's blurb sells exactly that — "a ring on
-     * the beat that clears bullets". False for a `strike`, which reuses this
-     * array as a VISUAL only: CHIME has never cleared bullets and nothing in
-     * its table says it should, so letting it inherit the behaviour by sharing
-     * a container would be a buff smuggled in by an implementation detail.
+     * Was `clears`, meaning "deletes enemy bullets in the annulus". True for an
+     * aura, because NOVA's blurb sells exactly that — "a ring on the beat that
+     * clears bullets"; false for a `strike`, which reuses this array as a
+     * VISUAL only, so that CHIME could not inherit a defence by sharing a
+     * container.
+     *
+     * With enemy fire gone the flag had no referent, and leaving it named
+     * `clears` while it did nothing is precisely the dead-condition defect
+     * `tools/deadconditions.mjs` exists to find. It carries the same INTENT —
+     * "this ring buys the player room" — in the only currency left. The
+     * true/false split is unchanged, so nothing gained the behaviour by
+     * accident: it is exactly the rings that used to sweep bullets.
      */
-    clears: boolean;
+    shoves: boolean;
     /** Property set this ring's contacts carry. 0 for the visual-only rings. */
     prop: number;
     /** Seconds since it last applied its statuses. See `Effect.tick`. */
@@ -1073,8 +1119,38 @@ export class World {
   static readonly IDLE_RAMP_S = 20;
   /** Px of drift from the anchor that counts as "moved", not jitter. */
   static readonly IDLE_RESET_DIST = 60;
-  /** Bullet-speed multiplier at campPressure = 1. */
-  static readonly CAMP_BULLET_BOOST = 0.5;
+  /**
+   * Enemy CLOSING-speed multiplier at campPressure = 1.
+   *
+   * Was `CAMP_BULLET_BOOST`, and it sped up enemy bullets — the one lever a
+   * camping player felt, and the only consumer of the `bulletScale` term. With
+   * enemy fire deleted it had nowhere to land, so it moves to the quantity
+   * that carries the threat now. Renamed rather than repointed silently: the
+   * old name would have read as a bullet tuning in a game with no enemy
+   * bullets.
+   *
+   * The number is unchanged at 0.5, so a fully camped player faces a swarm
+   * closing half again as fast. That is a strictly stronger version of the
+   * same punishment — a bullet you can still side-step versus a ring that
+   * shrinks around you.
+   */
+  static readonly CAMP_CLOSE_BOOST = 0.5;
+  /**
+   * How far `clearRoom` throws bodies off you, in px.
+   *
+   * 520 is a little over half the short axis of the smallest view this game
+   * allows (`field.ts` VIEW_SPAN_MIN is 1004), so "the room" means what a
+   * player would point at if you asked them to. Larger and a bomb is a
+   * teleport for the whole field; smaller and the bodies already touching you
+   * are the only ones that move, which is the moment the valve is for.
+   */
+  static readonly CLEAR_RADIUS = 520;
+  /** How far an ORDINARY hit shoves the crowd off you. See `onPlayerHit`. */
+  static readonly HIT_SHOVE_RADIUS = 150;
+  /** How full a boss wave is kept, and how often it is topped up. */
+  static readonly BOSS_ESCORT_FLOOR = 18;
+  static readonly BOSS_ESCORT_BARS = 1;
+
   /**
    * Total ring count past which UP-TEMPO stops laying a trail.
    *
@@ -1347,7 +1423,6 @@ export class World {
     this.waveIndex = 0;
     this.enemies = [];
     this.drops = [];
-    this.enemyBullets.clear();
     this.playerBullets.clear();
     this.particles.clear();
     // The middle of the arena, not the bottom of the screen. There is no
@@ -1375,7 +1450,7 @@ export class World {
     this.dragRadius = 0;
     this.dragDepth = 0;
     this.dragSelf = 1;
-    this.dragBullets = false;
+    this.dragDeepens = false;
     this.dragPulseAt = 0;
     this.hasCorpse = false;
     this.counterpointAt = 0;
@@ -1540,7 +1615,7 @@ export class World {
     }
     this.waveBeatBias = 0;
     this.movement = this.plan.isBoss ? null : this.movementFor(index);
-    this.waveHasShooter = false;
+    this.waveHasLunger = false;
     /*
      * The movement banner is DEFERRED to the end of this method, not dropped.
      *
@@ -1601,6 +1676,8 @@ export class World {
     return {
       playerX: this.player.x,
       playerY: this.player.y,
+      playerVX: this.player.vx,
+      playerVY: this.player.vy,
       width: this.width,
       height: this.height,
       difficulty: this.plan.difficulty,
@@ -1773,7 +1850,10 @@ export class World {
        */
       const heldBeats = this.transport.lastStep;
       if (heldBeats > 0) {
-        for (const e of this.enemies) for (const em of e.emitters) em.delayBy(heldBeats);
+        // Every scheduled lunge is pushed forward by exactly the beats the
+        // pause costs it. Same contract `Emitter.delayBy` had; one line now,
+        // because there is one clock per body instead of one per emitter.
+        for (const e of this.enemies) if (e.lungeBeat >= 0) e.lungeBeat += heldBeats;
       }
       simDt = 0;
     } else {
@@ -1910,7 +1990,7 @@ export class World {
           dps: this.rules.trailDamage / life,
           hold: 0,
           hue: World.TRAIL_HUE,
-          clears: false,
+          shoves: false,
           prop: 0,
           tick: 0,
         });
@@ -1940,17 +2020,23 @@ export class World {
      * floors that cannot bite. Do not read `= 1` as "this can never move".
      */
     const warp = 1;
-    // Camping only ever speeds bullets up, never the emitters that schedule
-    // them or the enemies that carry them — both of those are locked to the
-    // beat grid TIMEWARP already has to protect, and stretching that grid for
-    // an unrelated reason is exactly the kind of two-hands-tightening-at-once
-    // this file's own TIMEWARP comment warns about.
-    const bulletScale = warp * (1 + campPressure * World.CAMP_BULLET_BOOST);
+    /*
+     * Camping speeds the BODIES up, never the beat grid they schedule against.
+     *
+     * This used to be `bulletScale`, applied to enemy bullet travel only, with
+     * a note that the emitters and the enemies carrying them were deliberately
+     * left alone because both were "locked to the beat grid TIMEWARP already
+     * has to protect". Half of that survives exactly: the lunge SCHEDULE is
+     * still on the unwarped grid, and stretching it for an unrelated reason
+     * would still be the two-hands-tightening-at-once this file's TIMEWARP note
+     * warns about. What changes is that the only quantity left to speed up is
+     * movement, so the camp penalty lands there.
+     */
     const fireScale = warp;
-    const moveScale = warp;
+    const moveScale = warp * (1 + campPressure * World.CAMP_CLOSE_BOOST);
 
-    // Emitters are driven by the transport's absolute position, warped by
-    // timewarp rather than rescaled per-step, so they can never drift off it.
+    // The lunge clock is driven by the transport's absolute position, warped by
+    // timewarp rather than rescaled per-step, so it can never drift off it.
     this.warpedBeat += (this.transport.beat - this.lastBeat) * fireScale;
     this.lastBeat = this.transport.beat;
     /*
@@ -1964,7 +2050,6 @@ export class World {
     this.updateEnemies(simDt, this.warpedBeat, moveScale);
     // RITARDANDO's third rung. Guarded so the ordinary loadout pays one boolean
     // and not a walk of the enemy pool looking for a flag nothing set.
-    if (this.dragBullets && this.dragRadius > 0) this.dragEnemyFire();
     this.updateWave(simDt);
     /*
      * BULLETS LIVE AND BOUNCE AGAINST THE VIEW, NOT THE FIELD, AND THAT IS
@@ -2012,7 +2097,6 @@ export class World {
      */
     const vx = this.camera.viewX;
     const vy = this.camera.viewY;
-    this.enemyBullets.update(simDt * bulletScale, vx - 60, vy - 60, vx + this.viewW + 60, vy + this.viewH + 60);
     this.playerBullets.update(
       simDt,
       vx - 60,
@@ -2068,8 +2152,9 @@ export class World {
     this.updateNotes(simDt);
     this.particles.update(simDt);
     this.collidePlayerBullets();
+    // One pass, not two: contact damage, the graze annulus and the threat
+    // signals all read the same list now. See `collidePlayer`.
     this.collidePlayer(simDt);
-    this.collideEnemies();
     this.updateDrops(simDt);
 
     if (this.combo > this.wavePeakCombo) this.wavePeakCombo = this.combo;
@@ -2127,7 +2212,8 @@ export class World {
      * radii and different depths, and a player holding both should get both.
      */
     const dragSq = this.dragRadius * this.dragRadius;
-    const dragTo = Math.max(0.05, 1 - this.dragDepth);
+    // `dragDeepens` is RITARDANDO's L6; see its declaration.
+    const dragTo = Math.max(0.05, 1 - this.dragDepth * (this.dragDeepens ? 1.5 : 1));
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       e.prevX = e.x;
@@ -2214,7 +2300,7 @@ export class World {
           this.camera.shake(0.7);
           this.camera.freeze(0.12);
           this.camera.strike(e.hue, 0.7);
-          this.cancelBullets();
+          this.clearRoom();
           // A bar to breathe, and to hear the music turn over.
           e.invuln = 1.4;
           this.shock(e.x, e.y, 480, 3800);
@@ -2275,7 +2361,10 @@ export class World {
       if (dragSq > 0) {
         const ddx = e.x - this.player.x;
         const ddy = e.y - this.player.y;
-        if (ddx * ddx + ddy * ddy <= dragSq) scale *= dragTo;
+        if (ddx * ddx + ddy * ddy <= dragSq) {
+          scale *= dragTo;
+          this.dragsApplied++;
+        }
       }
       /*
        * GLASS AND FERMATA STOP A BODY; SWELL DRAGS ONE.
@@ -2284,109 +2373,73 @@ export class World {
        * "frozen and also 30% slower" is not a state anybody can picture and
        * multiplying two slows is how a 60% and a 55% become 82% by accident.
        * Movement only, for the reason TIMEWARP's note above gives at length:
-       * `warpedBeat` is a single number precisely so that emitters can never
-       * drift off the transport, and a status that stretched the beat grid for
-       * whatever happened to be carrying it would put the shots off the music.
-       * A frozen shape's VOLLEYS are stopped below instead, where they belong.
+       * `warpedBeat` is a single number precisely so that the lunge clock can
+       * never drift off the transport, and a status that stretched the beat
+       * grid for whatever happened to be carrying it would put the attacks off
+       * the music. A frozen shape's LUNGE is stopped below instead, where it
+       * belongs.
        */
       if (e.status & (Status.Freeze | Status.Charm)) scale = 0;
       else if (e.status & Status.Slow) scale *= 1 - e.slowFactor;
-      e.move(e, dt * scale, ctx);
 
       /*
-       * A FROZEN OR CHARMED BODY DOES NOT SHOOT AT YOU.
+       * A FROZEN OR CHARMED BODY DOES NOT LUNGE AT YOU.
        *
-       * Freeze because a hold that leaves the gun working is a slow with extra
-       * steps; charm because "it fights for you" has to mean it stops fighting
-       * you, and a turncoat still emptying its volleys into the player would
+       * Freeze because a hold that leaves the attack working is a slow with
+       * extra steps; charm because "it fights for you" has to mean it stops
+       * fighting you, and a turncoat still throwing itself at the player would
        * be the clearest possible case of prose the simulation does not deliver.
        */
-      const muted = (e.status & (Status.Freeze | Status.Charm)) !== 0;
-      // Only fire once it has entered, and never while retreating.
-      if (!e.leaving && !muted && this.hasEntered(e)) {
+      /*
+       * A SHOVE OVERRIDES EVERYTHING, including a charge and a freeze.
+       *
+       * Ordered first because it is the one thing on this body that is being
+       * done TO it: `World.repel` has already zeroed any committed lunge, and a
+       * frozen body still has to be thrown when a bomb goes off next to it or
+       * the knockback would silently do nothing to exactly the shapes a player
+       * most wants moved.
+       */
+      if (e.pushTime > 0) {
+        e.pushTime -= dt;
+        e.x += e.pushVX * dt;
+        e.y += e.pushVY * dt;
         /*
-         * Snap the first volley onto the beat grid.
+         * Coasts to a stop rather than stopping dead, so the throw reads as a
+         * throw — but only just.
          *
-         * Emitters count down in beats, but they only start counting once the
-         * enemy has descended into view — which happens at whatever moment its
-         * descent takes, not on a beat. Groups were arriving on the downbeat and
-         * then firing off-grid anyway; only 49% of volleys landed on a
-         * subdivision. Aligning once, on activation, takes that to ~100% and is
-         * what makes the windup rings across a whole wave pulse together.
+         * The first draft used 0.0004, which halves every 89ms and turns a
+         * 700px/s launch into 84px of travel. That is not a screen clear, it is
+         * a flinch; the whole point of `repel` is to buy the distance a bullet
+         * clear used to buy. 0.3 halves every 580ms, so a 0.35s shove at 700
+         * covers about 200px — roughly 0.7s of walking back at mob speed, which
+         * is what `INVULN_ON_HIT` is then sized against.
          */
-        if (!e.gridAligned) {
-          e.gridAligned = true;
-          const grid = 0.5;
-          for (const em of e.emitters) {
-            const due = nowBeat + (em.armed ? em.nextIn(nowBeat) : em.firstOffset());
-            const drift = (grid - (due % grid)) % grid;
-            if (drift > 0.001) em.delayBy(drift);
-          }
+        const decay = Math.pow(0.3, dt);
+        e.pushVX *= decay;
+        e.pushVY *= decay;
+        if (!e.alive) {
+          this.enemies.splice(i, 1);
+          if (!e.escaped) this.onEnemyKilled(e);
+          if (e === this.boss) this.boss = null;
         }
-        const blinded = (e.status & Status.Blind) !== 0;
-        for (const em of e.emitters) {
-          const before = em.volleyCount;
-          const bulletsBefore = this.enemyBullets.count;
-          em.update(nowBeat, this.transport.bpm, this.enemyBullets, this.rng, e.x, e.y, this.player.x, this.player.y, dt);
-          /*
-           * GLARE FIRES HERE: a blinded body misses half of what it throws.
-           *
-           * The volley is allowed to happen and its bullets are then deleted,
-           * rather than the emitter being skipped. Skipping would only DELAY
-           * the volley — emitters count in beats and would fire on the next
-           * grid line instead — so a blinded enemy would shoot the same number
-           * of times, slightly later, which is not a miss. Deleting what was
-           * just spawned is a miss, and it is exact: `count` before and after
-           * bounds precisely the bullets this volley added.
-           */
-          if (blinded && this.enemyBullets.count > bulletsBefore) {
-            this.propMoments.volley++;
-            this.blindedAttacks++;
-            this.propChances.blind++;
-            if (this.rng.next() < PROP.blindMiss) {
-              for (let b = this.enemyBullets.count - 1; b >= bulletsBefore; b--) this.enemyBullets.remove(b);
-              this.propFires.blind++;
-              this.propDamage.blind += 1;
-              continue;
-            }
-          }
-          // Every shot is a note. Volleys are already locked to the beat grid,
-          // so these land musically without any extra quantisation.
-          if (em.volleyCount > before) {
-            this.propMoments.volley++;
-            this.volleysThisStep++;
-            /*
-             * `pan`, not `x`. This is a STEREO POSITION and never was a
-             * coordinate.
-             *
-             * It used to be `e.x / this.width` — which side of the FIELD the
-             * shot came from. On a one-screen field that is also which side of
-             * the player it came from, so the mix was right by coincidence. On
-             * a 3000px field the player and everything that can shoot at them
-             * occupy under a third of the range, so the value collapses toward
-             * whatever fraction of the arena the player is standing at and
-             * stops varying with the thing it exists to encode. That is exactly
-             * the `s.playerHeight` failure this file already documents at the
-             * bottom of `writeSnapshot`: responsive in the source, a constant
-             * in play.
-             *
-             * `0.5 + (e.x - player.x) / VIEW_W` is "which side of ME", which is
-             * what a listener hears, is independent of the camera and of the
-             * field, and is more correct than the version it replaces even at
-             * one screen. Full left and full right are reached at half a view
-             * away, so a shot from the edge of the screen is hard-panned.
-             *
-             * The FIELD NAME CHANGED with it, on purpose. `x` inherited its
-             * meaning silently into `tools/battlefield.mjs`, which logs it and
-             * asserts on its spread; renaming forces that tool to be edited
-             * rather than to keep printing a column whose definition moved
-             * under it.
-             */
-            const pan = clamp01(0.5 + (e.x - this.player.x) / this.viewW);
-            this.bus.emit('enemy:fire', { archetype: e.archetype, pan });
-          }
-        }
+        continue;
       }
+
+      const muted = (e.status & (Status.Freeze | Status.Charm)) !== 0;
+      const lunging =
+        !e.leaving && !muted && e.lunge !== null && this.hasEntered(e)
+          ? this.tickLunge(e, nowBeat, dt * scale)
+          : false;
+      /*
+       * A COMMITTED LUNGE REPLACES THE MOVER, IT DOES NOT ADD TO IT.
+       *
+       * Running both would let a weave or a hop steer the dash, which is
+       * exactly what makes a charge unreadable: the player is asked to leave a
+       * line the attacker is still free to re-aim. A lunge picks its heading at
+       * the instant it commits and then holds it — that fixed line is the whole
+       * of what the windup ring is promising.
+       */
+      if (!lunging) e.move(e, dt * scale, ctx);
 
       /*
        * Culled on all four edges, at a much deeper margin than it spawns at.
@@ -2440,6 +2493,128 @@ export class World {
   }
 
   /**
+   * THE LUNGE: one body's telegraphed charge, on the transport's beat grid.
+   *
+   * Returns true while the dash is committed, which is the caller's signal to
+   * skip the archetype's mover for this step.
+   *
+   * WHAT THIS IS THE DESCENDANT OF. `Emitter.update` — the loop that turned a
+   * declarative `EmitterSpec` into bullets — and it keeps the two properties of
+   * that class that were load-bearing and drops everything else:
+   *
+   *   THE SCHEDULE IS AN ABSOLUTE BEAT. `lungeBeat` is a position on the
+   *   transport, not a countdown. Emitters that accumulated their own beat
+   *   count from `bpm * dt` drifted on every audio-clock correction and every
+   *   frame of hitstop, and only ~55% of volleys landed on a subdivision.
+   *
+   *   THE FIRST ONE IS SNAPPED TO THE GRID. A body enters at whatever moment
+   *   its approach takes, not on a beat, so the first schedule is quantised to
+   *   the half beat. `tools/telegraph.mjs` measured that taking on-grid volleys
+   *   from 49% to ~100%, which is what makes a screen of windups pulse
+   *   together instead of shimmering.
+   *
+   * What it drops is the whole pattern vocabulary — shapes, arms, gaps, spin,
+   * bursts, jitter — because a body has exactly one thing it can do to you now
+   * and it does not need a grammar.
+   *
+   * WHY THE DASH IS A VELOCITY AND NOT A TARGET POINT. A charge that homes is
+   * not dodgeable, it is a delayed hit; a charge along a line fixed at the
+   * moment of commitment is a question with a visible answer, which is the same
+   * argument `EmitterSpec.gap` made for leaving a wedge out of every boss ring.
+   */
+  private tickLunge(e: Enemy, nowBeat: number, dt: number): boolean {
+    const spec = e.lunge;
+    if (!spec) return false;
+
+    if (e.lungeTime > 0) {
+      e.lungeTime -= dt;
+      e.x += e.lungeVX * dt;
+      e.y += e.lungeVY * dt;
+      return e.lungeTime > 0;
+    }
+
+    if (e.lungeBeat < 0) {
+      // Snap onto the half-beat grid, then wait one full cadence so a body
+      // never arrives already charging.
+      const grid = 0.5;
+      const due = nowBeat + spec.everyBeats + e.lungeOffset;
+      e.lungeBeat = due + ((grid - (due % grid)) % grid);
+      return false;
+    }
+
+    if (nowBeat < e.lungeBeat) return false;
+
+    /*
+     * Overdue by more than one cadence means the world was held (a level-up
+     * pause that outran `delayBy`, a very long hitch). Re-snap rather than
+     * firing a burst of catch-up charges — `Emitter.update`'s catch-up loop
+     * existed because dropping volleys visibly thinned a bullet pattern, and a
+     * body cannot dash twice at once anyway.
+     */
+    if (nowBeat > e.lungeBeat + spec.everyBeats) {
+      e.lungeBeat = nowBeat + spec.everyBeats;
+      return false;
+    }
+
+    e.lungeBeat += spec.everyBeats;
+
+    /*
+     * GLARE FIRES HERE: a blinded body misses half of what it throws.
+     *
+     * The charge is CONSUMED and then thrown away rather than skipped, which is
+     * the same distinction the volley version drew and for the same reason.
+     * Skipping would only delay it — the schedule counts in beats and the body
+     * would charge on the next grid line instead — so a blinded enemy would
+     * attack the same number of times, slightly later, which is not a miss.
+     *
+     * WHAT CHANGED FOR THIS PROPERTY. Measured before this pass, a 180-second
+     * GLARE-only run produced 45 blinded attacks in total, because "attacks" in
+     * this game meant volleys and hardly anything was armed. Every body on the
+     * field now attacks, so blind finally has a denominator; the after figure
+     * is in the commit.
+     */
+    if (e.status & Status.Blind) {
+      this.propMoments.volley++;
+      this.blindedAttacks++;
+      this.propChances.blind++;
+      if (this.rng.next() < PROP.blindMiss) {
+        this.propFires.blind++;
+        this.propDamage.blind += 1;
+        return false;
+      }
+    }
+
+    const a = Math.atan2(this.player.y - e.y, this.player.x - e.x);
+    e.lungeVX = Math.cos(a) * spec.speed;
+    e.lungeVY = Math.sin(a) * spec.speed;
+    e.lungeTime = spec.time;
+    this.propMoments.volley++;
+    this.volleysThisStep++;
+    /*
+     * `pan`, not `x`. This is a STEREO POSITION and never was a coordinate.
+     *
+     * It used to be `e.x / this.width` — which side of the FIELD the shot came
+     * from. On a one-screen field that is also which side of the player it came
+     * from, so the mix was right by coincidence. On a 3000px field the player
+     * and everything near them occupy under a third of the range, so the value
+     * collapses toward whatever fraction of the arena the player is standing at
+     * and stops varying with the thing it exists to encode.
+     *
+     * `0.5 + (e.x - player.x) / VIEW_W` is "which side of ME", which is what a
+     * listener hears, is independent of the camera and of the field, and is
+     * more correct than the version it replaced even at one screen.
+     *
+     * THE EVENT NAME CHANGED WITH THE ATTACK. `enemy:fire` became
+     * `enemy:lunge` for the same reason `x` became `pan`: the old name let
+     * `tools/battlefield.mjs` keep printing a column after its definition had
+     * moved, and there is no longer any fire to name.
+     */
+    const pan = clamp01(0.5 + (e.x - this.player.x) / this.viewW);
+    this.bus.emit('enemy:lunge', { archetype: e.archetype, pan });
+    return true;
+  }
+
+  /**
    * Fields: the `field` instrument shape, live on the arena.
    *
    * One routine covers both kinds because the difference between them is two
@@ -2448,7 +2623,6 @@ export class World {
    * stands in them.
    */
   private updateWells(dt: number): void {
-    const b = this.enemyBullets;
     for (let w = this.wells.length - 1; w >= 0; w--) {
       const well = this.wells[w];
       well.age += dt;
@@ -2484,29 +2658,18 @@ export class World {
       const radius = well.radius * Math.sin(Math.min(1, t) * Math.PI) + 40;
       if (well.pull > 0) this.shock(well.x, well.y, radius * 1.4, -1200 * dt * 60 * 0.016);
 
-      if (well.swallows) {
-        for (let i = b.count - 1; i >= 0; i--) {
-          if (b.flags[i] & BulletFlag.Indestructible) continue;
-          const dx = well.x - b.x[i];
-          const dy = well.y - b.y[i];
-          const d2 = dx * dx + dy * dy;
-          if (d2 > radius * radius) continue;
-          const d = Math.sqrt(d2) || 1;
-
-          if (d < 26) {
-            // Swallowed. Every bullet becomes a shard.
-            this.spawnShards(b.x[i], b.y[i], { minor: 1, major: 0, rare: 0 });
-            this.particles.emit(b.x[i], b.y[i], 0, 0, 0.2, 3, well.hue, ParticleShape.Dot, 4);
-            b.remove(i);
-            continue;
-          }
-          // Spiral in: steer toward the centre and accelerate.
-          const want = Math.atan2(dy, dx);
-          const turn = (1 - d / radius) * 9;
-          b.angle[i] += clamp(angleDelta(b.angle[i], want), -turn * dt, turn * dt);
-          b.speed[i] += (1 - d / radius) * 320 * dt;
-        }
-      }
+      /*
+       * A BLACK HOLE USED TO EAT ENEMY BULLETS, and that half of it is gone.
+       *
+       * `swallows` ran a second loop here that spiralled every cancellable
+       * bullet inward, turned each one into a shard at the centre, and cleared
+       * the rest on collapse. It was a large part of what the item was worth —
+       * see the ledger in the commit — and there is nothing left to eat.
+       *
+       * The `pull` above is untouched and is the half that survives, because it
+       * was always the better half: it drags BODIES toward the crush, and
+       * bodies are now the whole threat. The collapse still shoves, below.
+       */
 
       for (const e of this.enemies) {
         const dx = well.x - e.x;
@@ -2532,21 +2695,56 @@ export class World {
           this.camera.strike(well.hue, 0.5);
           this.shock(well.x, well.y, radius * 2.2, 4200);
           this.particles.burst(this.rng, well.x, well.y, 60, 460, well.hue, 0.8, 5);
-          this.cancelBulletsNear(well.x, well.y, well.radius * 1.4);
+          this.repel(well.x, well.y, well.radius * 1.4, 620, well.hue);
         }
       }
     }
   }
 
-  /** Cancel bullets inside a radius, converting each to a note. */
-  private cancelBulletsNear(x: number, y: number, radius: number): void {
-    const b = this.enemyBullets;
+  /**
+   * THROW EVERY BODY IN THE RADIUS OUTWARD. The contact game's screen-clear.
+   *
+   * This is what `cancelBullets` and `cancelBulletsNear` became, and naming
+   * what was lost matters more than naming what replaced it. Deleting the
+   * bullets in the air was a HIDDEN DEFENCE with a measured price tag: moving
+   * two instruments off the `aura` shape roughly doubled hits taken, purely
+   * because every expanding ring in the game quietly swept the annulus it
+   * crossed. Seven call sites depended on it — the player-hit reset, the bomb,
+   * the auto-bomb rescue, every boss phase transition, COMPRESSOR's ring, the
+   * black hole's collapse, and every aura in the roster by accident.
+   *
+   * None of that value survives as-is and pretending otherwise would be the
+   * defect this repo keeps catching: a rule that reads live and does nothing.
+   * What replaces it is a SHOVE, because in a contact game the thing standing
+   * between you and the next hit is distance, and distance is exactly what a
+   * bullet clear used to buy. A body thrown 200px away is 1.2 seconds at mob
+   * closing speed — the same order as the breathing room a cleared screen gave.
+   *
+   * `push` is the launch speed in px/s; `pushTime` on the enemy is how long it
+   * coasts, so reach is roughly push x 0.35. Score is paid per body at the same
+   * 10 points a cancelled bullet paid, so the relief valve still pays out.
+   */
+  private repel(x: number, y: number, radius: number, push: number, hue = 190): void {
     const r2 = radius * radius;
-    for (let i = b.count - 1; i >= 0; i--) {
-      if (b.flags[i] & BulletFlag.Indestructible) continue;
-      if (dist2(b.x[i], b.y[i], x, y) > r2) continue;
-      this.spawnShards(b.x[i], b.y[i], { minor: 1, major: 0, rare: 0 });
-      b.remove(i);
+    for (const e of this.enemies) {
+      if (e.archetype === 'conductor') continue;
+      const dx = e.x - x;
+      const dy = e.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r2) continue;
+      const d = Math.sqrt(d2) || 1;
+      /*
+       * A shove CANCELS a committed lunge, and that is the point of the whole
+       * mechanism. The bullet version's value was that the shot already in the
+       * air stopped being a shot; the body version's value is that the charge
+       * already committed stops being a charge.
+       */
+      e.lungeTime = 0;
+      e.pushVX = (dx / d) * push;
+      e.pushVY = (dy / d) * push;
+      e.pushTime = 0.35;
+      this.particles.emit(e.x, e.y, (dx / d) * 120, (dy / d) * 120, 0.3, 2.5, hue, ParticleShape.Dot, 2);
+      this.score += 10;
     }
   }
 
@@ -2561,7 +2759,6 @@ export class World {
    * one mechanic and it would have been easy to lose in the conversion.
    */
   private updateNova(dt: number): void {
-    const b = this.enemyBullets;
     for (let n = this.novas.length - 1; n >= 0; n--) {
       const ring = this.novas[n];
       if (ring.r >= ring.maxR && ring.hold > 0) {
@@ -2582,18 +2779,6 @@ export class World {
        * contact it ever gets. The cadence is the ring's geometry.
        */
       const ringApplies = ring.prop !== 0;
-      // Annulus test: only bullets the expanding edge actually sweeps. Skipped
-      // entirely for a ring that does not clear — see `clears`.
-      const inner = Math.max(0, ring.r - 13);
-      const outer = ring.r + 13;
-      for (let i = ring.clears ? b.count - 1 : -1; i >= 0; i--) {
-        if (b.flags[i] & BulletFlag.Indestructible) continue;
-        const d2 = dist2(b.x[i], b.y[i], ring.x, ring.y);
-        if (d2 < inner * inner || d2 > outer * outer) continue;
-        this.particles.emit(b.x[i], b.y[i], 0, -30, 0.25, 2.5, ring.hue, ParticleShape.Dot, 1.5);
-        this.score += 10;
-        b.remove(i);
-      }
       for (const e of this.enemies) {
         if (e.invuln > 0) continue;
         const d = Math.hypot(e.x - ring.x, e.y - ring.y);
@@ -2601,6 +2786,30 @@ export class World {
         this.hurt(e, ring.dps * dt, false);
         if (ringApplies) this.applyStatus(e, this.propSets[ring.prop]);
         e.hitFlash = 0.05;
+        /*
+         * `shoves` — what `clears` became.
+         *
+         * `clears: true` used to delete every enemy bullet in the ring's
+         * annulus, and its own comment called that "undocumented behaviour
+         * every aura quietly has". Here it was deliberate: COMPRESSOR's card
+         * says "getting hit clears the room — a wide ring that eats the shots
+         * in the air", and a previously-measured finding is that this hidden
+         * sweep was worth roughly half the hits taken across the roster.
+         *
+         * A ring that throws bodies off you is the same sentence in the game
+         * this now is, and it is deliberately still NOT the default: the
+         * `false` on UP-TEMPO's trail is what stops a pool laid down six times
+         * a second from being a permanent moving crowd-shredder, exactly as it
+         * stopped it being a permanent moving bullet-shredder.
+         */
+        if (ring.shoves && e.archetype !== 'conductor' && e.pushTime <= 0) {
+          const ux = (e.x - ring.x) / (d || 1);
+          const uy = (e.y - ring.y) / (d || 1);
+          e.lungeTime = 0;
+          e.pushVX = ux * ring.speed * 0.8;
+          e.pushVY = uy * ring.speed * 0.8;
+          e.pushTime = 0.3;
+        }
         if (e.hp <= 0) e.alive = false;
       }
     }
@@ -3007,7 +3216,42 @@ export class World {
           this.entryCursor++;
         }
         const done = this.entryCursor >= this.plan.entries.length;
-        if (done && this.enemies.length === 0) {
+        /*
+         * A WAVE WITH ITS SCHEDULE SPENT KEEPS TOPPING UP UNTIL ITS DEADLINE.
+         *
+         * Measured, sampled every 0.1s across a ten-minute run and bucketed by
+         * wave AND phase, the empty screen was almost all in one place: the
+         * `spawning` phase of a wave whose entries were exhausted. Wave 8 spent
+         * 22 seconds there at a mean of 0.9 enemies on screen with 61% of
+         * samples at exactly zero; wave 12 was 75% empty; wave 13 spent two
+         * minutes at 49%. That is the "trough between every wave"
+         * `docs/research-density.md` §6d says the `enemies.length === 0` gate
+         * guarantees, finally located rather than inferred.
+         *
+         * `plan.lengthBeats` IS THE DEADLINE, and this is its first reader.
+         * That field has been written by both `planWave` branches and read by
+         * nothing for the whole life of the project — `waves.ts` documents it as
+         * dead and `tools/deadhunt-branches.mjs` confirms only the declaration
+         * and the two writes. It says "beats after the last spawn before the
+         * wave gives up waiting", which is exactly the bound this needs: top up
+         * until then, and after that let the wave end. Without a bound the floor
+         * would keep manufacturing enemies and `settled` would never be true.
+         */
+        if (done && beatsIn <= this.plan.lengthBeats) this.topUp(this.targetOnScreen());
+        /*
+         * SETTLED IS A LOCAL QUESTION NOW, not a global one.
+         *
+         * `this.enemies.length === 0` is every enemy alive anywhere in a
+         * 3000x3000 field, and a wave could not end while one straggler was
+         * wandering half a screen behind the player — which is most of what
+         * those 22-second empty stretches were. `populationNearPlayer()` is the
+         * same census `targetOnScreen` is a floor for, so the wave now ends when
+         * the player's own screen is clear. Anything left far away persists into
+         * the next wave rather than holding this one open, which is the
+         * accumulation a survivors-like wants anyway.
+         */
+        const settled = this.populationNearPlayer() === 0;
+        if (done && settled) {
           if (this.plan.isBoss) {
             // Telegraph the boss a fixed number of bars out and tell the
             // director exactly how long it has. The riser and the boss's first
@@ -3026,6 +3270,7 @@ export class World {
       }
 
       case 'awaiting-boss':
+        this.topUp(World.BOSS_ESCORT_FLOOR);
         this.phaseTimer -= dt;
         if (this.phaseTimer <= 0) {
           // Alternate boss variants so the fourth boss is a different problem
@@ -3096,6 +3341,8 @@ export class World {
           this.rewardBoss();
           this.bus.emit('boss:defeat', { id: `boss-${this.waveIndex}` });
           this.finishWave();
+        } else {
+          this.topUp(World.BOSS_ESCORT_FLOOR);
         }
         break;
 
@@ -3328,6 +3575,29 @@ export class World {
     const scale = 1 + this.plan.difficulty * 40.0 + Math.min(10, this.plan.escalation) * 4.5;
     e.hp = e.maxHp = Math.max(1, Math.round(e.maxHp * scale));
     /*
+     * ESCALATION BUYS CLOSING SPEED, and this is the term the difficulty gate
+     * was missing.
+     *
+     * `difficulty` saturates at wave 13, so past that point the stage grew in
+     * hp, group count and lunge cadence and in nothing else — and measured on
+     * `tools/difficulty.mjs`, which samples bodies within 150px of the ship
+     * continuously, that produced a stage whose back half was x0.93 of its
+     * front against a bar of 1.15. The crowd itself went 10.7 -> 39.5 over the
+     * same run. Four times the bodies, no more pressure: they were all behind.
+     *
+     * That is the same finding this file already records about the pre-contact
+     * game ("growth going entirely into bodies ... bodies are clutter") arriving
+     * by a new route, and with contact damage the answer is not cadence, it is
+     * how fast the crowd arrives.
+     *
+     * THE CEILING IS THE POINT. `SPEED_CEILING` is 0.95 of the player's 430, so
+     * however long a run goes, nothing on foot ever outruns the ship. Kiting
+     * stays a skill and gets more expensive; it never stops working. Without a
+     * ceiling this term reaches 1.6x by wave 35 and the swarm simply catches
+     * you, which deletes the verb rather than taxing it.
+     */
+    e.vy = Math.min(SPEED_CEILING, e.vy * (1 + Math.min(6, this.plan.escalation) * 0.22));
+    /*
      * Past the cap the run gets more AGGRESSIVE, not just more crowded.
      *
      * Toughness and group count both already climb with `escalation`, and
@@ -3363,7 +3633,20 @@ export class World {
      * over is not a gear.
      */
     const urgency = this.plan.escalation >= 0.6 ? 0.5 : this.plan.escalation >= 0.15 ? 0.75 : 1;
-    if (urgency < 1) for (const em of e.emitters) em.setUrgency(urgency);
+    /*
+     * The gears now tighten the LUNGE cadence, and they still snap to the beat.
+     *
+     * `Emitter.setUrgency` did this for volleys and its note is the reason the
+     * multiplier is two discrete gears rather than a slide: the whole system
+     * schedules against the transport's absolute beat so attacks land on
+     * subdivisions, and scaling a 4-beat cadence by 1.37 gives 2.92 beats and
+     * quietly destroys that. Stepping it to 3, or to 2, keeps it — so the
+     * result is rounded to the half beat and floored at one beat, exactly as
+     * that method did.
+     */
+    if (urgency < 1 && e.lunge) {
+      e.lunge = { ...e.lunge, everyBeats: Math.max(1, Math.round(e.lunge.everyBeats * urgency * 2) / 2) };
+    }
     // Score does NOT scale with it. Toughness already pays through the shard
     // split, which reads `maxHp`, so scaling both would compound a reward the
     // multiplier cap exists to keep bounded.
@@ -3389,7 +3672,26 @@ export class World {
    * in while the player is trying to read a three-phase pattern.
    */
   private targetOnScreen(): number {
-    if (this.plan.isBoss) return 0;
+    /*
+     * A boss wave used to return 0 — no floor at all — with the reason that "a
+     * boss is one enemy by design and its escort is a top-up before the fight,
+     * so a floor would keep shoving escorts in while the player is trying to
+     * read a three-phase pattern".
+     *
+     * MEASURED, THAT WAS A QUARTER OF THE RUN SPENT ON AN EMPTY SCREEN. Sampled
+     * every 0.1s across a ten-minute run and bucketed by wave: ordinary
+     * mid-game waves hold 21-35 enemies on screen, and waves 4, 8 and 12 — the
+     * bosses — hold 1.0, 1.5 and 1.3, with 31-43% of their samples at exactly
+     * zero. Those three waves are 23% of the whole run. Whatever the p50 of
+     * this game's density is, boss waves are most of what drags it down, and
+     * "the reference is a screen that fills up" cannot be true for a quarter of
+     * the time if it is only true between set pieces.
+     *
+     * The floor is real but low, and `topUpForBoss` is what fills it — a
+     * trickle rather than the wave schedule, so the pattern stays readable and
+     * the boss is still the thing you are looking at.
+     */
+    if (this.plan.isBoss) return World.BOSS_ESCORT_FLOOR;
     // Same 2.5 -> 10 fix as `scaleForEnsemble` (this one's old bound was 2, an
     // even earlier wall — wave 30).
     /*
@@ -3404,7 +3706,7 @@ export class World {
      * low floor becomes the thing capping the crowd instead of the thing
      * creating it. Raised together, measured together.
      */
-    return Math.round(10 + this.plan.difficulty * 16 + Math.min(10, this.plan.escalation) * 2.5);
+    return Math.round(24 + this.plan.difficulty * 42 + Math.min(10, this.plan.escalation) * 6);
   }
 
   /**
@@ -3445,6 +3747,34 @@ export class World {
    * that makes a survivor game boring rather than the one that makes it hard.
    * Jumping means the safe side is a place you are always travelling toward.
    */
+  /**
+   * Keep a crowd alive when the wave's own schedule has nothing left.
+   *
+   * Two callers with two different floors: a boss fight asks for
+   * `BOSS_ESCORT_FLOOR`, and an ordinary wave past its last group asks for the
+   * full `targetOnScreen()` until its deadline.
+   *
+   * Spawns at most one group every `BOSS_ESCORT_BARS` bars, and only while the
+   * population is under the floor, so a player who is clearing it gets nothing
+   * extra and a player who is ignoring it does not accumulate a second fight.
+   * The archetypes come from the wave's own escort entries, so a boss wave
+   * still sounds like the wave it is — the motif layer reads what is present.
+   *
+   * DELIBERATELY NOT THE WAVE SCHEDULE. `entries` are exhausted before the boss
+   * is summoned (that is the condition that summons it), and re-running them
+   * would put a full wave's worth of bodies on top of a three-phase pattern.
+   * The floor is a third of an ordinary wave's.
+   */
+  private topUp(floor: number): void {
+    if (this.transport.beat < this.bossEscortBeat) return;
+    this.bossEscortBeat = this.transport.beat + World.BOSS_ESCORT_BARS * BEATS_PER_BAR;
+    if (this.populationNearPlayer() >= floor) return;
+    const entry = this.plan.entries[this.bossEscortCursor % Math.max(1, this.plan.entries.length)];
+    if (!entry) return;
+    this.bossEscortCursor++;
+    this.spawnGroup(entry);
+  }
+
   private rollGap(): void {
     this.gapAngle = (this.gapAngle + this.rng.range(TAU * 0.25, TAU * 0.75)) % TAU;
   }
@@ -3482,57 +3812,54 @@ export class World {
     const ring = this.spawnRing();
     const positions = arenaSpawnPositions(entry.formation, entry.count, ring, bearing, SPAWN_MARGIN);
     /*
-     * `homeY` was an absolute screen height; it is now read as a STANDOFF from
-     * the player. The generator produces 120-280, which as a radius is exactly
-     * the right band — 120 is in your face and 280 is most of the short axis of
-     * the field away — so the numbers carry across without retuning. That is
-     * luck rather than design and it is worth saying so: if `planWave` ever
-     * changes that range, this is the line that quietly reinterprets it.
+     * `entry.homeY` IS NOW READ BY NOTHING, and it is left in `SpawnEntry`
+     * rather than deleted for one reason: `planWave` is a deterministic
+     * generator seeded per wave, and removing a field it fills would change the
+     * number of `rng.int` draws per group and re-roll every wave in the game.
+     * That is a content change wearing a refactor's clothes. It was the
+     * standoff radius; the standoff ring is gone (see `spawnEnemy`).
      */
-    const standoff = entry.homeY;
-    let armedChanceNow = armedChance(this.plan.difficulty);
+    let lungeChanceNow = lungeChance(this.plan.difficulty);
 
     /*
-     * `elite` sends one enemy instead of a group. `hush` disarms the wave and
-     * pays for it in speed, so a silent stage is not a free one. `flank` brings
-     * them in from the edges rather than the top, which the formation helper
-     * cannot express on its own.
+     * `elite` sends one enemy instead of a group. `hush` takes the wave's
+     * charges away and pays for it in reach, so a quiet stage is not a free
+     * one. `flank` brings them in split across two bearings.
      */
-    if (this.movement === 'elite') positions.length = 1;
-    if (this.movement === 'hush') armedChanceNow = 0;
+    /*
+     * `elite` USED TO DELETE THE GROUP: `positions.length = 1`, so a group of
+     * eleven arrived as one. Measured across a ten-minute run, wave 6 — the
+     * first elite wave — held a mean of 2.3 enemies on screen against 13.8 and
+     * 15.1 on the waves either side of it, with 31% of its samples empty. A
+     * named variation that empties the arena is a variation in the wrong
+     * direction now that the arena is the point.
+     *
+     * It keeps the CHARACTER — one enemy carrying the group's health, worth the
+     * group's score, a wave you clear by concentrating rather than by sweeping
+     * — by promoting the first member instead of deleting the rest. The group
+     * behind it is what makes concentrating a decision.
+     */
+    const eliteAt = this.movement === 'elite' ? 0 : -1;
+    if (this.movement === 'hush') lungeChanceNow = 0;
     positions.forEach((p, i) => {
-      // At least one enemy per group is armed once past the opening waves, so a
-      // group never feels completely inert.
-      // One armed enemy per group from the very first wave, so every group
-      // poses at least one question. `rush` is exempt: it has no weapons.
       /*
-       * The guarantee is waived on a hushed wave.
+       * ONE GUARANTEED LUNGER PER WAVE, not per group, and the guarantee is
+       * waived on a hushed wave.
        *
-       * Setting `armedChance` to zero was not enough: this flag arms the first
-       * enemy of every group regardless, so a HUSHED wave measured 50% armed —
-       * the movement's one rule quietly overridden by a rule written for
-       * ordinary waves. The same override is why a low `armedChance` never
-       * produced as few shooters as it claimed.
+       * Both halves are inherited verbatim from the shooter guarantee this
+       * replaces, and both were measured there. Setting the chance to zero was
+       * not enough on its own: the flag armed the first enemy of every group
+       * regardless, so a HUSHED wave measured 50% armed — the movement's one
+       * rule quietly overridden by a rule written for ordinary waves. And
+       * removing the guarantee outright was worse: a wave where nothing ever
+       * attacks is not tension, it is a lull.
+       *
+       * `rush` is exempt because its dive is already its charge.
        */
-      /*
-       * One guaranteed shooter per WAVE, not per group.
-       *
-       * Per-group was written when armedChance was high and the guarantee only
-       * mattered in the opening waves. With shooters deliberately rare — 25% of
-       * enemies, which is what was asked for — it became the dominant source of
-       * armed enemies in every group, which is why a low armedChance never
-       * produced as few shooters as it claimed.
-       *
-       * Removing it entirely is worse, though: measured, waves now arrive with
-       * 0.8 bullets on screen against 2.3 enemies, and a wave where nothing
-       * shoots is not tension, it is a lull. One per wave keeps every wave
-       * asking a question while leaving the overall fraction low, which is the
-       * actual ask — fewer, more meaningful bullets rather than none.
-       */
-      const needsFirstShooter = this.movement !== 'hush' && !this.waveHasShooter && entry.archetype !== 'rush';
-      const guaranteed = needsFirstShooter && i === 0;
-      const armed = this.rng.next() < armedChanceNow || guaranteed;
-      if (armed) this.waveHasShooter = true;
+      const needsFirstLunger = this.movement !== 'hush' && !this.waveHasLunger && entry.archetype !== 'rush';
+      const guaranteed = needsFirstLunger && i === 0;
+      const lunges = this.rng.next() < lungeChanceNow || guaranteed;
+      if (lunges) this.waveHasLunger = true;
       // Alternate which way round the player each one circles, so a group
       // opens out rather than winding into a single rotating clump.
       const e = spawnEnemy(
@@ -3540,12 +3867,11 @@ export class World {
         p.x,
         p.y,
         this.plan.difficulty,
-        standoff,
-        armed,
+        lunges,
         i % 2 === 0 ? 1 : -1,
       );
       this.scaleForEnsemble(e);
-      if (this.movement === 'elite') {
+      if (i === eliteAt) {
         // One enemy carrying the whole group's health, worth the whole group's
         // score. A wave you clear by concentrating rather than by sweeping.
         e.hp = e.maxHp = Math.round(e.maxHp * Math.max(2, entry.count * 0.8));
@@ -3553,12 +3879,17 @@ export class World {
         e.radius = Math.round(e.radius * 1.35);
       }
       if (this.movement === 'hush') {
-        // Enemies carry no single speed field — movement lives in each
-        // archetype's mover — so a hush wave pays for its silence by pressing
-        // 90px closer, which costs the player reaction distance instead. In the
-        // vertical game that was "arrives lower"; on a ring it is the standoff,
-        // which is the same statement and now true from every direction.
-        e.standoff = Math.max(60, e.standoff - 90);
+        /*
+         * A hush wave pays for its silence in SPEED now.
+         *
+         * It used to press 90px closer by shaving the standoff, which was the
+         * arena's translation of the vertical game's "arrives lower" — the same
+         * statement, costing the player reaction distance. With the standoff
+         * ring gone that line had nothing left to shave (every body closes to
+         * zero), so the cost moves to the quantity that still buys reaction
+         * distance. A quarter faster: no charges, but they are on you sooner.
+         */
+        e.vy *= 1.25;
       }
       if (this.movement === 'flank') {
         /*
@@ -3582,11 +3913,17 @@ export class World {
           e.y = e.prevY = e.homeY = opposite.y;
         }
       }
-      // A rhythm formation fires left to right, one sixteenth apart, so the row
-      // of enemies performs its own bar.
-      if (entry.formation === 'rhythm') {
-        for (const em of e.emitters) em.delayBy((i % positions.length) * 0.25);
-      }
+      /*
+       * A rhythm formation attacks left to right, one sixteenth apart, so the
+       * row of enemies performs its own bar.
+       *
+       * The stagger is a PENDING offset rather than a delay applied now,
+       * because `tickLunge` sets `lungeBeat` lazily on the body's first tick
+       * after it enters — there is nothing to delay at spawn time.
+       * `lungeOffset` is the last surviving piece of `Emitter.pendingDelay`,
+       * which existed for exactly this call site.
+       */
+      if (entry.formation === 'rhythm') e.lungeOffset = (i % positions.length) * 0.25;
       this.enemies.push(e);
       this.introduce(e.archetype);
       this.bus.emit('enemy:spawn', { id: e.id, archetype: e.archetype });
@@ -3764,9 +4101,18 @@ export class World {
     if (big) this.camera.freeze(0.06);
     this.shock(e.x, e.y, big ? 260 : 130, big ? 2600 : 900);
 
-    // Big enemies scatter a farewell ring; it is the same "denser as it gets
-    // worse" idea the music runs on, expressed in bullets.
-    if (e.archetype === 'subdrop') burstOnce(this.enemyBullets, e.x, e.y, 18, 150, this.rng.range(0, TAU));
+    /*
+     * A subdrop's death used to scatter an 18-bullet ring — the one place in
+     * the game a corpse was still dangerous. There is nothing to scatter, so it
+     * KNOCKS instead: everything near it, including the player's problems,
+     * goes outward. It is the one enemy death that gives the player floor, and
+     * it keeps the shape's character (heavy, low, concussive) in the currency
+     * the game now runs on.
+     */
+    if (e.archetype === 'subdrop') {
+      this.repel(e.x, e.y, 180, 420, e.hue);
+      this.particles.burst(this.rng, e.x, e.y, 26, 260, e.hue, 0.5, 4);
+    }
 
     /*
      * Thirty seconds, not three kills. See `secsSinceDrop` for why the unit
@@ -3820,15 +4166,14 @@ export class World {
     // chain of them is the most satisfying thing to shoot in the game.
     if (e.splits > 0 && e.generation < 1 && this.enemies.length < 40) {
       for (let i = 0; i < e.splits; i++) {
-        // `e.standoff`, not `e.homeY`: the fifth argument is a standoff radius
-        // now and `homeY` is just where the parent happened to be standing.
+        // A child inherits whether the parent lunged. The standoff argument is
+        // gone with the standoff ring; see `spawnEnemy`.
         const child = spawnEnemy(
           'echo',
           e.x + (i === 0 ? -22 : 22),
           e.y,
           this.plan.difficulty,
-          e.standoff,
-          e.armed,
+          e.lunge !== null,
           i === 0 ? 1 : -1,
         );
         child.generation = e.generation + 1;
@@ -4246,7 +4591,7 @@ export class World {
           dps: 0,
           hold: 0,
           hue,
-          clears: false,
+          shoves: false,
           prop: 0,
           tick: 0,
         });
@@ -4820,113 +5165,203 @@ export class World {
   }
 
   /**
-   * Player collision *and* threat analysis in one pass.
+   * CONTACT DAMAGE, GRAZE AND THREAT ANALYSIS IN ONE PASS.
    *
-   * `timeToImpact` is the earliest closest-approach time among bullets that are
-   * actually converging on the player. It is a far better predictor of felt
-   * danger than raw proximity: a wall of bullets moving away is not scary, and
-   * the music should not pretend it is.
+   * This method used to be two: a sweep over 3000 slots of enemy bullets that
+   * did the hit test, the pod absorb, the graze annulus and the closest-approach
+   * prediction, and a separate `collideEnemies` that was five lines of
+   * rectangle test bolted on afterwards. The bullet half is deleted and the
+   * body half is now the whole thing, so they are one loop over `enemies` —
+   * which is also the loop that costs, and running it once matters more now
+   * that it is expected to walk 60+ bodies rather than 20.
+   *
+   * WHAT EACH OUTPUT MEANS, because three of them were renamed rather than
+   * repointed in place (AGENTS.md's `pan` rule: an unchanged name lets a tool
+   * keep printing a column whose definition moved):
+   *
+   *   `threatsNear` / `threatsVeryNear`   were `bulletsNear` / `bulletsVeryNear`.
+   *   `timeToContact`                     was `timeToImpact`.
+   *   `pressureCount`                     was `bulletCount`.
+   *
+   * `timeToContact` is the earliest closest-approach time among bodies actually
+   * converging on the player, and it is a better predictor of felt danger than
+   * proximity for exactly the reason it was when it read bullets: a crowd
+   * moving away is not scary and the music should not pretend it is. A body's
+   * velocity is `(x - prevX) / dt`, which is the only honest source here —
+   * three of the six movers write positions directly and never touch `vx`/`vy`.
+   *
+   * THE TEST IS AGAINST THE ENEMY'S CORE, at 0.62 of its radius, so clipping a
+   * wingtip is survivable and flying into the middle of something is not. That
+   * is the danmaku convention the rest of the game follows and it is inherited
+   * unchanged from `collideEnemies`.
    */
   private collidePlayer(dt: number): void {
-    const b = this.enemyBullets;
     const px = this.player.x;
     const py = this.player.y;
-    const hit = PLAYER_HITBOX;
+    const hit = PLAYER_CONTACT;
 
     let near = 0;
     let veryNear = 0;
     let soonest = Infinity;
-    // Grazes this step, so the flash is one ring rather than one per bullet.
+    // Grazes this step, so the flash is one ring rather than one per body.
     let grazedThisStep = 0;
 
-    const scanSq = SCAN_RADIUS * SCAN_RADIUS;
     const dangerSq = DANGER_RADIUS * DANGER_RADIUS;
     const panicSq = PANIC_RADIUS * PANIC_RADIUS;
     const grazeRadius = this.player.grazeRadius();
-    const grazeSq = grazeRadius * grazeRadius;
+    const invulnerable = this.player.dead || this.player.invuln > 0;
 
-    for (let i = b.count - 1; i >= 0; i--) {
-      const dx = b.x[i] - px;
-      const dy = b.y[i] - py;
+    for (const e of this.enemies) {
+      const dx = e.x - px;
+      const dy = e.y - py;
       const d2 = dx * dx + dy * dy;
-      if (d2 > scanSq) continue;
 
+      /*
+       * 0.8 of the enemy's radius, up from 0.62.
+       *
+       * The old factor came with the note that "clipping a wingtip is
+       * survivable and flying into the middle of something is not", which is
+       * the right instinct and is kept — 0.8 still forgives the outer fifth of
+       * a sprite. What it cannot go on being is the dominant term: at 0.62
+       * against a 3.5px ship it was a 13px test, and see `PLAYER_CONTACT` for
+       * what that measured.
+       */
+      const core = e.radius * 0.8;
       if (d2 < dangerSq) near++;
       if (d2 < panicSq) veryNear++;
 
-      // A live pod eats the bullet first. Two pods is two free mistakes.
+      /*
+       * Closest approach of a body travelling in a straight line, relative to a
+       * stationary player. Negative t means it is already past.
+       *
+       * `prevX`/`prevY` are written at the top of `updateEnemies` every step,
+       * so this is the velocity the body actually had rather than the one its
+       * archetype intends — which is the point, since a lunging body's real
+       * velocity is six times its walking one and that is exactly the case this
+       * signal exists to catch.
+       */
+      if (dt > 1e-6 && d2 < SCAN_RADIUS * SCAN_RADIUS) {
+        const vx = (e.x - e.prevX) / dt;
+        const vy = (e.y - e.prevY) / dt;
+        const vv = vx * vx + vy * vy;
+        if (vv > 1) {
+          const t = -(dx * vx + dy * vy) / vv;
+          if (t > 0 && t < soonest) {
+            const cx = dx + vx * t;
+            const cy = dy + vy * t;
+            const missSq = cx * cx + cy * cy;
+            const threat = core + 18;
+            if (missSq < threat * threat) soonest = t;
+          }
+        }
+      }
+
+      /*
+       * THE GRAZE, RE-POINTED FROM BULLETS ONTO BODIES.
+       *
+       * It exists to reward cutting it fine and it FEEDS THE MUSIC: `player:graze`
+       * drives `sfxGraze`, `Player.grazeRate` drives the director's graze
+       * shimmer (`layers.ts`, `m.grazeRate > 1.2`) and `tension.flow`. With no
+       * bullets it could never fire again, which would have left a dead event
+       * the arrangement was still listening for — the exact defect this
+       * repository keeps a tools directory to catch.
+       *
+       * A BODY IS NOT A BULLET AND THE LATCH HAS TO ACCOUNT FOR IT. A bullet
+       * passes you once, so `BulletFlag.Grazed` was set and never cleared. A
+       * body can hover at arm's length for ten seconds, and awarding that at
+       * 120 Hz would make the graze rate a proximity meter rather than a skill
+       * signal. So the award is once per APPROACH: latched on entering the
+       * annulus, released only when the body has backed out past 1.9x the graze
+       * radius. That hysteresis is what makes it "you got out again" rather
+       * than "you are near something".
+       *
+       * The annulus is between the contact core and the graze ring, so a graze
+       * is by construction a hit that did not land.
+       */
+      const grazeAt = core + grazeRadius;
+      if (d2 > grazeAt * grazeAt * 3.6) e.grazed = false;
+      if (!invulnerable && !e.grazed && d2 < grazeAt * grazeAt && d2 > (core + hit) * (core + hit)) {
+        e.grazed = true;
+        this.player.countGraze();
+        this.totals.grazes++;
+        grazedThisStep++;
+        this.score += 60;
+        this.particles.emit(e.x, e.y, -dx * 1.6, -dy * 1.6, 0.22, 2, 190, ParticleShape.Dot, 2);
+        this.bus.emit('player:graze', { total: this.player.grazeTotal });
+      }
+
+      if (invulnerable) continue;
+      if (d2 > (core + hit) * (core + hit)) continue;
+
+      /*
+       * A LIVE POD EATS THE CONTACT. Two pods is two free mistakes.
+       *
+       * DRONE PODS absorbed a bullet before it reached the ship; there is
+       * nothing to absorb, so the pod now spends itself blocking a body. Same
+       * cooldown, same count, same "the one object the player owns that is both
+       * a gun and a shield" — and it is a straight upgrade in reliability,
+       * because a pod could previously miss a bullet that passed between two of
+       * them and a contact is always at the ship.
+       */
       let absorbed = false;
       for (let k = 0; k < this.player.droneAngle.length; k++) {
         if (this.player.droneCooldown[k] > 0) continue;
-        const pod = this.player.dronePos(k);
-        const pr = b.radius[i] + 9;
-        if (dist2(b.x[i], b.y[i], pod.x, pod.y) > pr * pr) continue;
         this.player.absorbWithDrone(k);
+        const pod = this.player.dronePos(k);
         this.particles.burst(this.rng, pod.x, pod.y, 10, 200, 265, 0.35, 3);
         this.score += 40;
-        b.remove(i);
+        // Thrown off rather than deleted: a pod is a shield, not a weapon.
+        e.lungeTime = 0;
+        e.pushVX = (dx / (Math.sqrt(d2) || 1)) * 520;
+        e.pushVY = (dy / (Math.sqrt(d2) || 1)) * 520;
+        e.pushTime = 0.3;
         absorbed = true;
         break;
       }
       if (absorbed) continue;
 
-      const rr = b.radius[i] + hit;
-      if (d2 < rr * rr) {
-        b.remove(i);
-        if (this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK)) {
-          if (this.player.lastHitAutoBombed) {
-            // The hit was refunded for a bomb. Give it the full bomb treatment
-            // so it reads as a rescue rather than a missed collision.
-            this.autoBombRescue();
-            break;
-          }
-          // `onPlayerHit` clears the whole pool, so this loop's remaining
-          // indices are meaningless. The threat numbers below are stale for one
-          // frame, which is exactly right: the screen just got emptied.
-          this.onPlayerHit();
-          break;
-        }
-        continue;
-      }
-
-      if (d2 < grazeSq && !(b.flags[i] & BulletFlag.Grazed) && this.player.invuln <= 0) {
-        b.flags[i] |= BulletFlag.Grazed;
-        this.player.countGraze();
-        this.totals.grazes++;
-        grazedThisStep++;
-        // Flat 60. This was `powerups.magnet ? 90 : 60` and the 90 was
-        // unreachable for the same reason the drop boost above was: `magnet`
-        // became a rig item and no path can put it in `player.powerups`. See
-        // that comment; measured 0 of 115,200 steps.
-        this.score += 60;
-        this.particles.emit(b.x[i], b.y[i], -dx * 1.6, -dy * 1.6, 0.22, 2, 190, ParticleShape.Dot, 2);
-        this.bus.emit('player:graze', { total: this.player.grazeTotal });
-      }
-
-      // Closest approach of a bullet travelling in a straight line, relative to
-      // a stationary player. Negative t means it is already past.
-      const vx = Math.cos(b.angle[i]) * b.speed[i];
-      const vy = Math.sin(b.angle[i]) * b.speed[i];
-      const vv = vx * vx + vy * vy;
-      if (vv > 1) {
-        const t = -(dx * vx + dy * vy) / vv;
-        if (t > 0 && t < soonest) {
-          const cx = dx + vx * t;
-          const cy = dy + vy * t;
-          const missSq = cx * cx + cy * cy;
-          const threat = b.radius[i] + 18;
-          if (missSq < threat * threat) soonest = t;
+      this.propMoments.contact++;
+      /*
+       * A CHARMED BODY CANNOT RAM YOU, AND A BLINDED ONE MAY WALK STRAIGHT
+       * THROUGH.
+       *
+       * The second half is Ball x Pit's Light ball read honestly: "blinded
+       * enemies have 50% miss chance" has to include the attack this game
+       * actually leans on, and contact is now the ONLY attack. The roll is
+       * taken per CONTACT rather than per frame — `player.invuln` gates
+       * everything below after a hit lands, so a body that misses does not get
+       * 120 more chances that second.
+       */
+      if (e.status & Status.Charm) continue;
+      if (e.status & Status.Blind) {
+        this.blindedAttacks++;
+        this.propChances.blind++;
+        if (this.rng.next() < PROP.blindMiss) {
+          this.propFires.blind++;
+          this.propDamage.blind += 1;
+          continue;
         }
       }
+      if (!this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK)) break;
+      if (this.player.lastHitAutoBombed) {
+        this.autoBombRescue();
+        break;
+      }
+      // A ram costs the enemy too, so a charge is a trade rather than a mugging.
+      e.hp -= 8;
+      e.hitFlash = 0.12;
+      if (e.hp <= 0) e.alive = false;
+      this.onPlayerHit();
+      break;
     }
 
     /*
      * Graze feedback.
      *
-     * Grazing is the highest-skill act in the game — deliberately flying close
-     * enough to a bullet to feel it — and its only visual acknowledgement was a
-     * two-pixel dot. The ring tightens around the ship as the streak builds, so
-     * a good run has a visible halo that a bad one does not.
+     * Grazing is the highest-skill act in the game — deliberately letting
+     * something close enough to feel it — and its only visual acknowledgement
+     * was a two-pixel dot. The ring tightens around the ship as the streak
+     * builds, so a good run has a visible halo that a bad one does not.
      */
     if (grazedThisStep > 0) {
       const heat = clamp01(this.player.grazeRate / 8);
@@ -4940,85 +5375,9 @@ export class World {
       if (heat > 0.5) this.camera.shake(0.02 * heat);
     }
 
-    this.snapshot.bulletsNear = near;
-    this.snapshot.bulletsVeryNear = veryNear;
-    this.snapshot.timeToImpact = soonest;
-    void dt;
-  }
-
-  /**
-   * Enemies hurt on contact.
-   *
-   * There was no enemy-versus-player collision anywhere in this game: the ship
-   * flew straight through everything, so position carried no risk at all and
-   * the `rush` archetype — added specifically to apply pressure through
-   * movement rather than bullets — could not touch the player. It has been
-   * diving harmlessly through them for twenty iterations.
-   *
-   * The test is against the enemy's core rather than its full radius, so
-   * clipping a wingtip is survivable and flying into the middle of something is
-   * not. That matches the danmaku convention the rest of the game follows.
-   */
-  private collideEnemies(): void {
-    if (this.player.dead || this.player.invuln > 0) return;
-    const px = this.player.x;
-    const py = this.player.y;
-    for (const e of this.enemies) {
-      /*
-       * A vertical-game leftover that protects nothing and is asymmetric.
-       *
-       * "Not on screen yet" meant "above the top edge" when everything entered
-       * from the north; on a ring it skips shapes arriving from one bearing and
-       * not from the other three, so an enemy 70px off the south edge can
-       * contact and one 70px off the north edge cannot. In practice neither
-       * can: the player is clamped to y >= 12 and the largest mob contact
-       * radius is 20.9px (subdrop), so an enemy at y < -10 is out of reach by
-       * construction. `tools/deadhunt-branches.mjs` re-tests every skipped
-       * enemy against the contact radius it would have used and found 0 real
-       * contacts skipped in ten runs.
-       *
-       * Left in as a cheap early-out rather than removed, because it is the
-       * only thing keeping off-field arrivals out of the inner loop and the
-       * correct arena version of it is `hasEntered(e)`, which is a different
-       * change with its own reason to be measured.
-       */
-      if (e.y < -10) continue;
-      const r = e.radius * 0.62 + PLAYER_HITBOX;
-      if (dist2(px, py, e.x, e.y) > r * r) continue;
-      this.propMoments.contact++;
-      /*
-       * A CHARMED BODY CANNOT RAM YOU, AND A BLINDED ONE MAY WALK STRAIGHT
-       * THROUGH.
-       *
-       * The second half is Ball x Pit's Light ball read honestly: "blinded
-       * enemies have 50% miss chance" has to include the attack this game
-       * actually leans on. A blinded shape that touches you misses on the same
-       * roll its volleys do, and the roll is taken per CONTACT rather than per
-       * frame — `player.invuln` gates this whole function after a hit lands,
-       * so a body that misses does not get 120 more chances that second.
-       */
-      if (e.status & Status.Charm) continue;
-      if (e.status & Status.Blind) {
-        this.blindedAttacks++;
-        this.propChances.blind++;
-        if (this.rng.next() < PROP.blindMiss) {
-          this.propFires.blind++;
-          this.propDamage.blind += 1;
-          continue;
-        }
-      }
-      if (!this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK)) return;
-      if (this.player.lastHitAutoBombed) {
-        this.autoBombRescue();
-        return;
-      }
-      // A ram costs the enemy too, so a rush is a trade rather than a mugging.
-      e.hp -= 8;
-      e.hitFlash = 0.12;
-      if (e.hp <= 0) e.alive = false;
-      this.onPlayerHit();
-      return;
-    }
+    this.snapshot.threatsNear = near;
+    this.snapshot.threatsVeryNear = veryNear;
+    this.snapshot.timeToContact = soonest;
   }
 
   private onPlayerHit(): void {
@@ -5029,7 +5388,30 @@ export class World {
     this.camera.strike(0, 0.65);
     this.particles.burst(this.rng, this.player.x, this.player.y, 40, 320, 350, 0.8, 4);
     this.shock(this.player.x, this.player.y, 340, 3400);
-    this.cancelBullets();
+    /*
+     * AN ORDINARY HIT SHOVES WHAT IS ON YOU. IT DOES NOT CLEAR THE ROOM.
+     *
+     * `cancelBullets()` stood here, and deleting every cancellable bullet in
+     * the world was the right size for a bullet game: the screen the player had
+     * just failed to read was wiped so they could read the next one, and it
+     * cost the stage nothing it could not rebuild in a second.
+     *
+     * The same gesture at the same scale is a DISASTER in a contact game, and
+     * it was measured before it was reasoned about. With a 520px shove on every
+     * hit, `tools/difficulty.mjs`' pressure — bodies within 150px of the ship,
+     * sampled continuously — pinned at 0.47-0.57 in every quarter of every run
+     * no matter what else moved: enemy speed, count and lunge cadence all
+     * changed and the number did not, because the crowd could never build past
+     * the point where it landed one hit and blew itself apart. Getting hit was
+     * the most effective defensive move in the game.
+     *
+     * So the ordinary hit gets a shove the size of the mistake — enough that
+     * the bodies touching you are not still touching you when the 1.2s of
+     * invulnerability lapses, and no more. The room-clearing version survives
+     * where it was always earned: the bomb, the auto-bomb rescue, a boss phase
+     * turning over, ENCORE, REST's return sweep and COMPRESSOR's ring.
+     */
+    this.repel(this.player.x, this.player.y, World.HIT_SHOVE_RADIUS, 480, 350);
     this.combo = 0;
 
     /*
@@ -5063,7 +5445,7 @@ export class World {
         dps: this.rules.hitNova / Math.max(0.08, maxR / speed),
         hold: 0,
         hue: World.HIT_NOVA_HUE,
-        clears: true,
+        shoves: true,
         prop: 0,
         tick: 0,
       });
@@ -5110,16 +5492,18 @@ export class World {
     }
   }
 
-  /** Turn every cancellable bullet into score, the traditional relief valve. */
-  private cancelBullets(): void {
-    const b = this.enemyBullets;
-    for (let i = b.count - 1; i >= 0; i--) {
-      if (b.flags[i] & BulletFlag.Indestructible) continue;
-      if (!(b.flags[i] & BulletFlag.Cancellable)) continue;
-      this.particles.emit(b.x[i], b.y[i], 0, -40, 0.3, 2.5, 50, ParticleShape.Dot, 1.5);
-      this.score += 10;
-      b.remove(i);
-    }
+  /**
+   * Clear the room around the ship — the traditional relief valve, in bodies.
+   *
+   * `cancelBullets()` deleted every cancellable bullet ANYWHERE, which was
+   * cheap because a bullet off screen is not costing the player anything and
+   * deleting it changes nothing. A shove has to be local or it is a teleport,
+   * so this is a radius: everything within about a screen's half-width goes
+   * outward hard. `CLEAR_RADIUS` is deliberately generous — the moment this
+   * fires is the moment the player most needs floor.
+   */
+  private clearRoom(): void {
+    this.repel(this.player.x, this.player.y, World.CLEAR_RADIUS, 700, 50);
   }
 
   /** The panic bomb the player did not have to press. */
@@ -5135,7 +5519,7 @@ export class World {
     this.camera.shake(1.1);
     this.camera.strike(150, 1);
     this.camera.freeze(0.16);
-    this.cancelBullets();
+    this.clearRoom();
     for (const e of this.enemies) {
       e.hp -= e.archetype === 'conductor' ? 90 : 45;
       e.hitFlash = 0.12;
@@ -5156,7 +5540,6 @@ export class World {
    */
   jumpToWave(index: number): void {
     this.enemies = [];
-    this.enemyBullets.clear();
     this.notes.length = 0;
     this.boss = null;
     this.beginWave(index);
@@ -5173,7 +5556,7 @@ export class World {
     this.camera.shake(1);
     this.camera.strike(190, 0.9);
     this.camera.freeze(0.12);
-    this.cancelBullets();
+    this.clearRoom();
     for (const e of this.enemies) {
       e.hp -= e.archetype === 'conductor' ? 140 : 60;
       e.hitFlash = 0.12;
@@ -5224,7 +5607,7 @@ export class World {
           this.player.hp = this.player.maxHp;
           this.player.bombs = Math.min(5, this.player.bombs + 1);
           this.player.invuln = Math.max(this.player.invuln, 3);
-          this.cancelBullets();
+          this.clearRoom();
         }
         if (d.kind === 'overdrive') this.camera.shake(0.5);
         // The black-hole charge used to arrive here, from a drop. It comes from
@@ -5885,7 +6268,7 @@ export class World {
     this.dragRadius = 0;
     this.dragDepth = 0;
     this.dragSelf = 1;
-    this.dragBullets = false;
+    this.dragDeepens = false;
     for (const v of band) {
       if (v.def.shape === 'unison') {
         unison = { lock: beatLockOf(v.id, v.level) ?? 'bar', s: v.s };
@@ -6323,7 +6706,7 @@ export class World {
     this.dragRadius = Math.max(this.dragRadius, Math.max(40, s.area));
     this.dragDepth = Math.max(this.dragDepth, clamp01(s.damage));
     this.dragSelf = Math.max(this.dragSelf, 1 + Math.max(0, s.arc));
-    if (Math.round(s.count) >= 2) this.dragBullets = true;
+    if (Math.round(s.count) >= 2) this.dragDeepens = true;
     if (dt <= 0 || this.time < this.dragPulseAt) return;
     this.dragPulseAt = this.time + Math.max(0.2, s.interval);
     if (this.novas.length >= World.MAX_NOVAS) return;
@@ -6338,7 +6721,7 @@ export class World {
       dps: 0,
       hold: 0,
       hue: this.hueOf(id),
-      clears: false,
+      shoves: false,
       prop: 0,
       tick: 0,
     });
@@ -6391,7 +6774,7 @@ export class World {
     const sw = this.restSweep;
     if (!sw || this.time < sw.at) return;
     this.restSweep = null;
-    this.cancelBullets();
+    this.clearRoom();
     for (let i = 0; i < sw.rings; i++) {
       if (this.novas.length >= World.MAX_NOVAS) break;
       this.novas.push({
@@ -6404,7 +6787,7 @@ export class World {
         dps: sw.dps,
         hold: 0,
         hue: sw.hue,
-        clears: true,
+        shoves: true,
         prop: 0,
         tick: 0,
       });
@@ -6507,8 +6890,8 @@ export class World {
           dps: this.tacetBank / Math.max(0.08, maxR / 460),
           hold: 0,
           hue: this.hueOf(id),
-          // At two lanes the return sweeps the field as well as burning it.
-          clears: Math.round(s.count) >= 2,
+          // At two lanes the return shoves the field open as well as burning it.
+          shoves: Math.round(s.count) >= 2,
           prop: 0,
           tick: 0,
         });
@@ -6528,34 +6911,6 @@ export class World {
       this.tacetLanes.push(SILENCEABLE_STEMS[(this.tacetRota + k) % SILENCEABLE_STEMS.length]);
     }
     this.tacetRota = (this.tacetRota + lanes) % SILENCEABLE_STEMS.length;
-  }
-
-  /**
-   * RITARDANDO's third rung: enemy FIRE slows inside the bubble too.
-   *
-   * ONCE PER BULLET, marked with `BulletFlag.Dragged`, and it does not come
-   * back when the bullet leaves. That is a deliberate simplification and it is
-   * also the more legible rule — what enters the bubble never speeds up again,
-   * so the field the player is standing in visibly fills with slow fire rather
-   * than shimmering at the boundary. Restoring on exit would need the original
-   * speed stored per bullet, which is a fifteenth array for one rung.
-   *
-   * Only walked when the rung is actually held: the loop is over live enemy
-   * bullets, which peak at 221 in an eight-minute run.
-   */
-  private dragEnemyFire(): void {
-    const b = this.enemyBullets;
-    const rSq = this.dragRadius * this.dragRadius;
-    const keep = Math.max(0.1, 1 - this.dragDepth);
-    for (let i = 0; i < b.count; i++) {
-      if (b.flags[i] & BulletFlag.Dragged) continue;
-      const dx = b.x[i] - this.player.x;
-      const dy = b.y[i] - this.player.y;
-      if (dx * dx + dy * dy > rSq) continue;
-      b.speed[i] *= keep;
-      b.flags[i] |= BulletFlag.Dragged;
-      this.dragsApplied++;
-    }
   }
 
   private hueOf(id: string): number {
@@ -7003,7 +7358,7 @@ export class World {
         hold: Math.max(0, s.linger),
         dps: s.damage / (Math.max(0.08, Math.max(40, s.area) / 430) + Math.max(0, s.linger)),
         hue: this.hueOf(id),
-        clears: true,
+        shoves: true,
         prop: this.activeProp,
         tick: 0,
       });
@@ -7104,7 +7459,7 @@ export class World {
           // A visual only — no damage, so nothing to hang. See `hold`.
           hold: 0,
           hue,
-          clears: false,
+          shoves: false,
           prop: 0,
           tick: 0,
         });
@@ -7382,8 +7737,18 @@ export class World {
      */
     s.playerHeight = clamp01(1 - this.player.y / this.height);
 
-    s.bulletCount = this.enemyBullets.count;
-    // bulletsNear / bulletsVeryNear / timeToImpact are written by collidePlayer.
+    /*
+     * The crowd term. Was `s.bulletCount = this.enemyBullets.count`.
+     *
+     * `this.enemies.length` deliberately, and not the on-screen count: this
+     * feeds `tension.density`, the arrangement's "how busy is it" input, and an
+     * enemy chasing the player from just off camera is part of how busy it is.
+     * `s.enemyCount` two lines down is the same number today and is kept
+     * separate because it is read against a different scale (`tension.threat`)
+     * and one of the two will move first.
+     */
+    s.pressureCount = this.enemies.length;
+    // threatsNear / threatsVeryNear / timeToContact are written by collidePlayer.
 
     s.enemyCount = this.enemies.length;
     for (const key of Object.keys(s.enemies) as EnemyArchetype[]) s.enemies[key] = 0;

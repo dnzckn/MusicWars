@@ -319,7 +319,8 @@ console.log('\n  the items whose identity is a branch — fires against chances\
     [['revenant', 'ember'], 'REVENANT ghosts raised'],
     [['fugue', 'ember', 'timpani'], 'FUGUE copies fired'],
     [['sordino', 'ember'], 'SORDINO discharges'],
-    [['adagio', 'ember'], 'ADAGIO bullets dragged'],
+    // Was "bullets dragged". The bubble reaches bodies now; see World.dragsApplied.
+    [['adagio', 'ember'], 'ADAGIO body-steps dragged'],
     [['maestro', 'ember', 'timpani'], 'UNISON conducted activations'],
   ]) {
     const w = new World(0x51ed);

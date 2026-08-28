@@ -28,7 +28,7 @@ const st = await p.evaluate(() => {
   const r = window.__musicwars.readout(); const s = window.__musicwars.world.snapshot;
   return { section: r.section, bpm: r.bpm, key: r.key, tension: +r.tension.toFixed(2),
     lead: +r.levels.lead.toFixed(2), notes: window.__musicwars.world.notes.length,
-    mult: s.combo, bullets: s.bulletCount, lives: s.lives, hp: s.playerHp };
+    mult: s.combo, bullets: s.pressureCount, lives: s.lives, hp: s.playerHp };
 });
 console.log(JSON.stringify(st));
 await p.keyboard.up('KeyZ');

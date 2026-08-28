@@ -73,7 +73,6 @@ const rows = await p.evaluate(async (TYPES) => {
   const LANE_X = w.width / 2;             // both on one vertical line
   for (const t of TYPES) {
     w.enemies.length = 0;
-    w.enemyBullets.clear();
     w.player.x = LANE_X;
     w.player.y = SHIP_Y;
     w.player.invuln = 999;

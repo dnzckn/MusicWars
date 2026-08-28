@@ -73,7 +73,7 @@ for (let r = 0; r < ROUNDS; r++) {
 await setMode('roll');
 const stats = await p.evaluate(() => {
   const w = window.__musicwars.world;
-  return { enemies: w.enemies.length, bullets: w.playerBullets.count + w.enemyBullets.count, wave: w.wave };
+  return { enemies: w.enemies.length, bullets: w.playerBullets.count, wave: w.wave };
 });
 await b.close();
 

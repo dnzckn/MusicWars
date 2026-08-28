@@ -164,12 +164,68 @@ function run(rigId) {
   const inp = { x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false };
   for (let i = 0; i < STEPS; i++) {
     if (i % 2 === 0) drive(w, inp);
+    /*
+     * NEVER TAKE A RIG CARD. `forceRig` deletes foreign rig items every step,
+     * but it runs BEFORE `update`, and `applyOfferInput` installs the card
+     * inside `update` and a few lines before the rules are folded — so a rig
+     * item the bot picked is live for exactly one step, and the counters see
+     * it. Measured: the CONTROL run, which is supposed to prove that no rule
+     * fires when no passive installs it, reported `killEcho fired 1`.
+     *
+     * Refusing rig cards closes the window at the source and costs the run
+     * nothing this tool is measuring: the item under test is force-installed at
+     * max every step regardless, and a second rig item was always noise
+     * `forceRig` existed to delete.
+     */
+    if (w.choosing && w.offer) {
+      const at = w.offer.options.findIndex((o) => o.slot !== 'rig');
+      inp.choice = at >= 0 ? at : -1;
+    } else {
+      inp.choice = -1;
+    }
     forceRig(w, rigId);
     if (i % PLANT_PERIOD < PLANT_FOR) { inp.x = 0; inp.y = 0; }
     w.update(DT, inp);
     if (w.phase === 'over') break;
   }
   return w;
+}
+
+/**
+ * Make the moments HAPPEN, so a control run's zero means something.
+ *
+ * `ruleChances.hitNova` is incremented in `World.onPlayerHit`, which is to say
+ * its denominator is "times the player was hit". That was a reliable event
+ * while enemies fired: a bot planted for three seconds out of every eight was
+ * shot several times in a five-minute run, and the control read `0 / 3`.
+ *
+ * With contact-only damage it is not reliable at all. Measured over three
+ * 300-second runs of the same bot against a mean of 15-21 live enemies, hits
+ * came out 0, 6 and 3 — the crowd closes at 245-330 px/s and the ship runs at
+ * 430, so whether it is ever caught depends on the seed. On the seed this file
+ * uses it was zero, and the control's own vacuity guard said so rather than
+ * printing a pass, which is the behaviour this directory wants.
+ *
+ * The right fix is not a different seed and not a weaker guard: it is to stop
+ * the guard depending on luck. Six bodies are parked ON the ship with its
+ * invulnerability cleared, which exercises the real `collidePlayer` ->
+ * `onPlayerHit` path and guarantees the denominator. Lives and bombs are
+ * topped up so the run cannot end and no auto-bomb rescue intervenes.
+ */
+async function forceHits(w, n = 6) {
+  const E = await import(`${R}game/enemies.ts`);
+  const inp = { x: 0, y: 0, shoot: false, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false };
+  for (let k = 0; k < n; k++) {
+    w.player.invuln = 0;
+    w.player.dead = false;
+    w.player.hp = w.player.maxHp;
+    w.player.lives = 5;
+    w.player.bombs = 0;
+    const e = E.spawnEnemy('pluck', w.player.x, w.player.y, 0.5, false);
+    e.move = () => {};
+    w.enemies.push(e);
+    for (let i = 0; i < 8; i++) w.update(DT, inp);
+  }
 }
 
 console.log('\nDYNAMIC — one run per rule-bearing passive, that passive alone, forced to max');
@@ -238,6 +294,7 @@ for (const def of ruleItems) {
 console.log('\nCONTROL — the same run with an EMPTY rig; every counter must read zero');
 {
   const w = run(null);
+  await forceHits(w);
   let clean = true;
   for (const counter of Object.keys(w.ruleFires)) {
     const fired = w.ruleFires[counter];

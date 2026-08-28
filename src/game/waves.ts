@@ -279,7 +279,7 @@ export function planWave(index: number): WavePlan {
    * enemies live long enough to accumulate — the file's own warning that group
    * count and group size compound is why it is 1.35 and not 1.0.
    */
-  const groups = 2 + Math.floor(index / 1.35) + Math.floor(escalation * 2.2);
+  const groups = 4 + Math.floor(index / 0.9) + Math.floor(escalation * 3.4);
   const entries: SpawnEntry[] = [];
 
   let beat = 0;
@@ -330,7 +330,7 @@ export function planWave(index: number): WavePlan {
     // supply side of the post-3-level-ladder rebalance, deliberately modest,
     // because this file's own history is two difficulty passes that overshot by
     // tightening several hands at once.
-    const scale = 1.05 + difficulty * 1.9;
+    const scale = 1.7 + difficulty * 3.1;
     const count = Math.max(
       1,
       Math.round(

@@ -42,27 +42,45 @@ export async function installDriver(page, mode = 'dodge') {
     const px = w.player.x, py = w.player.y;
     let rx = 0, ry = 0, danger = 0, closest = 1e9;
 
-    const bl = w.enemyBullets;
-    for (let i = 0; i < bl.count; i++) {
-      const dx = px - bl.x[i], dy = py - bl.y[i];
-      const d2 = dx * dx + dy * dy;
-      if (d2 > 190 * 190) continue;
-      const d = Math.sqrt(d2) || 1;
-      closest = Math.min(closest, d);
-      // Only fear bullets that are actually closing on us.
-      const vx = Math.cos(bl.angle[i]) * bl.speed[i], vy = Math.sin(bl.angle[i]) * bl.speed[i];
-      const closing = (-dx * vx - dy * vy) / d;
-      if (closing <= 0) continue;
-      const weight = (1 - d / 190) ** 2 * (1 + closing / 300);
-      rx += (dx / d) * weight; ry += (dy / d) * weight;
-      if (d < 90) danger += weight;
-    }
-    // Enemies are solid too.
+    /*
+     * BODIES, NOT BULLETS, AND THIS IS THE WHOLE POLICY NOW.
+     *
+     * The block this replaces was a 190px sweep over `w.enemyBullets` doing
+     * distance-and-closing-rate repulsion, with a five-line afterthought that
+     * pushed weakly off enemies "because they are solid too". Enemies are the
+     * only thing that can hurt the player any more, so the afterthought becomes
+     * the policy and inherits the bullet loop's shape exactly: inverse-square
+     * distance weight, scaled by how fast the thing is closing.
+     *
+     * WHY THE VELOCITY COMES FROM `prevX`/`prevY`. Three of the six movers
+     * (`ringHold`, `weave`, `stutterHop`) write positions directly and never
+     * touch `vx`/`vy`, so those fields are zero for most of the roster. The
+     * per-step displacement is the only honest source, and it is also the one
+     * that sees a committed lunge — which is the case this term exists for.
+     * Units are px per 120Hz step: a mob walks 1.1-2.0, a charge moves 4-6.
+     *
+     * THE RANGE IS 240, NOT 190. A bullet had to be dodged; a body has to be
+     * outrun, and 190px is under half a second of walking for the fast half of
+     * the roster. Distance is measured to the contact EDGE rather than the
+     * centre so a subdrop is not treated as a stutter.
+     *
+     * A body sitting on the ship at zero closing speed is still a threat, which
+     * a passed bullet was not — hence the floor of 1 on the closing term rather
+     * than the bullet loop's `continue`.
+     */
     for (const e of w.enemies) {
       const dx = px - e.x, dy = py - e.y;
-      const d = Math.hypot(dx, dy) || 1;
-      if (d > e.radius + 70) continue;
-      rx += (dx / d) * 1.5; ry += (dy / d) * 1.5;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > 240 * 240) continue;
+      const d = Math.sqrt(d2) || 1;
+      const edge = Math.max(1, d - e.radius * 0.62);
+      closest = Math.min(closest, edge);
+      const closing = (-dx * (e.x - e.prevX) - dy * (e.y - e.prevY)) / d;
+      // x2.4 while a charge is committed: it is the one thing on the field that
+      // can cover the gap faster than the ship can open it.
+      const weight = (1 - Math.min(1, edge / 240)) ** 2 * (1 + Math.max(0, closing) / 2.5) * (e.lungeTime > 0 ? 2.4 : 1);
+      rx += (dx / d) * weight; ry += (dy / d) * weight;
+      if (edge < 110) danger += weight;
     }
 
     // Collect when it is cheap to do so.

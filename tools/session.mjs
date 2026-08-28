@@ -99,10 +99,10 @@ const sectionsSeen = new Set();
  * targets — re-measure them if the game's balance changes.
  */
 const REAL_QUANTILES = {
-  bulletCount: [[0, 0], [0.5, 5], [0.9, 31], [0.99, 70], [1, 91]],
-  bulletsNear: [[0, 0], [0.5, 0], [0.9, 1], [0.99, 8], [1, 22]],
-  bulletsVeryNear: [[0, 0], [0.9, 0], [0.99, 3], [1, 10]],
-  timeToImpact: [[0, 0.01], [0.5, 0.54], [0.9, 0.94], [1, 1.75]],
+  pressureCount: [[0, 0], [0.5, 5], [0.9, 31], [0.99, 70], [1, 91]],
+  threatsNear: [[0, 0], [0.5, 0], [0.9, 1], [0.99, 8], [1, 22]],
+  threatsVeryNear: [[0, 0], [0.9, 0], [0.99, 3], [1, 10]],
+  timeToContact: [[0, 0.01], [0.5, 0.54], [0.9, 0.94], [1, 1.75]],
   killRate: [[0, 0], [0.5, 0.51], [0.9, 4.1], [1, 17]],
   grazeRate: [[0, 0], [0.9, 0], [0.99, 1.5], [1, 4.44]],
   enemyCount: [[0, 0], [0.5, 5], [0.9, 30], [1, 49]],
@@ -199,8 +199,8 @@ function drive(step) {
    *
    * `TensionModel.update` reads eight terms. Four of them — crowding (weight
    * 0.22), imminence (0.17), momentum (0.11) and density (0.10) — come from
-   * `bulletsNear`, `bulletsVeryNear`, `timeToImpact`, `killRate` and
-   * `bulletCount`, and this generator set NONE of them. `emptySnapshot()`
+   * `threatsNear`, `threatsVeryNear`, `timeToContact`, `killRate` and
+   * `pressureCount`, and this generator set NONE of them. `emptySnapshot()`
    * zeroes them, so **0.60 of the tension model's total weight was pinned at
    * zero for every frame of every run this gate has ever measured.**
    *
@@ -244,7 +244,7 @@ function drive(step) {
    * `hurt` as the dominant driver. The cause is that `sin(p*PI)` is not
    * uniformly distributed — its density piles up near 1 — so every axis it
    * drove spent most of its time near maximum, and terms that are rare in the
-   * real game (`bulletsNear` has a real p90 of ONE) were saturated.
+   * real game (`threatsNear` has a real p90 of ONE) were saturated.
    *
    * `tent()` is the fix. For `p` uniform on [0,1] the tent map is also uniform
    * on [0,1], so feeding it into an inverse-CDF built from the measured
@@ -257,14 +257,14 @@ function drive(step) {
   const pressure = Math.sin(p * Math.PI) * lull;
 
   // real: p50 2, p90 26, max 81 — long stretches of nothing, then a wall.
-  snap.bulletCount = Math.round(draw('bulletCount', p, 0.0, 1) * lull);
+  snap.pressureCount = Math.round(draw('pressureCount', p, 0.0, 1) * lull);
   // real: p50 0, p90 1, max 22. Near-misses are rare and clustered.
-  snap.bulletsNear = Math.round(draw('bulletsNear', p, 0.07, 2) * lull);
+  snap.threatsNear = Math.round(draw('threatsNear', p, 0.07, 2) * lull);
   // real: p50 0, p90 0, max 10.
-  snap.bulletsVeryNear = Math.round(draw('bulletsVeryNear', p, 0.05, 3) * lull);
+  snap.threatsVeryNear = Math.round(draw('threatsVeryNear', p, 0.05, 3) * lull);
   // real: min 0.01, p50 0.48, p90 1.0, max 1.59. Lower is more urgent.
   // Inverted: the quantile curve is stored low-to-high, but LOW is dangerous.
-  snap.timeToImpact = draw('timeToImpact', p, 0.31, 2, true);
+  snap.timeToContact = draw('timeToContact', p, 0.31, 2, true);
   // real: p50 60, p90 60 — the combo sits at its cap for most of a run.
   snap.combo = Math.min(60, Math.round(60 * Math.min(1, p * 2.5)));
   // real: p50 0.85, p90 4.16. The 38 max is a bomb clearing a screen.

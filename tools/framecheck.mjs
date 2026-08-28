@@ -94,7 +94,7 @@ for (const wave of [0, 6, 14, 22]) {
     return {
       wave: w.waveIndex + 1,
       enemies: w.enemies.length,
-      bullets: w.enemyBullets.count + w.playerBullets.count,
+      bullets: w.playerBullets.count,
       particles: w.particles.count,
       medianMs: q(0.5), p95ms: q(0.95), p99ms: q(0.99), worstMs: +f[f.length - 1].toFixed(1),
       over20ms: +((f.filter((x) => x > 20).length / f.length) * 100).toFixed(1),

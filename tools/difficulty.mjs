@@ -142,10 +142,21 @@ for (const seed of SEEDS) {
       n++;
       if (w.player.hp <= 1) edge++;
       const qi = Math.min(Q - 1, Math.floor((i / steps) * Q));
-      const bl = w.enemyBullets;
+      /*
+       * PRESSURE IS BODIES WITHIN 150px, not enemy bullets within 150px.
+       *
+       * The measure is re-pointed, not retired, and the assertion it feeds is
+       * unchanged: this tool exists because "hits are far too rare to resolve a
+       * change this size" and it needs a continuously-sampled proxy for how
+       * dangerous the moment is. With contact damage the thing inside the ring
+       * IS the danger, so the same sample answers the same question about the
+       * quantity that now carries it. The ABSOLUTE numbers are not comparable
+       * across this change — a body is not a bullet — but the shape of the
+       * curve across quarters, which is all this tool asserts on, is.
+       */
       let near = 0;
-      for (let k = 0; k < bl.count; k++) {
-        const dx = bl.x[k] - w.player.x, dy = bl.y[k] - w.player.y;
+      for (const e of w.enemies) {
+        const dx = e.x - w.player.x, dy = e.y - w.player.y;
         if (dx * dx + dy * dy < THREAT_RADIUS * THREAT_RADIUS) near++;
       }
       press[qi] += near; crowd[qi] += w.enemies.length; pressN[qi]++;
@@ -331,10 +342,10 @@ if (LONG > 0) {
       inp.well = i % 180 === 0;
       w.update(DT, inp);
       if (i % 30 === 0) {
-        const bl = w.enemyBullets;
+        // Bodies, not bullets — see the note on the first copy of this block.
         let near = 0;
-        for (let k = 0; k < bl.count; k++) {
-          const dx = bl.x[k] - w.player.x, dy = bl.y[k] - w.player.y;
+        for (const e of w.enemies) {
+          const dx = e.x - w.player.x, dy = e.y - w.player.y;
           if (dx * dx + dy * dy < THREAT_RADIUS * THREAT_RADIUS) near++;
         }
         seg[cur][1] += near; seg[cur][2]++;

@@ -258,7 +258,7 @@ function duckWorld(fieldW, fieldH, viewW, viewH) {
       droneAngle: [], droneCooldown: [], radius: 8,
     },
     enemies: [], shocks: [], notes: [], particles: { count: 0 }, drops: [], popups: [],
-    playerBullets: { count: 0 }, enemyBullets: { count: 0 },
+    playerBullets: { count: 0 },
     novas: [], effects: [], wells: [],
     banner: '', bannerSub: '', bannerAge: 9, bannerKind: 'wave',
     snapshot: {

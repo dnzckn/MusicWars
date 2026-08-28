@@ -228,7 +228,7 @@ function makeWorld(effects, novas = [], wells = []) {
       droneAngle: [], droneCooldown: [], radius: 8,
     },
     enemies: [], shocks: [], notes: [], particles: { count: 0 }, drops: [], popups: [],
-    playerBullets: { count: 0 }, enemyBullets: { count: 0 },
+    playerBullets: { count: 0 },
     novas, effects, wells,
     banner: '', bannerSub: '', bannerAge: 9, bannerKind: 'wave',
     snapshot: { running: true, level: 3, xp: 2, xpToNext: 9, choosing: false, abilities: {}, instrumentSlots: 3, rigSlots: 3 },

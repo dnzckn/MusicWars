@@ -210,30 +210,24 @@ function drive(w, inp) {
   let ry = 0;
   let danger = 0;
   let closest = 1e9;
-  const bl = w.enemyBullets;
-  for (let i = 0; i < bl.count; i++) {
-    const dx = px - bl.x[i];
-    const dy = py - bl.y[i];
-    const d2 = dx * dx + dy * dy;
-    if (d2 > 190 * 190) continue;
-    const d = Math.sqrt(d2) || 1;
-    closest = Math.min(closest, d);
-    const vx = Math.cos(bl.angle[i]) * bl.speed[i];
-    const vy = Math.sin(bl.angle[i]) * bl.speed[i];
-    const closing = (-dx * vx - dy * vy) / d;
-    if (closing <= 0) continue;
-    const weight = (1 - d / 190) ** 2 * (1 + closing / 300);
-    rx += (dx / d) * weight;
-    ry += (dy / d) * weight;
-    if (d < 90) danger += weight;
-  }
+  // Bodies, not bullets — enemies damage by contact now and there is no enemy
+  // bullet pool. Kept written out rather than imported, exactly as the eight
+  // copies of the old bullet policy were; `tools/lib/bot-brain.mjs` carries the
+  // full reasoning and is the version to keep this in step with.
   for (const e of w.enemies) {
     const dx = px - e.x;
     const dy = py - e.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d > e.radius + 70) continue;
-    rx += (dx / d) * 1.5;
-    ry += (dy / d) * 1.5;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 240 * 240) continue;
+    const d = Math.sqrt(d2) || 1;
+    const edge = Math.max(1, d - e.radius * 0.62);
+    closest = Math.min(closest, edge);
+    const closing = (-dx * (e.x - e.prevX) - dy * (e.y - e.prevY)) / d;
+    const weight =
+      (1 - Math.min(1, edge / 240)) ** 2 * (1 + Math.max(0, closing) / 2.5) * (e.lungeTime > 0 ? 2.4 : 1);
+    rx += (dx / d) * weight;
+    ry += (dy / d) * weight;
+    if (edge < 110) danger += weight;
   }
   let ax = 0;
   let ay = 0;
@@ -425,7 +419,7 @@ function runOnce(seed, minutes, immortal, opts = {}) {
     range('wave.difficulty').add(w.plan.difficulty);
     range('wave.escalation').add(w.plan.escalation);
     range('enemies.onField').add(w.enemies.length);
-    range('enemyBullets.count').add(w.enemyBullets.count);
+    range('enemies.length').add(w.enemies.length);
     range('notes.length').add(w.notes.length);
     range('wells.length').add(w.wells.length);
     range('effects.length').add(w.effects.length);
@@ -461,7 +455,7 @@ function runOnce(seed, minutes, immortal, opts = {}) {
     count('pushWell: wells.length >= 8 (cap hit)').add(w.wells.length >= 8);
     count('onEnemyKilled: popups.length >= 14 (cap hit)').add(w.popups.length >= 14);
     count('shock: shocks.length >= 64 (cap hit)').add(w.shocks.length >= 64);
-    count('enemyBullets pool saturated').add(w.enemyBullets.count >= w.enemyBullets.capacity);
+    count('playerBullets pool saturated').add(w.playerBullets.count >= w.playerBullets.capacity);
     /*
      * `bounces` is implemented now, so it has to be observable. A stat with no
      * counter is how this one stayed dead through the whole life of the table:
@@ -801,11 +795,13 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
   console.log(`    ${dead} of ${total} level steps`);
 }
 
-console.log('\nSTATIC — armedChance() over the whole difficulty range');
+console.log('\nSTATIC — lungeChance() over the whole difficulty range');
 {
-  const at = (d) => E.armedChance(d);
-  console.log(`  d=0 ${f(at(0))}   d=0.5 ${f(at(0.5))}   d=1 ${f(at(1))}   cap in source: 0.22`);
-  console.log(`  the Math.min cap ${at(1) >= 0.22 ? 'is reached exactly at d=1 and never exceeded' : 'is never reached'}`);
+  // Was armedChance(); enemy fire is deleted and the attack it gates is now
+  // the telegraphed lunge. Same shape, same cap check, new ceiling.
+  const at = (d) => E.lungeChance(d);
+  console.log(`  d=0 ${f(at(0))}   d=0.5 ${f(at(0.5))}   d=1 ${f(at(1))}   cap in source: 0.75`);
+  console.log(`  the Math.min cap ${at(1) >= 0.75 ? 'is reached exactly at d=1 and never exceeded' : 'is never reached'}`);
 }
 
 console.log('\nSTATIC — spawnBearing(): the open arc left after the corridor exclusion');

@@ -2,23 +2,29 @@
  * pause — does a level-up actually stop the world, and does it resume cleanly?
  *
  * The offer used to run the world at 12% rather than stopping, for a reason
- * that is still true: every emitter on this field schedules against the
+ * that is still true: every enemy attack on this field schedules against the
  * transport's ABSOLUTE beat, and `repl.stop()` rewinds Strudel's cycle
  * counters, so the music can never be paused. Stop the world while the music
- * runs on and every volley on the field falls overdue — the player reads their
- * cards in peace and then resumes into all of them firing at once.
+ * runs on and every scheduled attack falls overdue — the player reads their
+ * cards in peace and then resumes into all of them landing at once.
  *
- * `World.update` therefore pushes every emitter forward by the beats that pass
- * while the offer is open. This checks all three halves of that:
+ * `World.update` therefore pushes every scheduled attack forward by the beats
+ * that pass while the offer is open. This checks all three halves of that:
  *
- *   FROZEN    Nothing in the world moves. Enemy positions, bullet positions and
- *             `snapshot.time` are all identical across the whole pause.
+ *   FROZEN    Nothing in the world moves. Enemy positions and `snapshot.time`
+ *             are identical across the whole pause.
  *   PLAYING   The transport is NOT frozen. `beat` advances the entire time, or
  *             the music has stopped and the whole design is defeated.
- *   NO DUMP   The bullets fired in the second after resuming do not scale with
- *             how long the pause lasted. This is the one that fails if the
- *             `delayBy` hold is removed, and it is the reason dilation was
- *             chosen in the first place.
+ *   NO DUMP   The attacks committed in the seconds after resuming do not scale
+ *             with how long the pause lasted. This is the one that fails if the
+ *             hold is removed, and it is the reason dilation was chosen in the
+ *             first place.
+ *
+ * THE ATTACK CHANGED AND THE TEST DID NOT. It used to count enemy VOLLEYS and
+ * the bullets they left in the air; enemy fire is deleted, and the attack is
+ * now a telegraphed LUNGE on the same absolute-beat schedule (`enemy:lunge`,
+ * `Enemy.lungeBeat`). The hold it verifies is one line in `World.update`
+ * instead of a loop over emitters, and it is the same hold.
  */
 import './lib/headless-audio.mjs';
 import { makeBrain } from './lib/bot-brain.mjs';
@@ -26,7 +32,7 @@ const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
 
 const DT = 1 / 120;
-/** Offers to answer before holding one, so the field has armed shooters on it. */
+/** Offers to answer before holding one, so the field has bodies that attack. */
 /*
  * 20, raised from 12.
  *
@@ -59,7 +65,7 @@ function trial(holdSecs, seed = 0x51ed) {
   const drive = makeBrain('dodge');
   const inp = inputs();
   let fired = 0;
-  w.bus.on('enemy:fire', () => fired++);
+  w.bus.on('enemy:lunge', () => fired++);
 
   /*
    * Skip past the early offers. The FIRST one lands in wave 1-2, where almost
@@ -77,24 +83,54 @@ function trial(holdSecs, seed = 0x51ed) {
     inp.choice = -1;
   }
   if (!w.choosing) return null;
-  const armed = w.enemies.filter((e) => e.emitters && e.emitters.length).length;
+  // Bodies that will actually attack: they carry a lunge and it is scheduled.
+  const armed = w.enemies.filter((e) => e.lunge && e.lungeBeat >= 0).length;
 
+  /*
+   * `owed` is beats-until-this-body-attacks, per enemy, and it is the
+   * assertion that actually bites.
+   *
+   * THE OLD NO-DUMP TEST IS NOW VACUOUS BY CONSTRUCTION and saying so matters
+   * more than keeping it. It compared attacks-after-resume across hold
+   * lengths, and `World.tickLunge` has an overdue guard — a schedule more than
+   * one cadence late is re-snapped rather than fired — so a backlog cannot be
+   * released however long the pause is. Deleting the hold and re-running this
+   * tool produced no dump. That check is left in place because it is still the
+   * property being claimed, but it can no longer fail, so it is no longer
+   * evidence.
+   *
+   * What the hold actually buys is PHASE: without it every overdue body is
+   * re-snapped to a fresh cadence and the stage loses its relationship to the
+   * bar it was choreographed against. That is directly observable — the beats
+   * a body still owes must be the same after the pause as before it — and
+   * removing the hold turns this red on the first row.
+   */
+  const owedBefore = new Map();
+  for (const e of w.enemies) if (e.lunge && e.lungeBeat >= 0) owedBefore.set(e.id, e.lungeBeat - w.transport.beat);
   const before = {
     time: w.snapshot.time,
     beat: w.transport.beat,
     enemies: w.enemies.map((e) => [e.x, e.y]),
-    bullets: w.enemyBullets.count,
+    bodies: w.enemies.length,
   };
 
   // Hold the offer open. `choice` stays -1, so nothing is picked.
   inp.choice = -1;
   for (let i = 0; i < holdSecs * 120; i++) w.update(DT, inp);
 
+  let owedChecked = 0;
+  let owedWorst = 0;
+  for (const e of w.enemies) {
+    const was = owedBefore.get(e.id);
+    if (was === undefined || !e.lunge || e.lungeBeat < 0) continue;
+    owedChecked++;
+    owedWorst = Math.max(owedWorst, Math.abs(e.lungeBeat - w.transport.beat - was));
+  }
   const during = {
     time: w.snapshot.time,
     beat: w.transport.beat,
     enemies: w.enemies.map((e) => [e.x, e.y]),
-    bullets: w.enemyBullets.count,
+    bodies: w.enemies.length,
   };
 
   // Answer it, then count fire for one second of play.
@@ -108,11 +144,11 @@ function trial(holdSecs, seed = 0x51ed) {
    * which made the comparison meaningless; enemy cadences here are measured in
    * bars, so the window has to be long enough for one to come round.
    */
-  let peakBullets = w.enemyBullets.count;
+  let peakBodies = w.enemies.length;
   for (let i = 0; i < 480; i++) {
     if (i % 2 === 0) { drive(w, inp); inp.choice = -1; }
     w.update(DT, inp);
-    peakBullets = Math.max(peakBullets, w.enemyBullets.count);
+    peakBodies = Math.max(peakBodies, w.enemies.length);
   }
   const moved = before.enemies.length === during.enemies.length
     ? before.enemies.reduce((a, p, i) => a + Math.abs(p[0] - during.enemies[i][0]) + Math.abs(p[1] - during.enemies[i][1]), 0)
@@ -123,9 +159,11 @@ function trial(holdSecs, seed = 0x51ed) {
     worldTimeAdvanced: during.time - before.time,
     beatAdvanced: during.beat - before.beat,
     enemyDrift: moved,
-    bulletDelta: during.bullets - before.bullets,
+    bodyDelta: during.bodies - before.bodies,
+    owedChecked,
+    owedWorst,
     firedAfterResume: fired,
-    peakBullets,
+    peakBodies,
   };
 }
 
@@ -137,14 +175,22 @@ for (const hold of [0.5, 4, 12]) {
   rows.push(r);
   console.log(`  held ${String(hold).padStart(4)}s   world time +${r.worldTimeAdvanced.toFixed(4)}s   ` +
     `transport +${r.beatAdvanced.toFixed(1)} beats   enemy drift ${r.enemyDrift.toFixed(3)}px   ` +
-    `bullets ${r.bulletDelta >= 0 ? '+' : ''}${r.bulletDelta}   armed enemies ${r.armed}   after resume: ${r.firedAfterResume} volleys, peak ${r.peakBullets} bullets`);
+    `bodies ${r.bodyDelta >= 0 ? '+' : ''}${r.bodyDelta}   enemies that attack ${r.armed}   ` +
+    `owed drift ${r.owedWorst.toFixed(3)} beats over ${r.owedChecked}   after resume: ${r.firedAfterResume} lunges`);
 }
 
 const fails = [];
 for (const r of rows) {
   if (r.worldTimeAdvanced > 1e-9) fails.push(`held ${r.holdSecs}s: world time advanced ${r.worldTimeAdvanced.toFixed(4)}s — the world is not stopped`);
   if (r.enemyDrift > 1e-6) fails.push(`held ${r.holdSecs}s: enemies drifted ${r.enemyDrift.toFixed(3)}px — the world is not stopped`);
-  if (r.bulletDelta !== 0) fails.push(`held ${r.holdSecs}s: ${r.bulletDelta} bullets appeared or expired during the pause`);
+  if (r.bodyDelta !== 0) fails.push(`held ${r.holdSecs}s: ${r.bodyDelta} bodies appeared or died during the pause`);
+  // Print the denominator, and treat zero as a failure: a hold that checked
+  // nothing looks exactly like a hold that held.
+  if (r.owedChecked === 0) fails.push(`held ${r.holdSecs}s: no scheduled attack survived the pause — the phase check measured nothing`);
+  else if (r.owedWorst > 1e-6) {
+    fails.push(`held ${r.holdSecs}s: a body's next attack moved ${r.owedWorst.toFixed(3)} beats relative to the transport — ` +
+      'the stage lost its phase against the bar it was choreographed to');
+  }
   if (!(r.beatAdvanced > 0.5)) fails.push(`held ${r.holdSecs}s: the transport only advanced ${r.beatAdvanced.toFixed(2)} beats — the MUSIC stopped, which is the one thing that must not happen`);
 }
 /*
@@ -158,18 +204,18 @@ for (const r of rows) {
  * better than printing a pass.
  */
 if (rows.length && rows.every((r) => r.armed === 0)) {
-  fails.push('no armed enemies were on the field during any hold — the no-dump check measured nothing; raise SKIP_OFFERS');
+  fails.push('no attacking enemies were on the field during any hold — the no-dump check measured nothing; raise SKIP_OFFERS');
 }
-if (rows.length && rows.every((r) => r.firedAfterResume === 0 && r.peakBullets === 0)) {
-  fails.push('nothing fired and no bullets existed after ANY resume — the no-dump comparison is vacuous, not passing');
+if (rows.length && rows.every((r) => r.firedAfterResume === 0)) {
+  fails.push('nothing attacked after ANY resume — the no-dump comparison is vacuous, not passing');
 }
 if (rows.length >= 2) {
-  const base = rows[0].firedAfterResume + rows[0].peakBullets;
-  const worst = Math.max(...rows.map((r) => r.firedAfterResume + r.peakBullets));
-  console.log(`\n  volleys + peak bullets after resume: ${rows.map((r) => `${r.holdSecs}s->${r.firedAfterResume}/${r.peakBullets}`).join('  ')}`);
+  const base = rows[0].firedAfterResume;
+  const worst = Math.max(...rows.map((r) => r.firedAfterResume));
+  console.log(`\n  lunges after resume: ${rows.map((r) => `${r.holdSecs}s->${r.firedAfterResume}`).join('  ')}`);
   if (worst > base * 2 + 3) {
-    fails.push(`a longer pause produced ${worst} volleys on resume against ${base} for the shortest — ` +
-      'the emitters banked their overdue beats and dumped them, which is exactly what the delayBy hold exists to stop');
+    fails.push(`a longer pause produced ${worst} lunges on resume against ${base} for the shortest — ` +
+      'the schedule banked its overdue beats and dumped them, which is exactly what the hold exists to stop');
   }
 }
 console.log('');

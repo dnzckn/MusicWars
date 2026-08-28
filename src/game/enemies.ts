@@ -1,20 +1,92 @@
 /**
  * Enemy archetypes.
  *
- * Each archetype is a movement function plus a set of declarative emitters.
- * They are also the units the music director thinks in: every archetype has a
- * motif in `audio/layers.ts`, so the composition of a wave is audible before
- * you have finished reading the screen.
+ * Each archetype is a movement function, a closing speed and — for the shapes
+ * that have one — a LUNGE. They are also the units the music director thinks
+ * in: every archetype has a motif in `audio/layers.ts`, so the composition of a
+ * wave is audible before you have finished reading the screen.
+ *
+ * ------------------------------------------------------------------------
+ * NOTHING HERE SHOOTS ANY MORE, and that is the whole of this pass.
+ *
+ * `docs/plan-refactor-3.md` §1b: this codebase is a vertical bullet-hell
+ * converted to an arena, and enemy fire was the last shmup organ in it. The
+ * declarative `EmitterSpec` tables that used to sit under every archetype, the
+ * `Emitter` runtime that turned them into bullets, `armedChance`, the 3000-slot
+ * `BulletPool` they filled and the collision sweep that read it are all gone —
+ * deleted, not disabled, because a dead branch nobody runs is worse than no
+ * branch.
+ *
+ * WHAT REPLACES THEM IS SPEED, NOT COUNT. The plan names the risk plainly:
+ * "contact-only damage may make the game trivial ... without bullets, kiting
+ * may beat everything". It is exactly right, and the arithmetic says why. The
+ * closing speeds this file shipped for its whole life were 55-84 px/s against
+ * a player who moves at 430 (`player.ts` PLAYER_SPEED). A body that can only
+ * hurt you by touching you, moving at a fifth of your speed, is not a threat;
+ * it is scenery. Every mob speed below is therefore two to three times what it
+ * was, and the numbers are per archetype so the roster keeps its shape.
+ *
+ * THE LUNGE IS WHAT KEEPS THE MUSIC IN THE GAME. Enemy volleys were the one
+ * enemy action locked to the transport's beat grid — `tools/telegraph.mjs`
+ * measured 93% of them landing on a subdivision, the renderer drew a windup
+ * ring over the last half beat, and `enemy:fire` was a note in the mix. Contact
+ * damage on its own has no event and no clock, so deleting fire without
+ * replacing it would have taken the enemies out of the arrangement entirely. A
+ * lunge is the same contract expressed as movement: scheduled on an absolute
+ * beat, telegraphed for half a beat before it commits, and emitting the same
+ * panned event the volley did. It is also the direct answer to kiting — the
+ * one thing on the field that can out-accelerate a running player.
+ * ------------------------------------------------------------------------
  */
 
 import type { EnemyArchetype } from '../core/events';
 import { clamp } from '../core/math';
-import { Emitter, type EmitterSpec } from './emitters';
 import { VIEW_H, VIEW_W } from './field';
+
+/**
+ * A telegraphed dash at the player.
+ *
+ * `everyBeats` is the cadence, in beats, exactly as `EmitterSpec.beats` was —
+ * scheduling against the transport's ABSOLUTE beat rather than a countdown is
+ * what made volleys undriftable and it is kept for the same reason (see
+ * `Enemy.lungeBeat`).
+ *
+ * `windupBeats` is how long the body visibly gathers before it goes. Half a
+ * beat is ~0.23s at 130bpm, which is what the old emitter windup ring used and
+ * what `tools/telegraph.mjs` asserts is visible.
+ */
+export interface LungeSpec {
+  everyBeats: number;
+  windupBeats: number;
+  /**
+   * Dash speed, px/s, and it is deliberately two to three times the player's
+   * 430.
+   *
+   * The first draft ran 430-560 and was nearly worthless, for a reason that is
+   * obvious once written down: a charge that closes at 500 against a ship
+   * running at 430 gains 70 px/s, so over a 0.4s dash it takes 28px off a gap
+   * the ship opened at leisure. It has to be a BURST or it is a walk with a
+   * ring drawn round it. Swept on `tools/arena.mjs` at x1.0 / x1.6 / x2.2 of
+   * the original table (3 runs x 10 min each): hits taken 1.3 / 1.7 / 1.7 at a
+   * 6-beat cadence, and 6.3 once the cadence came down with it. Cadence and
+   * reach had to move together.
+   */
+  speed: number;
+  /**
+   * How long the dash lasts, in seconds. `speed x time` is its reach, and the
+   * reach is the number to read: 258-408px across the roster, against a view
+   * whose short axis is about 925. A third of the screen, in a third of a
+   * second, after half a beat of warning.
+   */
+  time: number;
+}
 
 export interface EnemyContext {
   playerX: number;
   playerY: number;
+  /** Where the ship is going, px/s. Movers lead it; see `toPlayer`. */
+  playerVX: number;
+  playerVY: number;
   /**
    * The FIELD, not the view, and nothing reads them.
    *
@@ -59,7 +131,6 @@ export interface Enemy {
    * so the boss always has three acts instead of evaporating in one burst.
    */
   invuln: number;
-  emitters: Emitter[];
   move: MoveFn;
   homeX: number;
   homeY: number;
@@ -90,8 +161,9 @@ export interface Enemy {
   phasePending: boolean;
   phases: number;
   phaseThresholds: number[];
-  /** Boss only: emitter sets per phase. */
-  phaseEmitters: EmitterSpec[][];
+  /** Boss only: which of the two attack variants, and the difficulty it spawned at. */
+  bossVariant: number;
+  bossDifficulty: number;
   hue: number;
   /** Leaves the playfield without being killed; no score, no music credit. */
   escaped: boolean;
@@ -104,12 +176,61 @@ export interface Enemy {
    * ever grows.
    */
   leaveAt: number;
-  /** True once it has turned to leave; stops it firing on the way out. */
+  /** True once it has turned to leave; stops it lunging on the way out. */
   leaving: boolean;
-  /** False for the unarmed escorts that make early waves readable. */
-  armed: boolean;
-  /** Set once its first volley has been snapped onto the beat grid. */
-  gridAligned: boolean;
+
+  /* ---------------------------------------------------------------------- *
+   * THE LUNGE — what replaced this shape's guns.
+   * ---------------------------------------------------------------------- */
+  /** Null for a body that only walks at you. */
+  lunge: LungeSpec | null;
+  /**
+   * ABSOLUTE transport beat of the next lunge, not a countdown, and -1 until
+   * the body has entered and been scheduled.
+   *
+   * This is the one piece of `Emitter` worth keeping and it is kept verbatim in
+   * spirit. Its note there: an emitter that accumulated its own beat count from
+   * `bpm * dt` drifted away from the transport on every audio-clock correction
+   * and every frame of hitstop, and only ~55% of volleys landed on a
+   * subdivision despite the whole system being "scheduled in beats". Scheduling
+   * against the transport's absolute position makes drift structurally
+   * impossible: a late frame, a tempo change or a freeze can delay a lunge, but
+   * never detune it.
+   */
+  lungeBeat: number;
+  /**
+   * Beats added to the FIRST schedule only, so a formation can stagger.
+   *
+   * `Emitter.pendingDelay` in one number. `World.spawnGroup` sets it for the
+   * `rhythm` formation, where each body in the row is a sixteenth later than
+   * the last and the group performs its own bar around the player.
+   */
+  lungeOffset: number;
+  /** Seconds of dash left. > 0 means it is committed and travelling. */
+  lungeTime: number;
+  lungeVX: number;
+  lungeVY: number;
+  /**
+   * Knockback: seconds left of a shove and the velocity carrying it.
+   *
+   * `World.repel` writes these. It is the contact game's replacement for
+   * deleting the bullets in the air — see the note on that method — and it is
+   * per-body rather than an impulse into `vx`/`vy` because most movers here do
+   * not integrate a velocity at all: `ringHold`, `weave` and `stutterHop` write
+   * positions directly, so an impulse would be overwritten on the same frame.
+   */
+  pushTime: number;
+  pushVX: number;
+  pushVY: number;
+  /**
+   * Latch for the near-miss award, so one pass costs one graze.
+   *
+   * The bullet version was `BulletFlag.Grazed`, set on the bullet and never
+   * cleared because a bullet only ever passes you once. A body can pass you
+   * repeatedly, so this clears again when it has backed off past the hysteresis
+   * band in `World.collidePlayer`.
+   */
+  grazed: boolean;
   /** Beat-stepped movement state: last subdivision index and hop endpoints. */
   stepIndex: number;
   hopFromX: number;
@@ -226,13 +347,80 @@ let nextId = 1;
  * the same, they simply read the same from every direction.
  */
 
-/** Unit vector from the enemy toward the player, and the distance. */
+/**
+ * Unit vector from the enemy toward WHERE THE PLAYER IS GOING, and the
+ * distance to them now.
+ *
+ * IT LEADS THE TARGET, and that is the second-largest behavioural change in
+ * this pass after the standoff going away. Every mover aimed at the player's
+ * current position, which is correct for a shape whose job is to get in range
+ * and shoot and is hopeless for one whose job is to touch you: a body at 245
+ * px/s chasing a ship at 430 that aims where the ship IS can never arrive, so
+ * the whole crowd collapses into a tail behind the player and the arena's own
+ * danger signal — encirclement, the largest angular gap in the ring — never
+ * closes. Measured before this line existed, encirclement p50 sat at 0.01-0.04
+ * against a p90 of 0.40 with 45 bodies on screen: forty-five enemies, all of
+ * them behind, none of them a problem.
+ *
+ * Aiming at where the ship WILL be turns the same crowd into a pincer. The
+ * bodies arriving from the flanks cut the corner and get in front, which is
+ * what closes a ring, and it costs the player nothing they cannot see coming —
+ * it is the difference between being followed and being herded.
+ *
+ * THE LEAD IS CAPPED IN TIME AND SCALED BY DISTANCE. A body 1500px away
+ * extrapolating 0.7 seconds of a ship's current heading is aiming at a
+ * prediction the ship has no intention of honouring, and the visible result is
+ * a crowd that walks confidently at empty floor. Scaling by proximity keeps the
+ * interception where it is actually an interception.
+ */
 function toPlayer(e: Enemy, ctx: EnemyContext): { ux: number; uy: number; d: number } {
-  const dx = ctx.playerX - e.x;
-  const dy = ctx.playerY - e.y;
-  const d = Math.hypot(dx, dy) || 1;
-  return { ux: dx / d, uy: dy / d, d };
+  const rawX = ctx.playerX - e.x;
+  const rawY = ctx.playerY - e.y;
+  const d = Math.hypot(rawX, rawY) || 1;
+  /*
+   * The lead ramps IN with distance at both ends, and the near end is the half
+   * that was missing.
+   *
+   * A first version scaled only by `1 - d/900`, so the lead was at its FULLEST
+   * when the body was already on top of the player. That is the one place
+   * leading is wrong: a body 30px away aiming 300px ahead of a ship travelling
+   * at 430 px/s does not steer into it, it steers alongside it, and the two
+   * never touch. Measured, that is exactly what happened — three 300-second
+   * runs against a mean of 16-21 live enemies produced ZERO contacts.
+   *
+   * So the lead is zero at contact and reaches full by 200px, then falls away
+   * again past 900 where extrapolating a heading the ship has not committed to
+   * is guesswork. Interception where interception makes sense; a straight line
+   * at arm's length.
+   */
+  const lead = LEAD_SECONDS * clamp(d / 200, 0, 1) * clamp(1 - d / 900, 0, 1);
+  const dx = rawX + ctx.playerVX * lead;
+  const dy = rawY + ctx.playerVY * lead;
+  const dl = Math.hypot(dx, dy) || 1;
+  return { ux: dx / dl, uy: dy / dl, d };
 }
+
+/**
+ * How far ahead of the ship a mover aims, in seconds. See `toPlayer`.
+ *
+ * Swept on `tools/arena.mjs`, 3 runs x 10 simulated minutes at each value, with
+ * everything else held: 0 gives encirclement p90 0.49 and 1.7 hits taken, 0.5
+ * gives 0.52 and 2.7, 0.9 gives 0.56 and 3.3. Monotone in both columns, which
+ * is the shape the mechanism predicts — leading the target closes the ring, and
+ * a closed ring is where the hits come from.
+ */
+const LEAD_SECONDS = 0.9;
+
+/**
+ * The fastest an enemy may ever CLOSE, in px/s. 0.95 of the player's 430.
+ *
+ * A single ceiling shared by the difficulty term here and the escalation term
+ * in `World.scaleForEnsemble`, because two multipliers compounding toward a
+ * bound that only one of them respects is how a cap stops being a cap. The
+ * rule it encodes is "a running ship always gains, however slowly": kiting gets
+ * more expensive for the whole length of a run and never stops working.
+ */
+export const SPEED_CEILING = 408;
 
 /**
  * Close to the standoff ring and hold it, drifting round.
@@ -420,19 +608,71 @@ interface Spec {
   dropChance: number;
   hue: number;
   move: MoveFn;
-  emitters(d: number): EmitterSpec[];
+  /**
+   * Closing speed in px/s at difficulty 0. See the note at the head of the
+   * SPECS table — these are the numbers that carry the difficulty curve now
+   * that nothing shoots.
+   */
+  speed: number;
+  /**
+   * How close it wants to get, in px, as a fraction of nothing — it is an
+   * absolute distance and it is 0 for every shape that means to touch you.
+   *
+   * Every mob used to hold a ring 120-280px out, handed to it per WAVE by
+   * `planWave`'s `homeY`. That is a shooting gallery's geometry: you stand off
+   * and you fire, and the standoff is what makes the fire the threat. With
+   * contact as the only damage a standoff is a promise never to hurt anybody,
+   * so the roster closes now and the character lives in HOW it closes.
+   */
+  standoff: number;
+  lunge: LungeSpec | null;
 }
 
 /*
- * A note on bullet speed, because the intuition is backwards.
+ * A NOTE ON CLOSING SPEED, WHICH IS NOW THE WHOLE THREAT MODEL.
  *
- * Slow bullets are not gentler — they are *worse*. A slow shot stays on screen
- * for five seconds, so six enemies firing three shots every two beats put ~80
- * bullets in the air simultaneously and the screen becomes fog with no gaps to
- * read. Fast bullets clear out, so the same fire rate yields a third as many
- * on screen and each one arrives as a discrete, dodgeable event.
+ * The old table shipped 55-84 px/s and a long comment (kept below, under
+ * `spawnEnemy`) arguing that those numbers should not move as a side effect of
+ * a coordinate change. That was right then and is wrong now: the coordinate
+ * change was the arena, and this change deletes the only thing those bodies
+ * could do at a distance. A shape that hurts you only by touching you and
+ * closes at a fifth of your speed cannot hurt you at all — you walk away from
+ * it, forever, for free.
  *
- * Everything below therefore fires *faster and less often* than it used to.
+ * So the roster is re-speeded around the player's 430 px/s, in a spread rather
+ * than a flat multiplier, and the spread IS the roster:
+ *
+ *   stutter 330   the swarm. Fastest thing on the field, individually pathetic
+ *                 (4 hp). It was already the fastest at 84 and it keeps that
+ *                 rank; a hi-hat should arrive first.
+ *   glissando 265 evasive AND quick — it weaves +/-150px across its approach,
+ *                 so its effective closing rate is well under this.
+ *   pluck 245     the plain one. The shape a new player learns to walk away
+ *                 from, so it has to be walkable-away-from: 0.57x player speed.
+ *   echo 230      splits when killed, so two arrive where one died.
+ *   arpeggiator 210  slow and tough, the thing you cannot simply ignore.
+ *   subdrop 180   the heavy. 48 base hp and a charge that hurts to be near.
+ *   rush          unchanged: it does not close, it commits. See `rushDive`.
+ *
+ * None of these outruns the player and that is deliberate — a mob that can
+ * catch a running ship on foot removes kiting as a skill rather than taxing it.
+ * The LUNGE is what taxes it, in bursts you can see coming.
+ *
+ * SWEPT, NOT GUESSED, and the first pass was too gentle by a factor of about
+ * 1.4. `tools/arena.mjs`, 3 runs x 10 simulated minutes at each of three global
+ * multipliers on this table, everything else held:
+ *
+ *     x1.0   encirclement p90 0.38   on screen p90 44.7   hits 0.0 / 0.0
+ *     x1.4                    0.40                 47.7        1.3 / 2.3
+ *     x1.8                    0.45                 45.0        1.7 / 3.7
+ *
+ * Read two things out of that. Speed moves ENCIRCLEMENT and barely moves
+ * on-screen count, which is the right shape — it is not adding bodies, it is
+ * stopping the ones there from trailing behind in a tail. And it does NOT on
+ * its own make the game dangerous: three hits in ten minutes is still a bot
+ * that cannot lose. Speed was necessary and nowhere near sufficient; the lunge,
+ * the target lead and `INVULN_ON_HIT` are the other three quarters. x1.4 is
+ * baked in above.
  *
  * A note on hp, because these numbers look large against a 3.5-damage bullet.
  *
@@ -500,20 +740,11 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.15,
     hue: 195,
     move: driftIn,
-    emitters: (d) => [
-      {
-        shape: 'fan',
-        count: 2 + Math.floor(d * 3),
-        spread: 0.44,
-        speed: 245 + d * 85,
-        aim: 'player',
-        beats: 3,
-        delayBeats: 1,
-        radius: 5,
-        ttl: 7,
-        type: 0,
-      },
-    ],
+    speed: 245,
+    standoff: 0,
+    // The plain one, and the only mob whose lunge is slow enough to walk out
+    // of on foot. It is the shape the game teaches the mechanic with.
+    lunge: { everyBeats: 3, windupBeats: 0.5, speed: 860, time: 0.3 },
   },
   stutter: {
     hp: 4,
@@ -522,25 +753,19 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.07,
     hue: 300,
     move: stutterHop,
+    speed: 330,
+    standoff: 0,
     /*
-     * The swarm does not shoot. It is the hi-hat of the roster, and a hi-hat is
-     * texture you move through rather than a firing line.
+     * The swarm does not lunge, exactly as it did not shoot.
      *
-     * Stutters spawn 4-7 at a time and cross the screen at 299-357 px/s, three
-     * times anything else — measured, the fastest thing on the field was also
-     * the most numerous and it was throwing aimed shots. That combination is
-     * not readable at any density, and it is where most of the wall of fire
-     * came from. `armedChance` cannot express this, because it is called
-     * without an archetype; declaring no weapons here is how `rush` already
-     * says the same thing, and it is the only way to say it about one shape.
-     *
-     * Note this also overrides `spawnGroup`'s guarantee that the first enemy of
-     * every group is armed: a stutter group now poses a movement question
-     * instead of a bullet one, exactly as a rush group does. The motif layer
-     * reads presence rather than fire, so the sixteenth-note cluster still
-     * plays for a silent swarm.
+     * The old note here is worth keeping because the reasoning survives the
+     * change of weapon: stutters spawn 4-7 at a time and are the fastest thing
+     * on the field, and "the fastest and most numerous shape also gets the
+     * telegraphed burst" is not readable at any density. It is the hi-hat of
+     * the roster and a hi-hat is texture you move through. Its hop is already
+     * on the eighth-note grid, so it is in the arrangement without one.
      */
-    emitters: () => [],
+    lunge: null,
   },
   arpeggiator: {
     hp: 32,
@@ -549,23 +774,12 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.32,
     hue: 45,
     move: closeAndHold,
-    emitters: (d) => [
-      {
-        shape: 'ring',
-        count: 6 + Math.floor(d * 5),
-        speed: 195 + d * 70,
-        aim: 'fixed',
-        // The step is what turns a ring into a spiral; it is also why turrets
-        // read as "the rotating one" both visually and, via their motif, aurally.
-        step: 0.32,
-        beats: 2,
-        burst: 3,
-        restBeats: 4,
-        radius: 5,
-        ttl: 7,
-        type: 1,
-      },
-    ],
+    speed: 210,
+    standoff: 0,
+    // Slow body, frequent lunge: the one you have to keep looking at. Its old
+    // emitter was a rotating ring on a 2-beat burst, so a 4-beat cadence keeps
+    // it "the one that keeps going off" in the mix.
+    lunge: { everyBeats: 2, windupBeats: 0.5, speed: 1000, time: 0.34 },
   },
   glissando: {
     hp: 10,
@@ -574,20 +788,11 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.26,
     hue: 150,
     move: weave,
-    emitters: (d) => [
-      {
-        shape: 'scatter',
-        count: 3,
-        spread: 1.5,
-        speed: 250 + d * 80,
-        speedJitter: 45,
-        aim: 'player',
-        beats: 2.5,
-        radius: 4,
-        ttl: 6,
-        type: 3,
-      },
-    ],
+    speed: 265,
+    standoff: 0,
+    // The evasive one, and its lunge is the longest reach in the roster: it
+    // swings wide across its approach and then cuts straight in.
+    lunge: { everyBeats: 2, windupBeats: 0.5, speed: 1080, time: 0.34 },
   },
   echo: {
     hp: 10,
@@ -596,20 +801,11 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.2,
     hue: 265,
     move: echoDrift,
-    emitters: (d) => [
-      {
-        shape: 'fan',
-        count: 2,
-        spread: 0.5,
-        speed: 240 + d * 70,
-        aim: 'player',
-        beats: 3,
-        delayBeats: 2,
-        radius: 5,
-        ttl: 6,
-        type: 0,
-      },
-    ],
+    speed: 230,
+    standoff: 0,
+    // A statement and its repeat: its lunge is the shortest and lightest in
+    // the table, which is the same idea its motif carries.
+    lunge: { everyBeats: 3, windupBeats: 0.5, speed: 960, time: 0.3 },
   },
   rush: {
     hp: 12,
@@ -618,8 +814,12 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.14,
     hue: 25,
     move: rushDive,
-    // No emitters at all. Its whole threat is the dive.
-    emitters: () => [],
+    // Unused: `rushDive` drives itself from `vx`/`vy` after its telegraph.
+    speed: 0,
+    standoff: 0,
+    // The dive IS the lunge, and it was here first. Giving it a second one
+    // would be the same attack twice on two different clocks.
+    lunge: null,
   },
   subdrop: {
     hp: 48,
@@ -628,33 +828,12 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.55,
     hue: 8,
     move: closeAndHold,
-    emitters: (d) => [
-      {
-        shape: 'ring',
-        count: 8,
-        arms: 2,
-        speed: 185 + d * 60,
-        aim: 'fixed',
-        step: -0.19,
-        beats: 2,
-        burst: 2,
-        restBeats: 5,
-        radius: 6,
-        ttl: 7,
-        type: 1,
-      },
-      {
-        shape: 'fan',
-        count: 4,
-        spread: 0.7,
-        speed: 330,
-        aim: 'player',
-        beats: 5,
-        radius: 6,
-        ttl: 6,
-        type: 0,
-      },
-    ],
+    speed: 180,
+    standoff: 0,
+    // Slow, enormous, and it commits hard when it commits. 8 beats is two bars
+    // — the longest windup-to-windup gap in the roster, so the low brass hit
+    // stays an event.
+    lunge: { everyBeats: 4, windupBeats: 0.5, speed: 900, time: 0.4 },
   },
 };
 
@@ -674,11 +853,10 @@ function blank(): Enemy {
     age: 0,
     hitFlash: 0,
     invuln: 0,
-    emitters: [],
     move: driftIn,
     homeX: 0,
     homeY: 0,
-    standoff: 240,
+    standoff: 0,
     orbitDir: 1,
     score: 0,
     dropChance: 0,
@@ -687,13 +865,22 @@ function blank(): Enemy {
     phasePending: false,
     phases: 1,
     phaseThresholds: [],
-    phaseEmitters: [],
+    bossVariant: 0,
+    bossDifficulty: 0,
     hue: 200,
     escaped: false,
     leaveAt: Infinity,
     leaving: false,
-    armed: true,
-    gridAligned: false,
+    lunge: null,
+    lungeBeat: -1,
+    lungeOffset: 0,
+    lungeTime: 0,
+    lungeVX: 0,
+    lungeVY: 0,
+    pushTime: 0,
+    pushVX: 0,
+    pushVY: 0,
+    grazed: false,
     stepIndex: -1,
     hopFromX: 0,
     hopFromY: 0,
@@ -723,46 +910,27 @@ function blank(): Enemy {
 }
 
 /**
- * How likely a spawned enemy is armed at all.
+ * How likely a spawned body is a LUNGER.
  *
- * Early waves should be about moving and shooting, not dodging: an unarmed
- * enemy is still a threat by collision and still drops notes, so it is not
- * free.
+ * Replaces `armedChance`, which decided whether an enemy carried guns. Renamed
+ * rather than repurposed in place, per the same rule that renamed `enemy:fire`'s
+ * `pan`: the old name would have let `spawnGroup`, `movements` and every tool
+ * that reads it keep printing a column whose definition had moved.
  *
- * Read the second half of the comment below before changing this number. It is
- * not the fraction of enemies that shoot, and it cannot be.
+ * THE NUMBER IS FAR HIGHER THAN THE ONE IT REPLACES, and the reason is that it
+ * is measuring something much cheaper. `armedChance` topped out at 0.22 because
+ * a shooter fills the screen with bullets that persist for seconds; a lunger
+ * costs the screen one contracting ring for half a beat and then a body that
+ * is briefly somewhere else. The thing that made a high armed fraction unreadable
+ * — 21.6 bullets in the air against 2.4 enemies, measured — has no analogue
+ * here, so the fraction can be what the difficulty curve actually wants.
+ *
+ * 30% at wave 1 rising to 75% from wave 13. The floor matters because the
+ * opening is where a player learns to read a windup, and a wave with no windup
+ * in it teaches nothing.
  */
-export function armedChance(difficulty: number): number {
-  /*
-   * 0.16 turned out to mean "entire minutes with no bullets at all" once the
-   * unarmed `rush` archetype joined the early pool. Rare should still be
-   * something you occasionally have to dodge.
-   *
-   * The old slope was 0.26 + d * 0.75 against a ceiling of 0.85, and the field
-   * it produced was measured rather than guessed at, over two six-minute runs:
-   * 67% and 72% of every enemy that spawned fired back, with 21.6 and 24.3
-   * bullets on screen against 1.8 and 2.4 enemies. That is a screen made almost
-   * entirely of bullets, fired by a handful of shapes that had usually already
-   * left — fog rather than a stage, and nothing in it is worth prioritising
-   * because everything in it shoots.
-   *
-   * A quarter of that: 4% at wave 1, 22% from wave 14 on.
-   *
-   * The ceiling matters less than it used to, because the escalation past wave
-   * 14 is now group count rather than armed fraction. The old 0.85 ceiling was
-   * chosen so the late game kept some silent shapes to read against; at 0.22
-   * that is no longer the scarce thing.
-   *
-   * WHAT A PLAYER ACTUALLY MEETS IS HIGHER THAN THIS NUMBER, and no value here
-   * can lower it past a floor. `World.spawnGroup` arms the first enemy of every
-   * non-rush group whatever this returns, so a group of n has at least 1/n
-   * armed; solving the measured 70% against the chances that produced it gives
-   * an effective n of about 3.3, i.e. a floor near 30%. This function only
-   * decides how many *extra* shooters a group gets beyond its one guaranteed
-   * one. Getting under that floor needs `spawnGroup` to change, or an archetype
-   * to declare no weapons the way `stutter` and `rush` do.
-   */
-  return Math.min(0.22, 0.04 + difficulty * 0.18);
+export function lungeChance(difficulty: number): number {
+  return Math.min(0.75, 0.3 + difficulty * 0.45);
 }
 
 export function spawnEnemy(
@@ -770,8 +938,7 @@ export function spawnEnemy(
   x: number,
   y: number,
   difficulty: number,
-  standoff = 240,
-  armed = true,
+  lunges = true,
   orbitDir = 1,
 ): Enemy {
   const spec = SPECS[archetype];
@@ -783,13 +950,23 @@ export function spawnEnemy(
   e.homeX = x;
   e.homeY = y;
   /*
-   * `rush` has no standoff: it is the shape whose whole job is to reach you.
-   * Everything else holds a ring, and the ring is per-archetype rather than
-   * per-wave because how close a shape gets IS its character — a pluck lobbing
-   * from 260px away and an arpeggiator working 170px out are different problems
-   * even before either of them fires.
+   * THE STANDOFF RING IS GONE, and it is the single largest behavioural change
+   * in this pass.
+   *
+   * It used to be per-WAVE — `planWave` generated `homeY` in the range 120-280
+   * and `spawnGroup` handed it straight in as a radius — with the note that
+   * "how close a shape gets IS its character: a pluck lobbing from 260px away
+   * and an arpeggiator working 170px out are different problems even before
+   * either of them fires". Every word of that depended on the last four.
+   *
+   * A body that cannot shoot and stops 200px short is a body that has decided
+   * never to hurt you. Holding a ring was the shooting gallery's geometry and
+   * it goes with the shooting; the character now lives in the MOVER — a
+   * glissando still weaves +/-150px across its approach, a stutter still hops
+   * on the eighth note, a subdrop is still slow and enormous. They just all
+   * arrive.
    */
-  e.standoff = archetype === 'rush' ? 0 : standoff;
+  e.standoff = spec.standoff;
   e.orbitDir = orbitDir >= 0 ? 1 : -1;
   e.hp = e.maxHp = Math.round(spec.hp * (1 + difficulty * 0.85));
   e.radius = spec.radius;
@@ -798,28 +975,35 @@ export function spawnEnemy(
   e.hue = spec.hue;
   e.move = spec.move;
   /*
-   * Approach speeds. These were DESCENT rates and are now CLOSING rates, and
-   * the numbers are deliberately unchanged.
+   * Closing speed, and it MOVED — deliberately, as its own decision, measured.
    *
-   * Measured per archetype over two runs, before: stutter 299 and 357 px/s,
-   * glissando 176 and 185, rush 170 and 278, echo 96 and 100, pluck 61 and 69,
-   * arpeggiator 62 and 63. Judge this per archetype and not by the run mean —
-   * the run mean read 136 and 170 on those same two runs, because it is an
-   * average over whatever mix of shapes the run happened to spawn, and the mix
-   * moves more than the speeds do.
+   * The comment this replaces said the opposite and was right at the time: the
+   * numbers were held still through the arena conversion so that "the arena
+   * changes where things come from and it should not silently also change how
+   * fast they arrive". It recorded the old per-archetype measurements (stutter
+   * 299/357 px/s including its hop overshoot, glissando 176/185, echo 96/100,
+   * pluck 61/69, arpeggiator 62/63) and asked that any change be its own
+   * decision rather than a side effect. This is that decision.
    *
-   * Holding them still through the conversion is the point: the arena changes
-   * where things come from and it should not silently also change how fast they
-   * arrive. If closing speed needs to move it should move as its own decision,
-   * measured, rather than as a side effect of a coordinate change.
+   * What forces it is that closing speed is now the ONLY thing standing between
+   * the player and a game they can walk away from. See the note at the head of
+   * the SPECS table for the per-archetype spread and why it is a spread.
+   *
+   * The difficulty term is small on purpose — a quarter again by the cap. The
+   * curve is carried by hp (`World.scaleForEnsemble`), count, and the lunge
+   * fraction; speed is what makes the mechanic exist at all, and this file's
+   * own history is two difficulty passes that overshot by tightening several
+   * hands at once.
    */
-  e.vy = archetype === 'stutter' ? 84 : archetype === 'pluck' ? 55 : 68;
-  e.emitters = armed ? spec.emitters(difficulty).map((s) => new Emitter(s)) : [];
-  // `armed` is the caller's intent; an archetype with no weapons overrules it.
-  // Without this, a guaranteed-armed stutter or a lucky rush reads as armed to
-  // everything downstream and then never fires, which is a lie to the renderer
-  // (it draws a windup ring on armed enemies) and to every measuring tool.
-  e.armed = armed && e.emitters.length > 0;
+  e.vy = Math.min(SPEED_CEILING, spec.speed * (1 + difficulty * 0.5));
+  /*
+   * `lunges` is the caller's intent; an archetype with no lunge overrules it,
+   * exactly as `armed` used to be overruled by an archetype with no emitters.
+   * Without this a guaranteed-lunging stutter reads as a lunger to everything
+   * downstream and then never lunges, which is a lie to the renderer (it draws
+   * the windup ring off this) and to every measuring tool.
+   */
+  e.lunge = lunges ? spec.lunge : null;
   // Echoes split once into two, which is where their name and their motif come
   // from: a statement, then its repeat.
   e.splits = archetype === 'echo' ? 2 : 0;
@@ -855,135 +1039,50 @@ export function spawnEnemy(
 // ---------------------------------------------------------------------------
 
 /**
- * Attack sets per phase, in two variants that alternate between bosses.
+ * The boss's attack, per phase, in two variants that alternate between bosses.
  *
- * Variant 0 is about *rotation* — gapped rings you orbit around. Variant 1 is
- * about *timing* — telegraphed walls you thread between. Two shapes of problem
- * rather than one shape at two speeds, which is what stops the fourth boss
- * feeling like the first one with more HP.
+ * WHAT THIS REPLACES. Two tables of `EmitterSpec[][]` — gapped rotating rings
+ * for variant 0, telegraphed walls and sweeps for variant 1 — 120 lines of
+ * danmaku that were the single densest use of the bullet system in the game.
+ * All of it is gone with the pool.
+ *
+ * WHAT SURVIVES IS THE DISTINCTION BETWEEN THE TWO VARIANTS, because that is
+ * the part that was doing design work: "two shapes of problem rather than one
+ * shape at two speeds, which is what stops the fourth boss feeling like the
+ * first one with more HP". Expressed as a lunge:
+ *
+ *   variant 0 — ROTATION. It circles fast and charges often, on a short
+ *               cadence with a short reach. You solve it by orbiting with it.
+ *   variant 1 — TIMING. It circles slowly and charges rarely, but each charge
+ *               is enormous — twice the reach and half again the speed. You
+ *               solve it by reading one windup and being elsewhere.
+ *
+ * Both get faster and more frequent with each phase, which is what the phase
+ * gate is for: three acts, each a harder version of the same question.
  */
-function bossPhaseEmitters(difficulty: number, variant: number): EmitterSpec[][] {
+function bossLunge(difficulty: number, variant: number, phase: number): LungeSpec {
   const d = difficulty;
-  if (variant % 2 === 1) return bossVariantB(d);
-  return [
-    // Phase 1 — one rotating ring with a quarter missing. Nothing else.
-    [
-      {
-        shape: 'ring',
-        count: 12,
-        gap: 0.3,
-        speed: 200 + d * 45,
-        aim: 'fixed',
-        step: 0.26,
-        beats: 1.5,
-        radius: 6,
-        ttl: 7,
-        type: 1,
-      },
-      { shape: 'fan', count: 3, spread: 0.5, speed: 320, aim: 'player', beats: 6, radius: 6, ttl: 6, type: 0 },
-    ],
-    // Phase 2 — two counter-rotating gapped rings. The gaps cross, and the
-    // crossing point is the answer.
-    [
-      {
-        shape: 'ring',
-        count: 12,
-        gap: 0.28,
-        speed: 215 + d * 45,
-        aim: 'fixed',
-        step: 0.2,
-        beats: 1.5,
-        radius: 6,
-        ttl: 7,
-        type: 1,
-      },
-      {
-        shape: 'ring',
-        count: 10,
-        gap: 0.34,
-        speed: 175,
-        aim: 'fixed',
-        step: -0.26,
-        beats: 2.5,
-        radius: 5,
-        ttl: 7,
-        type: 3,
-      },
-    ],
-    // Phase 3 — a fast gapped ring, plus a telegraphed bloom on the downbeat.
-    // Two things, not three: three simultaneous patterns from a centred source
-    // is not difficulty, it is noise.
-    [
-      {
-        shape: 'ring',
-        count: 14,
-        gap: 0.26,
-        speed: 245,
-        aim: 'fixed',
-        step: 0.38,
-        turn: 0.22,
-        beats: 1.5,
-        radius: 6,
-        ttl: 7,
-        type: 1,
-      },
-      { shape: 'bloom', count: 16, gap: 0.25, speed: 275, aim: 'fixed', beats: 6, radius: 7, ttl: 7, type: 3 },
-    ],
-  ];
-}
-
-/** The timing-based boss: walls, sweeps and pauses rather than rotation. */
-function bossVariantB(d: number): EmitterSpec[][] {
-  return [
-    // Wide aimed walls with a clear gap, on a slow, readable pulse.
-    [
-      {
-        shape: 'fan',
-        count: 9,
-        spread: 2.4,
-        speed: 230 + d * 40,
-        aim: 'player',
-        beats: 4,
-        radius: 6,
-        ttl: 7,
-        type: 0,
-      },
-    ],
-    // Alternating side sweeps: the safe lane moves across the screen.
-    [
-      {
-        shape: 'fan',
-        count: 7,
-        spread: 1.5,
-        speed: 260 + d * 45,
-        aim: 'fixed',
-        angle: Math.PI / 2,
-        step: 0.55,
-        beats: 1.5,
-        radius: 6,
-        ttl: 7,
-        type: 1,
-      },
-      { shape: 'aimed', count: 1, speed: 380, aim: 'player', beats: 3, radius: 5, ttl: 6, type: 2 },
-    ],
-    // Bursts of three, then a rest long enough to reposition and shoot back.
-    [
-      {
-        shape: 'fan',
-        count: 11,
-        spread: 2.8,
-        speed: 250 + d * 50,
-        aim: 'player',
-        beats: 0.75,
-        burst: 3,
-        restBeats: 5,
-        radius: 6,
-        ttl: 7,
-        type: 0,
-      },
-      { shape: 'ring', count: 10, gap: 0.35, speed: 190, aim: 'fixed', step: -0.3, beats: 3, radius: 5, ttl: 7, type: 3 },
-    ],
-  ];
+  // Phase 0/1/2 -> 1 / 0.82 / 0.68 of the written cadence.
+  const tighten = [1, 0.82, 0.68][Math.min(2, phase)];
+  if (variant % 2 === 1) {
+    return {
+      everyBeats: 6 * tighten,
+      // A full beat of windup rather than half. The whole variant is about
+      // reading one thing coming, so it is deliberately the most readable
+      // attack in the game and by far the worst one to be standing in front of.
+      // 1250 x 0.5 is 625px of reach — two thirds of the short axis of the
+      // view, which is what makes "be somewhere else" the whole fight.
+      windupBeats: 1,
+      speed: 1250 + d * 180,
+      time: 0.5,
+    };
+  }
+  return {
+    everyBeats: 3 * tighten,
+    windupBeats: 0.5,
+    speed: 1000 + d * 140,
+    time: 0.34,
+  };
 }
 
 /**
@@ -1049,8 +1148,9 @@ export function spawnBoss(
   e.move = bossMove;
   e.phases = 3;
   e.phaseThresholds = [0.66, 0.33];
-  e.phaseEmitters = bossPhaseEmitters(difficulty, variant);
-  e.emitters = e.phaseEmitters[0].map((s) => new Emitter(s));
+  e.bossVariant = variant;
+  e.bossDifficulty = difficulty;
+  e.lunge = bossLunge(difficulty, variant, 0);
   return e;
 }
 
@@ -1079,15 +1179,23 @@ export function commitBossPhase(e: Enemy): number {
   const next = e.phase + 1;
   if (next >= e.phases) return -1;
   e.phase = next;
-  e.emitters = e.phaseEmitters[next].map((s) => new Emitter(s));
+  e.lunge = bossLunge(e.bossDifficulty, e.bossVariant, next);
+  // Re-schedule from scratch so the new phase's first charge lands after the
+  // transition rather than inheriting the old phase's next due beat.
+  e.lungeBeat = -1;
   return next;
 }
 
-/** Beats until this enemy's soonest volley; Infinity if it is not about to fire. */
-export function beatsUntilFire(e: Enemy, nowBeat: number): number {
-  if (!e.armed || e.leaving || e.emitters.length === 0) return Infinity;
-  let soonest = Infinity;
-  for (const em of e.emitters) soonest = Math.min(soonest, em.nextIn(nowBeat));
-  return soonest;
+/**
+ * Beats until this body commits its lunge; Infinity if it is not about to.
+ *
+ * Replaces `beatsUntilFire`, one for one, including its consumer: the renderer
+ * draws a ring that contracts onto the enemy over the last half beat. That
+ * windup is the ONLY warning contact damage gets, so it matters more now than
+ * it did when it decorated a volley that was itself visible in the air.
+ */
+export function beatsUntilLunge(e: Enemy, nowBeat: number): number {
+  if (!e.lunge || e.leaving || e.lungeBeat < 0 || e.lungeTime > 0) return Infinity;
+  return Math.max(0, e.lungeBeat - nowBeat);
 }
 

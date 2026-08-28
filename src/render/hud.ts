@@ -133,7 +133,7 @@ export class Hud {
     driver: $('ui-driver'),
     reason: $('ui-reason'),
     fps: $('ui-fps'),
-    bullets: $('ui-bullets'),
+    bodies: $('ui-bodies'),
     audio: $('ui-audio'),
     resume: $('ui-resume'),
   };
@@ -385,7 +385,9 @@ export class Hud {
     this.set('driver', this.els.driver, readout.driver.toUpperCase());
     this.set('reason', this.els.reason, readout.harmonyReason);
     this.set('fps', this.els.fps, fps.toFixed(0));
-    this.set('bullets', this.els.bullets, String(snap.bulletCount));
+    // The diagnostic row counted enemy bullets; there are none. It reads the
+    // crowd instead, which is the number that matters to frame cost now.
+    this.set('bodies', this.els.bodies, String(snap.pressureCount));
     this.els.tension.style.width = `${(clamp01(readout.energy) * 100).toFixed(1)}%`;
     // The beat, as a breath on the LIVE dot's own section chip. It is the only
     // thing left that says "this is running on a real clock".
@@ -396,8 +398,8 @@ export class Hud {
   /**
    * The band assembling, for the four bars before the first enemy.
    *
-   * Shown only while the field is provably empty — no enemies, no bullets, wave
-   * one, inside the first fifteen seconds — and latched off permanently the
+   * Shown only while the field is provably empty — no enemies, wave one, inside
+   * the first fifteen seconds — and latched off permanently the
    * moment any of that stops being true. That is what makes it safe to draw
    * over the playfield at all: there is nothing underneath it to hide.
    */
@@ -413,7 +415,7 @@ export class Hud {
     }
     this.lastTime = snap.time;
 
-    const clear = snap.enemyCount === 0 && snap.bulletCount === 0;
+    const clear = snap.enemyCount === 0;
     if (this.openerState === 'pre' && (!clear || snap.time > 15 || snap.wave > 0)) {
       this.openerState = 'done';
     }

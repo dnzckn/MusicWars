@@ -17,7 +17,7 @@
 import { clamp01, lerp, TAU } from '../core/math';
 import type { Transport } from '../core/transport';
 import type { Effect, World } from '../game/world';
-import { beatsUntilFire } from '../game/enemies';
+import { beatsUntilLunge } from '../game/enemies';
 import { INVULN_ON_HIT } from '../game/player';
 import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
@@ -25,7 +25,7 @@ import { SHARD_HUES, Status } from '../game/world';
 import { PLAYFIELD_H, PLAYFIELD_W } from '../game/field';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
-import { enemyBulletSprites, playerBulletSprites, ROTATIONS, softDot } from './sprites';
+import { playerBulletSprites, ROTATIONS, softDot } from './sprites';
 
 const STAR_COUNT = 140;
 
@@ -775,18 +775,12 @@ export class Renderer {
   private drawBullets(g: CanvasRenderingContext2D, alpha: number): void {
     g.globalCompositeOperation = 'lighter';
 
-    const eset = enemyBulletSprites();
-    const eb = this.world.enemyBullets;
-    for (let i = 0; i < eb.count; i++) {
-      const t = eb.type[i] % eset.frames.length;
-      const set = eset.frames[t];
-      const spr = eset.rotating[t]
-        ? set[(((Math.round((eb.angle[i] / TAU) * ROTATIONS) % ROTATIONS) + ROTATIONS) % ROTATIONS)]
-        : set[0];
-      const x = lerp(eb.px[i], eb.x[i], alpha) - spr.ox;
-      const y = lerp(eb.py[i], eb.y[i], alpha) - spr.oy;
-      g.drawImage(spr.canvas, x, y);
-    }
+    /*
+     * THE ENEMY BULLET LOOP IS GONE, and it was one `drawImage` per bullet
+     * against a pool of 3000 with a measured on-screen peak of 186 — the
+     * largest single draw loop in this file. `enemyBulletSprites()` and the
+     * four `ENEMY_TYPES` frames it builds go with it, in `sprites.ts`.
+     */
 
     const pset = playerBulletSprites();
     const pb = this.world.playerBullets;
@@ -939,21 +933,29 @@ export class Renderer {
       }
 
       /*
-       * Windup.
+       * Windup — and it is now the ONLY warning any attack in this game gives.
        *
        * A ring that contracts onto the enemy over the last half-beat before it
-       * fires. Half a beat is ~0.23s at 130bpm — long enough to read and react,
-       * short enough that it is a warning rather than a countdown. It also
-       * makes the beat visible on every armed enemy at once, which is the whole
-       * point: the track is telling you when to move.
+       * charges. Half a beat is ~0.23s at 130bpm — long enough to read and
+       * react, short enough that it is a warning rather than a countdown. It
+       * also makes the beat visible on every attacking body at once, which is
+       * the whole point: the track is telling you when to move.
+       *
+       * IT MATTERS MORE THAN IT DID. It used to decorate a volley that was
+       * itself perfectly visible in the air for a second afterwards, so a
+       * player who missed the ring still had the bullets to read. A lunge is
+       * over in a third of a second and the ring is all there is, so it is
+       * drawn heavier: the stroke reaches 3.4px rather than 2.6 and the ring
+       * starts 26px out rather than 20, which makes it legible against a body
+       * in a crowd of sixty rather than one of six.
        */
-      const beats = beatsUntilFire(e, this.world.warpedBeatNow);
+      const beats = beatsUntilLunge(e, this.world.warpedBeatNow);
       if (beats < 0.5) {
         const charge = 1 - beats / 0.5;
-        g.strokeStyle = `hsla(${e.hue}, 100%, 78%, ${0.25 + charge * 0.6})`;
-        g.lineWidth = 1 + charge * 1.6;
+        g.strokeStyle = `hsla(${e.hue}, 100%, 82%, ${0.3 + charge * 0.65})`;
+        g.lineWidth = 1.2 + charge * 2.2;
         g.beginPath();
-        g.arc(0, 0, e.radius + 20 - charge * 16, 0, TAU);
+        g.arc(0, 0, e.radius + 26 - charge * 20, 0, TAU);
         g.stroke();
       }
 
@@ -1071,10 +1073,17 @@ export class Renderer {
     const fs = 9 + Math.sin(performance.now() * 0.03) * 2;
     g.drawImage(flame, -fs, 6 - fs * 0.4, fs * 2, fs * 2);
 
-    // The hitbox. Always drawn, bright when focused — a bullet hell that hides
-    // its hitbox is just being coy.
+    /*
+     * The contact body. Always drawn, bright when focused.
+     *
+     * This used to be "the hitbox", a 5px dot standing for `PLAYER_HITBOX`'s
+     * 3.5 — a bullet hell that hides its hitbox is just being coy. There are no
+     * enemy bullets to thread and the ship is touched at `PLAYER_CONTACT`,
+     * which is 11, so the dot is drawn at the size that is actually tested. A
+     * marker that understates the thing it marks is worse than no marker.
+     */
     const hb = this.dot(p.focused ? 350 : 190);
-    const hs = p.focused ? 9 : 5;
+    const hs = p.focused ? 14 : 11;
     g.globalAlpha = p.focused ? 1 : 0.55;
     g.drawImage(hb, -hs, -hs, hs * 2, hs * 2);
     g.globalCompositeOperation = 'source-over';

@@ -14,7 +14,6 @@ const r = await p.evaluate(async () => {
 
   const trial = async (archetype) => {
     w.enemies.length = 0;
-    w.enemyBullets.clear();
     w.player.hp = w.player.maxHp;
     w.player.lives = 4;
     w.player.invuln = 0;
@@ -23,7 +22,9 @@ const r = await p.evaluate(async () => {
     const off = w.bus.on('player:hit', () => hit++);
     // Park an enemy directly on the ship.
     const mod = await import('/src/game/enemies.ts');
-    const e = mod.spawnEnemy(archetype, w.player.x, w.player.y, 0.5, w.player.y, false);
+    // The standoff argument is gone; the fifth is now `lunges`, and this test
+    // parks a body ON the ship, so it must not be allowed to charge away.
+    const e = mod.spawnEnemy(archetype, w.player.x, w.player.y, 0.5, false);
     e.move = () => {};
     e.y = w.player.y;
     e.x = w.player.x;

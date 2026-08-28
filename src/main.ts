@@ -463,7 +463,8 @@ world.bus.on('ability:duet', () => {
   director.onFusion('duet');
 });
 
-world.bus.on('enemy:fire', (e) => {
+// A charge committing is the note a volley used to be; see `enemy:lunge`.
+world.bus.on('enemy:lunge', (e) => {
   sfxEnemyFire(e.archetype, director.currentChordNotes()[0] ?? 57, e.pan);
 });
 

@@ -137,23 +137,28 @@ export class TensionModel {
   update(s: GameSnapshot, dt: number): TensionOutput {
     const t = this.terms;
 
-    // A dozen bullets inside the danger ring is already uncomfortable; 26 is a
-    // wall. These numbers are tuned against what the game actually throws:
-    // thresholds set for a theoretical bullet count the player never sees just
-    // mean this term is always near zero.
     /*
-     * Calibrated to the bullet counts this game actually produces.
+     * CROWDING NOW COUNTS BODIES. Was `bulletsNear` / `bulletsVeryNear`.
      *
-     * The old ceiling was 18 bullets near the ship. Measured across a real run
-     * the term peaked at 0.23 and averaged 0.01 — it carries 22% of the total
-     * weight and contributed essentially nothing, because 18 near misses at
-     * once is not a situation this game creates. `bulletsNear` tops out around
-     * 7-8, so that is what full crowding should mean.
+     * The thresholds move with the quantity, and the reason is the lesson the
+     * old comment here already records: its ceiling was 18 bullets near the
+     * ship, the term peaked at 0.23 and averaged 0.01 across a real run, and it
+     * carried 22% of the total weight while contributing essentially nothing —
+     * because 18 near misses at once is not a situation this game creates.
+     * Leaving 1..8 in place against a body count would repeat that in the
+     * opposite direction: contact damage means the crowd IS the danger, and a
+     * ring of a dozen holding station on the ship would saturate a scale built
+     * for bullets and pin the term at 1.
+     *
+     * 2..16 within DANGER_RADIUS (300px) and 0..6 within PANIC_RADIUS (110px).
+     * The second is the one that means something now — six bodies inside 110px
+     * is a body every sixty degrees at arm's length, which is the moment the
+     * arrangement should be at its most frantic.
      */
-    t.crowding = clamp01(remap(s.bulletsNear, 1, 8, 0, 1) * 0.6 + remap(s.bulletsVeryNear, 0, 3, 0, 1) * 0.4);
+    t.crowding = clamp01(remap(s.threatsNear, 2, 16, 0, 1) * 0.6 + remap(s.threatsVeryNear, 0, 6, 0, 1) * 0.4);
 
-    // Inverted time-to-impact. Under ~0.3s the player is reacting, not planning.
-    t.imminence = Number.isFinite(s.timeToImpact) ? clamp01(remap(s.timeToImpact, 0.9, 0.1, 0, 1)) : 0;
+    // Inverted time-to-contact. Under ~0.3s the player is reacting, not planning.
+    t.imminence = Number.isFinite(s.timeToContact) ? clamp01(remap(s.timeToContact, 0.9, 0.1, 0, 1)) : 0;
 
     // Fragility must count lives, not just the current life's HP: a player on
     // their last life at full health is in far more danger than the HP bar says,
@@ -168,11 +173,15 @@ export class TensionModel {
     t.fragility = Math.pow(clamp01(1 - hitsLeft / maxHits), 1.15);
 
     /*
-     * Same problem: 200 bullets on screen is not a state this game reaches in
-     * ordinary play. Independently measured, a busy late wave runs 40-75 and the
-     * early game runs under 10, so the old scale turned a full screen into 0.15.
+     * DENSITY NOW COUNTS BODIES. Was `bulletCount`, on a scale of 8..90.
+     *
+     * Same problem as `crowding` above and the same fix: a scale has to be
+     * calibrated to what the game actually produces or the term is dead at one
+     * end. Measured off `tools/arena.mjs` after the density rise, enemies alive
+     * across a twenty-minute run run p10 / p50 / p90 of roughly 1 / 20 / 90, so
+     * the scale is the crowd's own range rather than the bullets'.
      */
-    t.density = clamp01(remap(s.bulletCount, 8, 90, 0, 1));
+    t.density = clamp01(remap(s.pressureCount, 4, 70, 0, 1));
 
     t.threat = clamp01(remap(s.enemyCount, 1, 9, 0, 0.6) + clamp01(s.enemyThreat) * 0.4);
 
@@ -265,7 +274,7 @@ export class TensionModel {
     raw = Math.max(raw, clamp01(s.campPressure ?? 0) * 0.45);
 
     // Between waves nothing is happening; let it breathe properly.
-    if (s.enemyCount === 0 && s.bulletCount < 12 && !s.bossActive) raw *= 0.35;
+    if (s.enemyCount === 0 && s.pressureCount < 4 && !s.bossActive) raw *= 0.35;
 
     // Belt and braces: one non-finite term must never be able to poison the
     // whole arrangement again.

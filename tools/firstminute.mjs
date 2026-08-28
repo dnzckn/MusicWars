@@ -24,7 +24,7 @@ const r = await p.evaluate(async () => {
   const marks = {};
   const once = (k) => { if (marks[k] === undefined) marks[k] = at(); };
   w.bus.on('enemy:death', (e) => { if (e.byPlayer) once('firstKill'); });
-  w.bus.on('enemy:fire', () => once('firstShotAtYou'));
+  w.bus.on('enemy:lunge', () => once('firstShotAtYou'));
   w.bus.on('powerup:pickup', () => once('firstPowerup'));
   w.bus.on('player:hit', () => once('firstHitTaken'));
   w.bus.on('enemy:spawn', () => once('firstEnemy'));

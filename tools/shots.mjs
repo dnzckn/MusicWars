@@ -35,7 +35,7 @@ const state = await page.evaluate(() => {
   const r = window.__musicwars.readout();
   const s = window.__musicwars.world.snapshot;
   return { section: r.section, bpm: r.bpm, key: r.key, tension: +r.tension.toFixed(2),
-    bullets: s.bulletCount, enemies: s.enemyCount, wave: s.wave, lives: s.lives, score: s.score };
+    bullets: s.pressureCount, enemies: s.enemyCount, wave: s.wave, lives: s.lives, score: s.score };
 });
 console.log(JSON.stringify(state));
 if (__reloads() > 0) console.log(`WARNING: page reloaded ${__reloads()}x mid-run — these numbers span more than one build`);

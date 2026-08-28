@@ -17,7 +17,7 @@ for (let i = 0; i < 10; i++) {
     const w = window.__musicwars.world, s = w.snapshot, rd = window.__musicwars.readout();
     w.player.lives = Math.max(3, w.player.lives);
     return { boss: s.bossActive, phase: s.bossPhase, hp: +s.bossHp.toFixed(2), enemies: w.enemies.length,
-      bullets: w.enemyBullets.count, section: rd.section, key: rd.key, wave: w.waveIndex + 1 };
+      bodies: w.enemies.length, section: rd.section, key: rd.key, wave: w.waveIndex + 1 };
   });
   shots.push(st);
   if (st.boss) await p.screenshot({ path: `/tmp/boss-${i}.png` });

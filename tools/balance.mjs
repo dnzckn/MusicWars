@@ -15,8 +15,8 @@ await p.evaluate(() => {
   mw.world.bus.on('boss:defeat', () => { st.bossEnd = performance.now(); });
   setInterval(() => {
     const s = mw.world.snapshot;
-    st.maxBullets = Math.max(st.maxBullets, s.bulletCount);
-    st.bulletSum += s.bulletCount; st.n++;
+    st.maxBullets = Math.max(st.maxBullets, s.pressureCount);
+    st.bulletSum += s.pressureCount; st.n++;
     st.maxWave = Math.max(st.maxWave, s.wave);
   }, 100);
 });

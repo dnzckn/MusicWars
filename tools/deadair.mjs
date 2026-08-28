@@ -32,7 +32,7 @@ while (Date.now() - t0 < 195000) {
     return {
       wave: w.waveIndex,
       enemies: w.enemies.length,
-      bullets: w.enemyBullets.count,
+      bodies: w.enemies.length,
       pickups: w.drops.length,
       powerups: w.snapshot.powerups ? Object.values(w.snapshot.powerups).filter((v) => v > 0).length : 0,
       dead: w.player.dead, phase: w.phase,

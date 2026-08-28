@@ -35,7 +35,9 @@ const raw = await p.evaluate(async (mins) => {
   while (performance.now() < end) {
     const i = w.waveIndex;
     const a = (per[i] ??= { bullets: 0, enemies: 0, hits: 0, n: 0 });
-    a.bullets += w.enemyBullets.count;
+    // Was enemy bullets on the field. Contact damage has no projectile, so
+    // the pressure column is the crowd — see the header note.
+    a.bullets += w.enemies.length;
     a.enemies += w.enemies.length;
     a.n++;
     // The weave bot is deliberately unskilled so the stage is what is being

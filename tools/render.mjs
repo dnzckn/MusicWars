@@ -201,8 +201,8 @@ const PRESETS = {
   wave: {
     wave: 6, enemyCount: 8, enemies: { pluck: 4, rush: 3, stutter: 1 },
     enemyThreat: 0.71, nearestThreat: 0.45, encirclement: 0.3,
-    playerHp: 2, lives: 1, bulletCount: 2, bulletsNear: 0, bulletsVeryNear: 0,
-    timeToImpact: 0.48, killRate: 0.85, combo: 60, timeSinceHit: 12,
+    playerHp: 2, lives: 1, pressureCount: 2, threatsNear: 0, threatsVeryNear: 0,
+    timeToContact: 0.48, killRate: 0.85, combo: 60, timeSinceHit: 12,
     bossActive: false, bossPhase: 0, movement: null,
   },
   /*
@@ -220,15 +220,15 @@ const PRESETS = {
   calm: {
     wave: 6, enemyCount: 2, enemies: { pluck: 4, rush: 3, stutter: 1 },
     enemyThreat: 0.15, nearestThreat: 0.9, encirclement: 0.05,
-    playerHp: 3, lives: 3, bulletCount: 0, bulletsNear: 0, bulletsVeryNear: 0,
-    timeToImpact: 1.4, killRate: 0.1, combo: 4, timeSinceHit: 40,
+    playerHp: 3, lives: 3, pressureCount: 0, threatsNear: 0, threatsVeryNear: 0,
+    timeToContact: 1.4, killRate: 0.1, combo: 4, timeSinceHit: 40,
     bossActive: false, bossPhase: 0, movement: null,
   },
   boss: {
     wave: 10, enemyCount: 4, enemies: { conductor: 1, rush: 3 },
     enemyThreat: 0.95, nearestThreat: 0.3, encirclement: 0.45,
-    playerHp: 1, lives: 1, bulletCount: 26, bulletsNear: 1, bulletsVeryNear: 0,
-    timeToImpact: 0.3, killRate: 2.0, combo: 60, timeSinceHit: 6,
+    playerHp: 1, lives: 1, pressureCount: 26, threatsNear: 1, threatsVeryNear: 0,
+    timeToContact: 0.3, killRate: 2.0, combo: 60, timeSinceHit: 6,
     bossActive: true, bossPhase: 0.7, bossHp: 0.5, bossPhases: 3, movement: 'elite',
   },
 };

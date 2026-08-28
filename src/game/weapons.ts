@@ -1135,9 +1135,32 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     label: 'EMBER',
     shape: 'seek',
     weight: 1.0,
-    blurb: '9 dmg x2 · each hit sets 1 burn stack, 7/s for 3s, up to 3 stacks. Coals thrown at whatever is nearest.',
+    blurb: '9 dmg x2, burns through · each hit sets 1 burn stack, 7/s for 3s, up to 3 stacks.',
     character: 'aggressive — coals spat, dry and crackling',
-    base: stats({ interval: 0.5, count: 2, damage: 9, speed: 900, range: 620 }),
+    /*
+     * `pierce: 3`, and it is a density fix rather than a buff.
+     *
+     * The three openers were within a few percent of each other while the
+     * field held about a dozen bodies. Contact-damage-only tripled that —
+     * on-screen p90 went 12 to 37 — and the three stopped being comparable,
+     * because two of them scale with a crowd and this one did not. LANCE puts
+     * its damage through everything on a 420px line and TIMPANI carries a
+     * 200px blast, so both got roughly three times better for free; EMBER
+     * threw two single-target bolts before and after, and `openers` correctly
+     * called it a trap at 70% against its own 70% floor.
+     *
+     * Piercing is the right answer rather than more damage or more bolts:
+     * every other opener's crowd scaling comes from ONE hit reaching many
+     * bodies, so matching that keeps the three comparable at any density
+     * instead of re-tuning them against one. It is also what a thrown coal
+     * should do — it does not stop at the first thing it sets alight — and it
+     * means the burn STACK, which is the weapon's actual identity, now lands
+     * on a line of enemies rather than on one.
+     *
+     * Measured: 70% -> see the commit. The `steps` ladder is untouched, so the
+     * fix is at level 1 where the gate reads it.
+     */
+    base: stats({ interval: 0.5, count: 2, damage: 9, speed: 900, range: 620, pierce: 3 }),
     props: { burn: 7, burnStack: 1 },
     steps: [
       {

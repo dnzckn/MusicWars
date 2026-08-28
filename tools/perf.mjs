@@ -20,7 +20,7 @@ const measure = async (label, setup) => {
       requestAnimationFrame(tick);
     });
     return { fps: +(frames / ((performance.now() - t0) / 1000)).toFixed(1),
-             bullets: mw.world.snapshot.bulletCount, enemies: mw.world.snapshot.enemyCount };
+             bullets: mw.world.snapshot.pressureCount, enemies: mw.world.snapshot.enemyCount };
   });
   console.log(`${label.padEnd(28)} fps=${String(r.fps).padStart(5)}  bullets=${r.bullets} enemies=${r.enemies}`);
   return r.fps;
