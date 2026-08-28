@@ -39,6 +39,8 @@ export interface InputState {
   banish: number;
   reroll: boolean;
   skip: boolean;
+  /** Edge-triggered: show the banked level-up offers. */
+  openOffers: boolean;
 }
 
 const MOVE_KEYS: Record<string, [number, number]> = {
@@ -66,6 +68,8 @@ const CHOICE_KEYS: Record<string, number> = {
 };
 const REROLL_KEYS = new Set(['KeyR']);
 const SKIP_KEYS = new Set(['KeyQ']);
+/* Space asks for the level-ups banked so far. See `World.update`'s openOffers. */
+const OPEN_OFFER_KEYS = new Set(['Space']);
 const BOMB_KEYS = new Set(['KeyX', 'KeyK']);
 const WELL_KEYS = new Set(['KeyC', 'KeyI']);
 const FOCUS_KEYS = new Set(['ShiftLeft', 'ShiftRight', 'KeyL']);
@@ -177,6 +181,7 @@ export class Input {
     banish: -1,
     reroll: false,
     skip: false,
+    openOffers: false,
   };
 
   /** Set by the HUD when a card is clicked or tapped; drained by `sample()`. */
@@ -281,6 +286,7 @@ export class Input {
     let banish = this.pointerBanish;
     let reroll = this.pointerReroll;
     let skip = this.pointerSkip;
+    let openOffers = false;
     this.pointerChoice = -1;
     this.pointerBanish = -1;
     this.pointerReroll = false;
@@ -310,6 +316,7 @@ export class Input {
       }
       if (REROLL_KEYS.has(code)) reroll = true;
       if (SKIP_KEYS.has(code)) skip = true;
+      if (OPEN_OFFER_KEYS.has(code)) openOffers = true;
     }
     this.pressed.clear();
 
@@ -371,6 +378,7 @@ export class Input {
     this.state.banish = banish;
     this.state.reroll = reroll;
     this.state.skip = skip;
+    this.state.openOffers = openOffers;
     return this.state;
   }
 

@@ -1227,12 +1227,36 @@ export class Renderer {
        * letters, a shard is a round notehead, and that distinction survives
        * any amount of hue collapse. `npm run colourblind` checks the rest.
        */
-      g.drawImage(this.dot(SHARD_HUES[n.tier]), n.x - 9, n.y - 9, 18, 18);
+      /*
+       * A DIAMOND, NOT A NOTEHEAD. Reported from play: "xp looks too much like
+       * enemies".
+       *
+       * It did, and the old comment below explains why while getting the
+       * conclusion wrong: it says shape carries the category and hue carries
+       * the identity, and that a shard is "a round notehead" against a drop's
+       * lettered square. That distinction works against DROPS. It does not work
+       * against ENEMIES, which are also small round coloured bodies -- and
+       * enemies are what fills the screen. The three shard hues are 150-ish
+       * mint through gold, and `glissando` is hue 150, `arpeggiator` 45. At
+       * thirty bodies a round mint dot IS an enemy until you have looked twice,
+       * and looking twice is exactly what a bullet hell does not give you.
+       *
+       * A diamond has no counterpart anywhere in the roster: every enemy body
+       * is round or a rounded polygon, every drop is an upright square with
+       * letters. It reads as "not a thing that can hurt me" at a glance and at
+       * any hue, which is the property the round version never had.
+       *
+       * The mint core stays, so a shard is still a shard at close range.
+       */
+      const s = 7.5;
+      g.save();
+      g.translate(n.x, n.y);
+      g.rotate(Math.PI / 4);
+      g.drawImage(this.dot(SHARD_HUES[n.tier]), -9, -9, 18, 18);
       g.globalAlpha = fade;
       g.fillStyle = '#b6ffd9';
-      g.beginPath();
-      g.ellipse(n.x, n.y, 3.1, 2.3, -0.36, 0, TAU);
-      g.fill();
+      g.fillRect(-s / 2, -s / 2, s, s);
+      g.restore();
     }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';

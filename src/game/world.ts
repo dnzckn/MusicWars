@@ -385,6 +385,24 @@ export interface Shard {
   alive: boolean;
   /** What it is worth. `minor` / `major` / `rare` is VS's blue / green / red. */
   tier: prog.ShardTier;
+  /*
+   * True once the shard has entered the pull radius even ONCE.
+   *
+   * Reported from play: "once xp starts to pull toward ship, should just
+   * automatically be collected after some time". It did not. The pull was
+   * re-tested every step against the CURRENT distance, so a shard that started
+   * moving toward a player who then kited away simply stopped being pulled,
+   * coasted to a halt on the drag, and expired at age 11 wherever it happened
+   * to be. Measured before this: a third to a half of all shards expired
+   * uncollected.
+   *
+   * That is the worst possible shape for a reward. The game promises the shard
+   * is yours the moment it leans toward you, and then quietly takes it back
+   * because you did the thing the game is otherwise asking you to do, which is
+   * move. Committing on first contact makes the promise true: once it starts
+   * coming, it arrives.
+   */
+  committed: boolean;
 }
 
 export class World {
@@ -1697,6 +1715,9 @@ export class World {
    * consumer treating a level as an edge, and a single object with both would
    * put the wrong field one keystroke away from the right one.
    */
+  /** Set on the step the player asks for their banked offers. See `update`. */
+  private offerEdge = false;
+  private heldOpenOffers = false;
   private readonly held = { well: false, reroll: false, banish: false };
   private readonly edge = { well: false, reroll: false, banish: false };
 
@@ -1713,6 +1734,24 @@ export class World {
       banish?: number;
       reroll?: boolean;
       skip?: boolean;
+      /*
+       * "Show me the level-ups I have banked." Space, in the shipping game.
+       *
+       * OPTIONAL, AND `undefined` MEANS THE OLD BEHAVIOUR ON PURPOSE. `World`
+       * is driven by roughly forty headless tools, every one of which builds
+       * its own input literal and answers offers through `choice`. If banked
+       * offers only ever opened on an explicit request, all forty would sit at
+       * level 1 for twenty simulated minutes and every balance number in the
+       * repo would quietly become meaningless.
+       *
+       * So: a caller that does not know about this field gets offers opened for
+       * it on the bar line, exactly as before, and `main.ts` — which does know
+       * — always passes a boolean and therefore always gets the banked
+       * behaviour. The distinction is "did the caller opt in", not "is the flag
+       * true", which is why the check below is `=== undefined` rather than a
+       * truthiness test.
+       */
+      openOffers?: boolean;
     },
   ): void {
     if (this.frozen) return;
@@ -1753,6 +1792,9 @@ export class World {
     this.held.well = input.well === true;
     this.edge.reroll = input.reroll === true && !this.held.reroll;
     this.held.reroll = input.reroll === true;
+    // Same latch as the rest: a held key must open one offer, not one per step.
+    this.offerEdge = input.openOffers === true && !this.heldOpenOffers;
+    this.heldOpenOffers = input.openOffers === true;
     const banishing = input.banish !== undefined && input.banish >= 0;
     this.edge.banish = banishing && !this.held.banish;
     this.held.banish = banishing;
@@ -1823,7 +1865,23 @@ export class World {
      * every 1.875 seconds while the player was reading their cards. The guard
      * now lives at the top of `openOfferNow`; see the note there.
      */
-    if (this.phase !== 'over' && this.transport.crossedBar()) this.openOfferNow();
+    /*
+     * BANKED, NOT INTERRUPTING. Reported from play: "level up screen pops up
+     * too often, space bar to pull up level ups that happened over time so user
+     * can select all at once".
+     *
+     * `pending` was already a queue rather than a boolean — progression.ts says
+     * so in as many words — but the world drained it on the next bar line every
+     * time, so a run that levelled three times in ten seconds stopped the game
+     * three times. The queue existed and nothing was allowed to sit in it.
+     *
+     * Now it sits until asked for. `openOffers` is the request; the HUD shows
+     * how many are waiting. A caller that predates the field (every tool in
+     * tools/) is opted out and keeps the bar-line behaviour, see the field's
+     * own note.
+     */
+    const wants = input.openOffers === undefined ? this.transport.crossedBar() : this.offerEdge;
+    if (this.phase !== 'over' && wants) this.openOfferNow();
     this.applyOfferInput(input);
     if (prog.isChoosing(this.progression)) {
       /*
@@ -3003,11 +3061,24 @@ export class World {
       const dy = this.player.y - n.y;
       const d2 = dx * dx + dy * dy;
 
-      if (n.age > 0.28 && d2 < pullSq && !this.player.dead) {
-        const d = Math.sqrt(d2) || 1;
-        const pull = magnet ? 2600 : 1500;
-        n.vx += (dx / d) * pull * dt;
-        n.vy += (dy / d) * pull * dt;
+      /*
+       * COMMITTED ON FIRST CONTACT, and then it is chasing you rather than
+       * being pulled. See `Shard.committed`.
+       *
+       * The pull no longer re-tests the range every step; it tests it once, and
+       * from then on the shard homes regardless of how far the player has gone.
+       * A committed shard also accelerates harder, because it may now have to
+       * cross ground the player has already left, and it never expires -- the
+       * age check below skips it.
+       */
+      if (n.age > 0.28 && !this.player.dead) {
+        if (!n.committed && d2 < pullSq) n.committed = true;
+        if (n.committed) {
+          const d = Math.sqrt(d2) || 1;
+          const pull = (magnet ? 2600 : 1500) * 1.35;
+          n.vx += (dx / d) * pull * dt;
+          n.vy += (dy / d) * pull * dt;
+        }
       }
       const drag = Math.max(0, 1 - dt * (n.age > 0.28 ? 1.6 : 4.4));
       n.vx *= drag;
@@ -3062,7 +3133,8 @@ export class World {
         this.bus.emit('shard:collect', { tier: n.tier, combo: this.combo });
         n.alive = false;
       }
-      if (n.age > 11) n.alive = false;
+      // A committed shard is already on its way and is never taken back.
+      if (n.age > 11 && !n.committed) n.alive = false;
       if (!n.alive) this.notes.splice(i, 1);
     }
 
@@ -3102,7 +3174,7 @@ export class World {
       for (let i = 0; i < n; i++) {
         const a = this.rng.range(0, TAU);
         const sp = this.rng.range(90, 250);
-        this.notes.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, age: 0, alive: true, tier });
+        this.notes.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, age: 0, alive: true, tier, committed: false });
       }
     };
     push('rare', split.rare);
@@ -7811,6 +7883,15 @@ export class World {
     s.level = this.progression.level;
     s.xp = this.progression.xp;
     s.xpToNext = prog.xpToNext(this.progression.level);
+    /*
+     * How many level-ups are waiting to be spent.
+     *
+     * Published because banking them made it possible to have some and not
+     * know: the offer no longer interrupts, so the ONLY thing telling a player
+     * they are three levels behind is the HUD. A banked reward nobody can see
+     * is worse than one that interrupts.
+     */
+    s.pendingOffers = this.progression.pending;
     prog.writeAbilityLevels(this.progression, s.abilities as Record<string, number>);
     s.instrumentSlots = this.progression.instrumentSlots;
     s.rigSlots = this.progression.rigSlots;

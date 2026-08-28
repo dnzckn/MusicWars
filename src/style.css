@@ -1567,3 +1567,21 @@ kbd {
     background: rgba(53, 230, 255, .06);
   }
 }
+
+/*
+ * The banked-level-up prompt on the XP line.
+ *
+ * Loud on purpose. Offers no longer interrupt play, so this is the only signal
+ * that rewards are waiting, and a quiet one would make banking a trap for a
+ * player who has not learned the key yet.
+ */
+#ui-xpnum.xp-ready {
+  color: #ffe08a;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  animation: xpready 1.1s ease-in-out infinite;
+}
+@keyframes xpready {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

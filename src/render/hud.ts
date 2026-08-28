@@ -557,7 +557,24 @@ export class Hud {
       this.els.xp.style.width = `${pct}%`;
     }
     this.set('level', this.els.level, `LV ${snap.level}`);
-    this.set('xpnum', this.els.xpnum, `${Math.floor(snap.xp)} / ${Math.round(snap.xpToNext)}`);
+    /*
+     * Banked level-ups, and the key that spends them.
+     *
+     * The offer no longer interrupts, so this line is the ONLY thing that tells
+     * a player they have rewards waiting. Without it, banking is a trap: a
+     * player who does not know about the key never levels, never gets stronger,
+     * and dies wondering why. It rides the XP line because that is where
+     * somebody already looks to ask "am I close", and it replaces the raw
+     * numbers while any are waiting so it cannot be missed.
+     */
+    if (snap.pendingOffers > 0) {
+      const n = snap.pendingOffers;
+      this.set('xpnum', this.els.xpnum, `${n} LEVEL UP${n > 1 ? 'S' : ''} — SPACE`);
+      this.els.xpnum.classList.add('xp-ready');
+    } else {
+      this.set('xpnum', this.els.xpnum, `${Math.floor(snap.xp)} / ${Math.round(snap.xpToNext)}`);
+      this.els.xpnum.classList.remove('xp-ready');
+    }
 
     const held = Object.entries(snap.abilities) as [AbilityId, number][];
     const key = `${held.map(([id, lv]) => `${id}${lv}`).join(',')}|${snap.instrumentSlots}|${snap.rigSlots}`;

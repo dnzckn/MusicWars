@@ -703,6 +703,8 @@ export interface GameSnapshot {
   /** XP banked into the current level, and what the next one costs. */
   xp: number;
   xpToNext: number;
+  /** Level-ups banked and unspent. The HUD shows these; space opens them. */
+  pendingOffers: number;
   /**
    * Everything owned, id -> level. This is the loadout, and so it is the mix.
    *
@@ -785,6 +787,7 @@ export function emptySnapshot(): GameSnapshot {
     level: 1,
     xp: 0,
     xpToNext: 6,
+    pendingOffers: 0,
     abilities: {},
     // 4, mirroring STAND_SLOTS in game/progression.ts — core cannot import it
     // without a cycle. At 3 the panel told a new player on the title screen
