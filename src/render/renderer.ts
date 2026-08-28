@@ -477,19 +477,53 @@ export class Renderer {
     // Shortest way round the colour wheel, so 8 -> 282 goes down through 0
     // rather than sweeping through every hue in between.
     let d = ((this.targetHue - this.hue + 540) % 360) - 180;
-    this.hue = (this.hue + d * Math.min(1, dt * 1.6) + 360) % 360;
+    // Frozen with everything else while the cards are up: a background sliding
+    // through the colour wheel is still the screen changing under a player who
+    // is trying to read. It resumes from wherever it stopped, so the groove's
+    // colour still arrives, just not during the fermata.
+    this.hue = w.choosing ? this.hue : (this.hue + d * Math.min(1, dt * 1.6) + 360) % 360;
 
-    // Beat pulse. `crossings` is authoritative (it is synced to the audio
-    // clock); the decay just makes it look like a light rather than a switch.
+    /*
+     * THE SCREEN HOLDS STILL WHILE THE CARDS ARE UP.
+     *
+     * Reported from play: "why does anything move while in the item selection
+     * screen". The simulation already stops dead — `World.update` sets
+     * `simDt = 0` for the whole offer, so nothing translates, and the long note
+     * there is right that a card screen the arena keeps moving underneath is a
+     * decision the game is also doing TO you.
+     *
+     * But the RENDERER never knew about the offer. It runs on real `dt`, not
+     * sim time, and it must — the transport deliberately keeps running so the
+     * music does not stop for the fermata. So while the player read four cards,
+     * the grid convulsed on every downbeat, the enemies breathed, the bloom
+     * pulsed and the horizon lifted. Nothing moved anywhere and the whole
+     * screen was still throbbing.
+     *
+     * Freezing the pulse fixes all of it at once, because `pulse` and
+     * `downbeat` are the single source every beat-driven visual reads: the
+     * grid's `breathe`, the enemy scale, the bloom alpha and the horizon all
+     * derive from these two lines. Held at zero, the field behind the cards is
+     * simply a still picture of the fight you paused.
+     *
+     * `lastBeatIndex` is still advanced, so the first beat after the cards
+     * close is not mistaken for a fresh one and does not fire a double pulse on
+     * resume — the same reason `World` pushes every scheduled lunge forward by
+     * the beats the pause cost.
+     *
+     * The MUSIC is untouched. It keeps playing through the card screen, which
+     * is the one moment in a run the player is listening to the arrangement
+     * rather than dodging, and that was always the point.
+     */
     const beatIndex = Math.floor(transport.beat);
+    const held = w.choosing;
     if (beatIndex !== this.lastBeatIndex) {
       this.lastBeatIndex = beatIndex;
       // Downbeats hit harder.
-      this.pulse = beatIndex % 4 === 0 ? 1 : 0.55;
-      this.pulseFired = true;
-      this.downbeat = beatIndex % 4 === 0;
+      this.pulse = held ? 0 : beatIndex % 4 === 0 ? 1 : 0.55;
+      this.pulseFired = !held;
+      this.downbeat = !held && beatIndex % 4 === 0;
     }
-    this.pulse = Math.max(0, this.pulse - dt * 4.2);
+    this.pulse = held ? 0 : Math.max(0, this.pulse - dt * 4.2);
 
     g.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     this.drawBackground(g, dt, tension);
@@ -741,7 +775,20 @@ export class Renderer {
      * is one of `research-camera.md` §9 Stage 7's numbers and it is inert
      * until the camera can move.
      */
-    const speed = 40 + tension * 220;
+    /*
+     * The starfield stops with everything else while the cards are up.
+     *
+     * It scrolls on real `dt` rather than on sim time, so it was the one thing
+     * still visibly drifting after the beat pulse was frozen — measured by
+     * capturing the playfield twice 750ms apart during an open offer and
+     * finding the frames differed. Particles were already correct
+     * (`particles.update(simDt)`); this was the survivor.
+     *
+     * Zeroing the speed rather than skipping the loop, so the stars are still
+     * DRAWN — the field behind the cards stays a picture of the fight rather
+     * than losing its background.
+     */
+    const speed = w.choosing ? 0 : 40 + tension * 220;
     const parX = w.camera.viewX * STAR_PARALLAX;
     const parY = w.camera.viewY * STAR_PARALLAX;
     g.fillStyle = `hsl(${this.hue + 12}, 32%, 72%)`;

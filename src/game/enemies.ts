@@ -420,7 +420,40 @@ const LEAD_SECONDS = 0.9;
  * rule it encodes is "a running ship always gains, however slowly": kiting gets
  * more expensive for the whole length of a run and never stops working.
  */
-export const SPEED_CEILING = 408;
+export const SPEED_CEILING = 340;
+/*
+ * 340, down from 408, and the old number is why you could not run away.
+ *
+ * Reported from play: "the monsters shouldnt be able to move faster than the
+ * player except for maybe elites, otherwise cant run away."
+ *
+ * They never were faster — this cap has always sat under `PLAYER_SPEED` — but
+ * 408 against 430 is a 5% margin, and a 22 px/s gain is not an escape. Ten
+ * seconds of running buys 220px on a field 3000px across and a view 1492 wide:
+ * the chaser stays on screen, stays the same size, and the player has spent ten
+ * seconds proving that fleeing does not work. The rule above says "a running
+ * ship always gains, however slowly", which was satisfied to the letter and
+ * missed the point of its own sentence.
+ *
+ * At 340 the margin is 21% and the gain is 90 px/s, so a second of running is a
+ * body length and five seconds clears half a screen. That is the difference
+ * between a rule that is technically true and one a player can feel.
+ *
+ * WHAT STAYS FAST, deliberately, because "nothing may outrun you" and "nothing
+ * may ever reach you" are different rules and only the first was asked for:
+ *
+ *   - THE LUNGE, at 860-1080. It is 0.3-0.4s long, it commits to a straight
+ *     line at the instant it fires, and it is telegraphed by a contracting ring
+ *     for half a beat first. That is the attack. A dash you can see coming and
+ *     step out of is the whole of what makes contact damage a fight rather than
+ *     a chase, and capping it to cruise speed would delete the only thing an
+ *     enemy does that the player has to answer.
+ *   - BOSSES AND RUSH, at 1000-1430. The owner's own exception: "except for
+ *     maybe elites".
+ *
+ * So the cruise is escapable and the attack is not, which is the shape every
+ * survivors-like uses.
+ */
 
 /**
  * Close to the standoff ring and hold it, drifting round.
@@ -753,7 +786,30 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     dropChance: 0.07,
     hue: 300,
     move: stutterHop,
-    speed: 330,
+    /*
+     * 215, down from 330. Reported from play: "the little pink guys are still
+     * too fast."
+     *
+     * That is this shape — hue 300, radius 10, the smallest body in the game
+     * and the only one at 330. It was ALSO the most numerous, spawning 4-7 to a
+     * group, so the thing a player meets most often was the thing they could
+     * least get away from. `spec.speed * (1 + difficulty * 0.5)` put it at 330
+     * from the very first wave, which is 77% of `PLAYER_SPEED` before any
+     * scaling at all, and it reached the 340 ceiling by about difficulty 0.03 —
+     * so lowering the global cap in the commit before this one did almost
+     * nothing for the one shape the complaint was actually about.
+     *
+     * At 215 it opens at exactly half the player's speed and needs difficulty
+     * 0.58 to reach the cap, so outrunning a swarm works from the first wave
+     * and slowly stops being free. The hop keeps its eighth-note grid, which is
+     * what puts it in the arrangement; it is the DISTANCE each hop covers that
+     * comes down, not the rhythm.
+     *
+     * It is still the fastest cruise in the roster, which is right for the
+     * hi-hat of the set. It is simply no longer faster than the thing it is
+     * chasing.
+     */
+    speed: 215,
     standoff: 0,
     /*
      * The swarm does not lunge, exactly as it did not shoot.
