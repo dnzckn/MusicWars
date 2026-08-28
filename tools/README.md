@@ -2744,3 +2744,189 @@ was deleting the crowd the player was outrunning.
 It drives `lib/bot-brain.mjs` rather than carrying a ninth copy of the movement
 policy, and uses the same seed ladder as `tools/arena.mjs` so a number that
 moves in one can be looked up in the other.
+
+## `perccheck` — is the drum programme intricate, displaced and additive?
+
+`node --experimental-transform-types tools/perccheck.mjs`
+
+The owner asked for Aphex Twin. The most identifiable mechanical property of
+that reference is the drum writing — sixteenth and thirty-second figures with
+rolls and ratchets, ghost snares between the backbeats, and grid positions that
+are deliberately a step early or late — and `percGrid` in `src/audio/layers.ts`
+is the attempt at it. Every one of those properties is a claim about ONSET
+POSITIONS, which is the class of claim this repository has been wrong about most
+often: `buildHats` chose its subdivision from a threshold and replaced every hit
+on every step of the dial (`retention`, 45% nested); `buildMotor` wrote five
+articulations and emitted one 74ms blip on all 25,340 haps (`attackfloor`); and
+`hatLayer`, `metal`, `HAT_QUARTERS`, `HAT_EIGHTHS` and `HAT_SIXTEENTHS` sat
+exported from `kit.ts` and **called from nowhere in `src/`** while the stem
+still labelled `hats` played a pitched pulse.
+
+It runs in two halves, and the split is the reason it is cheap enough to be in
+`verify-node`. `percGrid` is integer arithmetic, so the grid half sweeps the
+whole space — 5 feels x 9 modes x 8 bars x 5 intensities x 3 STUTTER counts,
+**26,400 bars**, about a second. Building a Strudel pattern and querying it is
+three orders of magnitude dearer, so the pattern half takes every seventh case,
+**3,772 bars**, and prints the coverage it achieved rather than asserting it in
+a comment.
+
+**A sampling stride is a coverage claim and this one was wrong first.** The two
+innermost loops are 5 intensities x 3 stutter counts = 15 cases and the first
+draft strided by 6; 6 and 15 share a factor, so it sampled two intensities at
+one stutter count while the comment above it claimed all of them. It was found
+by a crash — `audibleByIntensity.get(0.85)` was `undefined` — not by reading.
+The stride is 7 now and the coverage is asserted rather than commented.
+
+**And the coverage assertion moved to the top, which the fail-test is what
+found.** It was originally down with the other verdicts. Breaking the stride on
+purpose (to 15) therefore produced the *same TypeError* rather than a verdict:
+the density table is printed before the assertions and indexes an intensity the
+sweep never visited. A break that yields a stack trace instead of a FAIL line is
+a check that only works while somebody is watching, and every number in the
+report is meaningless if the sample is short — so coverage is now a precondition
+evaluated immediately after `patternCases` is built, and re-broken to confirm it
+prints `FAIL pattern sweep covers only 5/5 feels, 1/5 intensities, 1/3 stutter
+counts` and exits 1.
+
+### The measurements, as they read today
+
+```
+DENSITY (per bar; written = the grid, audible = past AUDIBLE_FLOOR)
+  intensity   written  audible hats  whole kit
+    0.10       21.36          5.53      14.87
+    0.35       22.53         12.43      21.79
+    0.60       23.07         19.83      32.14
+    0.85       23.85         20.56      35.25
+    1.00       23.78         20.55      35.29
+
+DISPLACED   bars starting a 16th late   5250/26400   19.9%
+            accent onsets off the 1/4  71265/126730  56.2%
+            accent onsets off the 1/8  48205/126730  38.0%
+RATCHETS    bars with a ratchet        24860/26400   94.2%
+            extra 32nd hits           102035
+            fill bars that roll         3300/3300
+            ghost snares                             2.25/bar
+ADDITIVE    4+4+4+4 30.3% · 3+3+3+3+4 22.8% · 4+3+3+3+3 18.5% ·
+            3+3+4+3+3 10.9% · 3+3+2+3+3+2 7.1% · 2+3+3+3+3+2 6.8% ·
+            5+3+5+3 3.1% · 3+5+3+5 0.5%
+            vocabulary by intensity: 3 · 4 · 6 · 7 · 8
+DISJOINT    hat onsets sharing an instant 0
+BELL        3018 notes, 0 outside MIDI 81-92 or off the chord
+```
+
+**The audible column found a real defect while it was being read, which is the
+argument for printing it.** With every ratchet placed on the step BEFORE an
+accent — the flam placement, and musically the right one — the calm row read
+**4.55** audible hats a bar, and the reason was that the step before an accent
+is always a bed step (no additive cell is shorter than 2, so accents are never
+adjacent). The beds ride `sig.density` and `sig.fill`; at low intensity those
+are 0, the haps fall under `AUDIBLE_FLOOR`, and **every ratchet in a calm bar
+was silent** — the single most identifiable trait in the brief, unavailable in
+exactly the passages that would show it. Alternating the candidates between the
+accent itself and the step before it takes the calm row to **5.53**. Nothing in
+the source looked wrong before or after; only the audible count could see it.
+
+**The density assertion is on the AUDIBLE column, and that choice is the whole
+value of the row.** The written count is nearly flat *by design* — all sixteen
+steps exist in every bar so that pressure ADDS hits between the ones already
+sounding rather than replacing them, which is the property `retention` exists
+to protect. Asserting on it would be a gate satisfied by construction, which
+`AGENTS.md` §3 names as the failure mode to design against. What varies is the
+beds' gain, and a hat at gain 0 is not a quiet hat: `director.applyAudibleFloor`
+drops the hap before superdough sees it. So the tool re-derives `sig.density`
+and `sig.fill` from intensity using the director's own mapping and counts what
+survives the floor — **4.55 hats a bar when the screen is empty, 20.51 when it
+is full**.
+
+Those two mappings are literals copied out of `director.ts`, and a tool holding
+its own copy of a constant lies the day it moves (`contrast.mjs`, twice). They
+cannot be imported — they are closed over inside `signal(() => ...)` in the
+`MusicDirector` constructor — so they are read back out of the source and
+compared, and the comparison is printed every run.
+
+### Fail-tested per assertion
+
+Twelve breaks, each applied with `sed`, run, and reverted by copying the file
+back. No git command was used.
+
+| break | what went red |
+|---|---|
+| unwire `percLayers` from `buildClap` | 5 assertions: 0 hat haps, 0/3772 bars, density 0.00 vs 0.00, calm bar 0.00, bell never sounded |
+| let the grid play under TIMEWARP | 12,880 hat haps where 0 are wanted |
+| pin the beds to constants | density 18.52 at 0.10 vs 20.51 at 0.85 — no response |
+| `shift = 0` | displaced-bar share 0.0% |
+| every grouping square | accents off the quarter 56.2% -> **19.9%**, vocabulary 1 of 8 |
+| no ratchets, no fill roll | 0.0% of bars, 3300 fill bars silent |
+| no ghosts | 0.00 a bar |
+| invert the vocabulary against intensity | 5 at 0.10 vs 1 at 0.85, and not monotone |
+| beds keep the accent steps | step 0 claimed twice |
+| bell folded to the motor's octave | 3018 of 3018 out of contract |
+| tool's signal ladder disagrees with `director.ts` | drift reported |
+| sampling stride divides the inner loop | first a TypeError, then — after the ordering fix — `1/5 intensities, 1/3 stutter counts` |
+
+The square-grouping row is the informative one: with every additive cell
+replaced by `4+4+4+4`, **19.9%** of accents still land off the quarter. That
+residue is the one-sixteenth displacement acting alone, and it is the same
+19.9% the DISPLACED row reports for bars — which is how you know the two
+mechanisms are separable and both live.
+
+### What the render says, paired
+
+`capture --bars=16 --stem=clap`, world seed 0x51ed, audio seed 1, before and
+after on the same day against a **soloed-stem noise floor of 0.019 dB**. The
+"before" was produced by unwiring `percLayers` from `buildClap` with an edit,
+rendering, and wiring it back with another edit — not by checking anything out.
+
+| clap soloed | before | after | delta |
+|---|---|---|---|
+| 2 kHz | -44.3 | -44.3 | **0.0** |
+| 4 kHz | -43.4 | -43.4 | **0.0** |
+| 8 kHz | -42.6 | -39.4 | **+3.2** |
+| 16 kHz | -57.0 | -48.3 | **+8.7** |
+| rms | -38.3 | -36.5 | +1.8 |
+| crest | 26.6 dB | 24.5 dB | -2.1 |
+| haps / 16 bars | 456 | 809 | +77% |
+| hap-stream sha1 | `cc4e0114c5e9` | `878b9965b0c2` | changed |
+
+**The two bands that did not move are the result, as much as the two that
+did.** `hatLayer` runs `hpf(7000..9400)` into `lpf(10500)`, so a whole drum
+programme landed in the 8k and 16k octaves and put **0.0 dB** into the 2.5-6 kHz
+fatigue band `audiocheck` gates on. That was the design and it is now measured
+rather than argued.
+
+The changed hap-stream sha1 is what proves the score reached superdough rather
+than being computed and discarded — the same evidence the bass-filter entry
+above turns on.
+
+**Integrated loudness went DOWN, -28.79 to -30.09 LUFS, and that is not a
+level drop.** The gated block count went 138/318 to 292/318: BS.1770-4 discards
+blocks below the relative gate, and this lane used to be sparse enough that more
+than half its bar was gated out. It is continuous now, so the mean is taken over
+quiet material as well as loud. RMS, which gates nothing, rose 1.8 dB over the
+same pair. Read the two together or the lane looks quieter for having gained a
+part.
+
+And the full mix, `--bars=32 --stem=all`, against `capture`'s own **1.3 dB**
+full-mix repeat-render noise floor. Read the two halves of this table
+differently: the first two rows are results, the rest are the absence of one.
+
+| full mix | before | after | delta |
+|---|---|---|---|
+| 8 kHz | -47.1 (0.2%) | -43.7 (0.5%) | **+3.4** |
+| 16 kHz | -61.6 (0.0%) | -52.8 (0.1%) | **+8.8** |
+| 31.5 / 63 / 125 Hz | -40.6 / -33.1 / -23.9 | -40.6 / -33.1 / -23.9 | 0.0 / 0.0 / 0.0 |
+| 250 / 500 / 1 kHz | -26.3 / -29.6 / -29.6 | -26.6 / -29.8 / -29.6 | -0.3 / -0.2 / 0.0 |
+| 2 kHz / 4 kHz | -35.8 / -43.1 | -35.9 / -43.0 | -0.1 / +0.1 |
+| above 2 kHz | 3.5% | 3.9% | +0.4 pts |
+| integrated | -17.77 LUFS | -17.89 LUFS | -0.12 |
+| crest | 17.0 dB | 17.5 dB | +0.5 |
+| haps / 32 bars | 1886 | 2361 | +25% |
+
+Only the 8k and 16k rows clear the noise floor. Everything else — the low end,
+the midrange, the fatigue band, loudness and crest — moved by less than a
+quarter of it, which is the useful finding: a whole drum programme was added
+and the mix it was added to did not move. The air share rose 0.4 points and no
+further, because 125 Hz and 250 Hz are two thirds of this mix's energy and a
+band-limited hat cannot shift a ratio with that denominator. **Whether it
+SOUNDS like hi-hats is unverified**; nobody has played
+`renders/APX-after-all-32.wav`.
