@@ -9,7 +9,41 @@
 
 export const FIXED_DT = 1 / 120;
 /** Never simulate more than this many steps in one frame; better to slow down than to spiral. */
-const MAX_STEPS = 8;
+/*
+ * 4, down from 8 — a cap on how much a hitch is allowed to cost the NEXT frame.
+ *
+ * `npm run jank` measures the frame-time tail rather than the median and found
+ * p99 60.5ms and max 101ms on an RTX 3080 with a locked 16.7ms median. The
+ * cause is garbage collection in the audio layer (see tools/jank.mjs), which
+ * this file cannot fix — but it can stop one pause turning into two.
+ *
+ * At 60fps a frame is two steps of FIXED_DT. A 68ms GC pause puts about eight
+ * steps of backlog in the accumulator, and at MAX_STEPS 8 the very next frame
+ * ran all of them: four times the normal simulation work, in the frame
+ * immediately after the one that was already late. The stall propagated,
+ * because the recovery frame was itself slow enough to be a dropped frame.
+ *
+ * Four caps that recovery at twice the normal load and gives up the rest —
+ * `accumulator = 0` below already exists for exactly this, and giving up is the
+ * right answer here. What is discarded is a few milliseconds of simulated time
+ * after a stutter nobody enjoyed; what is bought is that the frame after a
+ * hitch renders on schedule. A player cannot see the game advance 30ms less
+ * than it might have. They can see a second dropped frame.
+ *
+ * The 0.25s frame-delta cap above is a different guard for a different problem
+ * (returning from a background tab) and is unchanged.
+ *
+ * MEASURED, AND THE MEASUREMENT DID NOT SEPARATE IT FROM NOISE. Across four
+ * `jank` runs the tail sits in a band of 1.8-2.2% hitches and p99 60-69ms, and
+ * this change reads 1.8% and 69.0ms — inside it on both axes. So this is kept
+ * on the ARGUMENT rather than on evidence: an eight-step catch-up is four times
+ * a normal frame's simulation work scheduled immediately after a frame that was
+ * already late, and bounding that is right whether or not today's profile
+ * happens to show it. It is recorded as unproven rather than written up as a
+ * win, because the honest reading is that the real cost is elsewhere and this
+ * only stops it compounding.
+ */
+const MAX_STEPS = 4;
 
 export interface LoopHooks {
   update(dt: number): void;
