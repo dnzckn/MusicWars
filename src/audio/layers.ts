@@ -269,6 +269,26 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * tension rather than against the 0..1 the table appears to offer.
    */
   kick: { in: 0.1, full: 0.68, ceiling: 0.74, floor: 0.3 },
+  /*
+   * `clap` IS THE WHOLE KIT ABOVE THE KICK, and since `percGrid` that is more
+   * than a name.
+   *
+   * This lane carries the backbeat, the half-time snare, the ghost snares, the
+   * sixteenth hat grid, its thirty-second ratchets and the bell — everything
+   * `percLayers` returns. There is deliberately no twelfth stem (see the note
+   * on `percGrid`), so this one curve decides when all of it arrives, and
+   * `in: 0.26` is therefore also the sentence "the drum programme is not a
+   * bed": below a quarter of the way up the scale there is no hat line at all.
+   * Measured by `tools/faders.mjs` over a real run, this lane sits at zero for
+   * **24% of the time** with a mean of 0.38 — which is where the arrangement's
+   * dynamic range comes from now that its busiest part is behind this fader.
+   *
+   * The lane still LABELLED `hats` is the motor, a pitched inner voice. That
+   * has been confusing since `buildHats` was deleted and it is more confusing
+   * now that there are hi-hats again; renaming it still costs the HUD,
+   * `MOVEMENT_MIX`, `INTRO_ENTRY`, `STEM_CURVES` and a dozen tools, and still
+   * buys no music.
+   */
   clap: { in: 0.26, full: 0.68, ceiling: 0.66, floor: 0.22 },
   /*
    * The motor is the CLOCK, so it is very nearly flat.
@@ -1059,14 +1079,33 @@ export function percGrid(m: MusicalState): PercGrid {
   /*
    * Ratchets. One to three a bar, plus a roll on the fill bar.
    *
-   * They are placed on the step BEFORE an accent, which is the placement that
-   * reads as a flam into the accent rather than as a stray thirty-second. The
-   * candidate list is therefore derived from the grouping and moves with it,
-   * which is what stops the ratchets sounding like a separate fixed pattern
-   * laid over a moving one.
+   * They alternate between the ACCENT ITSELF and the step BEFORE it, and both
+   * halves of that are load-bearing.
+   *
+   * The step before an accent is the placement that reads as a flam INTO the
+   * accent rather than as a stray thirty-second, and it is where the first
+   * version put all of them. That was wrong for a reason nothing in the source
+   * shows: the step before an accent is always a bed step (no grouping cell is
+   * shorter than 2, so two accents are never adjacent), and the beds ride
+   * `sig.density` and `sig.fill`. At low intensity those are zero, the haps
+   * fall under `AUDIBLE_FLOOR`, and **every ratchet in a calm bar was
+   * silent** — the trait the whole brief is about, unavailable in exactly the
+   * passages that would show it off.
+   *
+   * So odd draws land on the accent, which always sounds. `stepStruct` applies
+   * a ratchet to whichever layer owns that step, so an accent ratchet is two
+   * thirty-seconds at the accent's own level and 46 ms decay — a buzz — while
+   * a bed ratchet stays a quiet flam. Two articulations from one mechanism.
+   *
+   * The candidate list is derived from the grouping either way, so it moves
+   * with it; that is what stops the ratchets reading as a separate fixed
+   * pattern laid over a moving one.
    */
   const ratchets: Record<number, number> = {};
-  const candidates = accents.map((a) => (a + PERC_STEPS - 1) % PERC_STEPS);
+  const candidates: number[] = [];
+  for (let i = 0; i < accents.length; i++) {
+    candidates.push(i % 2 === 0 ? accents[i] : (accents[i] + PERC_STEPS - 1) % PERC_STEPS);
+  }
   const want = Math.min(
     candidates.length,
     Math.round(m.intensity * 2.4) + Math.min(2, Math.floor(stutter / 2)),
@@ -1346,28 +1385,55 @@ function percLayers(m: MusicalState): Pattern[] {
    * decisions rather than one dial.
    *
    * Gain is squared by superdough's `setGainCurve`, so these are further apart
-   * than they look: 0.52 / 0.30 / 0.21 is 0 / -4.8 / -7.9 dB, not 0 / -4.8/2.
-   * That spread is the articulation. A hat line where every hit is the same
-   * level is a shaker.
+   * than they look: 0.82 / 0.48 / 0.34 is 0 / -4.7 / -7.7 dB, not 0 / -2.3 /
+   * -3.8. That spread is the articulation. A hat line where every hit is the
+   * same level is a shaker.
    *
    * The decays are the open/closed alternation `hatLayer`'s own comment has
    * promised since it was written and could not express until it took a decay
    * argument: the accents ring for 46 ms, the eighth bed for 22, the
    * sixteenths for 14. At 128 bpm a sixteenth is 117 ms, so nothing overlaps
    * and the difference is heard as weight rather than as smear.
+   *
+   * ---------------------------------------------------------------------
+   * 0.52 -> 0.82, and the first number was measured and found to be nothing
+   * ---------------------------------------------------------------------
+   *
+   * The grid was written at 0.52 / 0.30 / 0.21 and rendered through the real
+   * chain (`tools/capture.mjs`, 16 bars, world seed 0x51ed, this stem soloed,
+   * against a soloed-stem noise floor of 0.019 dB). It moved the stem's total
+   * RMS by **+0.2 dB** and its 8 kHz octave band by **+0.4 dB**. That is a
+   * real difference and a musically irrelevant one: in the full mix, whose own
+   * repeat-render spread is 1.3 dB, it would not have been visible at all. An
+   * entire drum programme had been added and the instrument could not see it.
+   *
+   * The arithmetic of why, because it is not obvious from the gains. This lane
+   * is white noise through `hpf(7000..9400)` and `lpf(10500)` — about 16% of
+   * the spectrum — against the backbeat's crack through 1600-6800, about 24%
+   * of it; and a hat decays in 46 ms against the crack's 95-125. Per hit that
+   * is roughly 8-9 dB before either gain is applied. Five accents a bar
+   * against two backbeats does not close a gap that size.
+   *
+   * 0.82 is +3.9 dB of energy on the accents and the beds move with it. It is
+   * deliberately near the crack's own 0.80: through a band a third as wide
+   * with a decay half as long, the same NUMBER is a hat sitting well under a
+   * snare, which is the balance being aimed at. WHAT IT SOUNDS LIKE IS
+   * UNVERIFIED — this is a level chosen from a spectrum by someone who cannot
+   * hear it, and it is the single number in this block most likely to be
+   * wrong.
    */
   out.push(
-    hatLayer(stepStruct(g.accents, g.ratchets), m.brightness, 0.52, 1, 0.046),
+    hatLayer(stepStruct(g.accents, g.ratchets), m.brightness, 0.82, 1, 0.046),
   );
   out.push(
-    hatLayer(stepStruct(g.eighths, g.ratchets), m.brightness, m.sig.density.range(0, 0.3), 0.8, 0.022)
+    hatLayer(stepStruct(g.eighths, g.ratchets), m.brightness, m.sig.density.range(0, 0.48), 0.8, 0.022)
       // Opposite the accents' 0.56. The two hat densities are separated in the
       // field rather than in the spectrum, because they are the same noise
       // source through the same filter and there is nowhere else to put them.
       .pan(0.44),
   );
   out.push(
-    hatLayer(stepStruct(g.sixteenths, g.ratchets), m.brightness, m.sig.fill.range(0, 0.21), 0.6, 0.014)
+    hatLayer(stepStruct(g.sixteenths, g.ratchets), m.brightness, m.sig.fill.range(0, 0.34), 0.6, 0.014)
       .pan(0.62),
   );
 
@@ -1380,15 +1446,30 @@ function percLayers(m: MusicalState): Pattern[] {
    * is the "later writes win" trap in AGENTS §4 and would flatten the two
    * halves into one. Velocity multiplies, so the internal balance survives.
    *
-   * `weight` 0.2 keeps `snare`'s `distort` near the bottom of its useful range
-   * — 1.38, which attenuates and softens rather than colouring. Never zero:
-   * superdough builds the waveshaper curve from this value and it collapses to
-   * silence at 0.
+   * `weight` 0.2 makes this the softest snare in the score. `snare()` maps it
+   * to `distort(1.1 + weight * 1.4)` = **1.38**, against the half-time
+   * backbeat's 2.11 and the tension snare's ~1.8. Note that 1.38 is ABOVE
+   * unity, so it is a little saturation and not the attenuation `distort`
+   * gives below ~1 — the softness of this layer comes from the velocity, not
+   * from the waveshaper. Never zero either way: superdough builds the curve
+   * from this value and it collapses to silence at 0.
    */
   if (g.ghosts.length) {
     out.push(
+      /*
+       * 0.14-0.46, and the range is arithmetic rather than taste. superdough
+       * passes velocity through the same `applyGainCurve(x => x*x)` as gain
+       * (`superdough.mjs:609`) and then multiplies, so a velocity is squared
+       * exactly like a fader is. Against the backbeat's crack at gain 0.80,
+       * this lane's crack at 0.36 sits at `(0.36/0.80)^2` = -6.9 dB before
+       * velocity; at 0.46 that becomes -13.7 dB and at 0.14 it is -24 dB. A
+       * ghost note lives 12-20 dB under the backbeat — audible as weight
+       * rather than as a hit — so the busy end lands in the band and the calm
+       * end is the fade-in below it. Read as an unsquared 0.14-0.46 this
+       * would be about twice as loud as it is.
+       */
       snare(stepStruct(g.ghosts), 0.2)
-        .velocity(m.sig.fill.range(0.1, 0.34))
+        .velocity(m.sig.fill.range(0.14, 0.46))
         .pan(0.38),
     );
   }
@@ -2717,9 +2798,42 @@ export function buildChords(m: MusicalState): Pattern {
        * there are only ever two of these, so there is less mutual beating to do
        * the work, and because the ear forgives more movement in a high colour
        * tone than in the chord's own body.
+       *
+       * ---------------------------------------------------------------------
+       * 5.9-6.4 Hz -> 0.37-0.61 Hz: this is DRIFT now, not vibrato
+       * ---------------------------------------------------------------------
+       *
+       * Same brief as `percGrid`. The reference asked for is analogue
+       * instability — tape wow, an oscillator that will not stay put — and
+       * that is a SUB-HERTZ movement. At 5.9 Hz the ear integrates the wobble
+       * into the tone's identity and hears a singer; at 0.37 Hz a note lasting
+       * two and a half seconds gets through about one cycle, so it is heard as
+       * the note itself being slightly sharp and then slightly flat. Two tones
+       * doing that at 0.37 and 0.61 Hz are never in tune with each other in
+       * the same way twice.
+       *
+       * This is the right pair of voices to spend it on and the only pair. They
+       * are the two longest and highest sustained tones in the score — a drift
+       * needs a note long enough to drift ACROSS, and nothing else here has
+       * one. The pad's three voices keep their 4.6-5.46 Hz vibrato untouched,
+       * because they are the bed and a bed that will not hold its pitch is not
+       * a bed; the argument three blocks up for per-voice rates is about them
+       * and still stands in full.
+       *
+       * Depth comes down slightly with the rate. At 5.9 Hz a 10-cent excursion
+       * is a wobble the ear tracks; at 0.4 Hz the same 10 cents is a slow
+       * detune against everything else holding, so a little less of it goes
+       * much further. Both controls are still set, always, for the reason the
+       * block above gives — `.vibmod()` alone is inert and `.vib()` alone
+       * takes a default depth of half a semitone.
+       *
+       * `tools/vibprobe.mjs` prints rate and depth per stem and has no
+       * thresholds, so this shows up there as a changed number rather than as
+       * a pass. WHAT IT SOUNDS LIKE IS UNVERIFIED: nobody has heard it, and a
+       * drift that is too slow is indistinguishable from being out of tune.
        */
-      .vib(5.9 + i * 0.5)
-      .vibmod(m.sig.openness.range(0.06, 0.1))
+      .vib(0.37 + i * 0.24)
+      .vibmod(m.sig.openness.range(0.05, 0.085))
       /*
        * Triangle, not supersaw.
        *

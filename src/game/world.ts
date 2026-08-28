@@ -71,6 +71,7 @@ import {
 } from './weapons';
 import {
   arenaSpawnPositions,
+  edgePoint,
   BOSS_EVERY,
   formationWidth,
   planWave,
@@ -1715,6 +1716,8 @@ export class World {
    * consumer treating a level as an edge, and a single object with both would
    * put the wrong field one keystroke away from the right one.
    */
+  /** Bodies moved back to the ring because the player outran them. Diagnostic. */
+  recycled = 0;
   /** Set on the step the player asks for their banked offers. See `update`. */
   private offerEdge = false;
   /*
@@ -2577,6 +2580,90 @@ export class World {
        * `CULL_MARGIN` is not retuned either: shrinking it is the same move as
        * culling against the view and would land in the same place.
        */
+      /*
+       * RECYCLE A BODY THE PLAYER HAS LEFT BEHIND, rather than letting it
+       * loiter nine hundred pixels away for the rest of the run.
+       *
+       * THE DEFECT THIS FIXES, measured. arena reported 117 enemies ALIVE
+       * against 7.7 ON SCREEN -- roughly 93% of the population outside the
+       * view. That is not a rendering curiosity, it is the difficulty curve:
+       * `hasEntered` gates the lunge on being inside the view rect, correctly,
+       * because a body nobody can see must not charge out of the dark. So
+       * ninety-three percent of the crowd was structurally unable to attack,
+       * `tickLunge` was entered 314 times in 3,600 steps where it should have
+       * been entered about five times that, and it committed ZERO charges.
+       *
+       * The cause is geometry rather than a constant. Groups arrive on a ring
+       * around the VIEW, the player then moves, and the bodies left behind are
+       * still well inside a 3000x3000 field -- so the field cull below never
+       * touches them and they simply accumulate. Every one is paying full
+       * simulation cost to be somewhere the player will never look.
+       *
+       * WHY RECYCLING RATHER THAN CULLING. `research-camera.md` §4 already ran
+       * the experiment: culling against `view ± CULL_MARGIN` raised escapes per
+       * wave from 8.58 to 13.27 AND left the screen emptier, because it deletes
+       * shapes that are alive and chasing. Vampire Survivors does the other
+       * thing, and it is the right one -- a body that falls too far behind is
+       * MOVED back to the ring, keeping its type, its health, its statuses and
+       * its level of investment. Nothing is destroyed, so nothing is escaped
+       * and the wave accounting is untouched; the crowd is simply kept where
+       * the player is.
+       *
+       * The radius is generous on purpose. It has to sit outside the spawn ring
+       * or a body would be recycled on the frame it arrives, and outside the
+       * cull-relevant band so a shape crossing the view edge is not yanked
+       * about. A diagonal and a half of the view is comfortably past both.
+       *
+       * `lungeBeat` is reset so a recycled body cannot arrive already overdue
+       * and charge the instant it appears -- the same contract the offer pause
+       * honours when it pushes every schedule forward by the beats it cost.
+       */
+      if (e.archetype !== 'conductor' && !e.leaving) {
+        const rdx = e.x - this.player.x;
+        const rdy = e.y - this.player.y;
+        /*
+         * 0.9 of the view diagonal, about 1294px.
+         *
+         * The first draft used 1.5, giving 2156px — and on a 3000x3000 field a
+         * player near the middle is at most about 2121px from the furthest
+         * corner, so the test could essentially never be true. `recycled`
+         * measured 0 across a full run: a rule that reads correctly and fires
+         * never, which is this repo's most-recorded defect and exactly why the
+         * counter was written alongside it.
+         *
+         * Swept rather than picked. The view's own half-diagonal is 718px and
+         * bodies arrive at 788 (that plus SPAWN_MARGIN), so anything at or
+         * under about 800 would recycle a shape on the frame it spawned.
+         *
+         * Swept above that, and TIGHTER IS NOT BETTER, which was not obvious
+         * until it was measured:
+         *
+         *              on-screen p90   mid-charge p90   hits taken   encircle p90
+         *   0.9 (this)     41.0             6.0            19.0          0.52
+         *   0.7            38.7             3.7             8.7          0.60
+         *
+         * 0.7 keeps the crowd nominally closer and makes the game EASIER, by
+         * a factor of two in damage taken. The mechanism is in this block: a
+         * recycled body has its `lungeBeat` reset so it cannot arrive already
+         * overdue, so every recycle also buys that body a fresh cadence before
+         * it can charge. Recycle more often and the field fills with shapes
+         * that are perpetually winding up and never landing. 0.9 recycles
+         * enough to keep the population local and seldom enough that a charge
+         * still completes.
+         */
+        const recycleAt = Math.hypot(this.viewW, this.viewH) * 0.9;
+        if (rdx * rdx + rdy * rdy > recycleAt * recycleAt) {
+          const at = edgePoint(this.rng.range(0, TAU), this.spawnRing(), SPAWN_MARGIN);
+          e.x = at.x;
+          e.y = at.y;
+          e.prevX = at.x;
+          e.prevY = at.y;
+          e.lungeBeat = -1;
+          e.lungeTime = 0;
+          this.recycled++;
+        }
+      }
+
       if (
         e.archetype !== 'conductor' &&
         (e.x < -CULL_MARGIN ||

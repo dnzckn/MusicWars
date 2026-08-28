@@ -1135,7 +1135,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     label: 'EMBER',
     shape: 'seek',
     weight: 1.0,
-    blurb: '9 dmg x2, burns through · each hit sets 1 burn stack, 7/s for 3s, up to 3 stacks.',
+    blurb: '9 dmg x2, burns through up to 5 · each hit sets 1 burn stack, 12/s for 3s, to 3 stacks.',
     character: 'aggressive — coals spat, dry and crackling',
     /*
      * `pierce: 3`, and it is a density fix rather than a buff.
@@ -1160,20 +1160,42 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
      * Measured: 70% -> see the commit. The `steps` ladder is untouched, so the
      * fix is at level 1 where the gate reads it.
      */
-    base: stats({ interval: 0.5, count: 2, damage: 9, speed: 900, range: 620, pierce: 3 }),
-    props: { burn: 7, burnStack: 1 },
+    /*
+     * pierce 5, raised again with the recycling change and for the same reason
+     * it was raised to 3: EMBER's crowd scaling is entirely "one bolt reaches
+     * many bodies", so it tracks how tightly the crowd packs. Recycling holds
+     * the population near the player, which made LANCE's 420px line and
+     * TIMPANI's blast better again while EMBER stood still -- `openers` read
+     * 83% before the change and 65% after, back under its own 70% floor.
+     */
+    base: stats({ interval: 0.5, count: 2, damage: 9, speed: 900, range: 620, pierce: 5 }),
+    /*
+     * burn 7 -> 12, and this rather than more pierce is what actually fixed it.
+     *
+     * The recycling change holds the crowd near the player, which made LANCE's
+     * 420px line and TIMPANI's 200px blast better again while EMBER stood
+     * still: `openers` went 83% -> 65%, back under its own 70% floor. Raising
+     * pierce 3 -> 5 first moved it NOT AT ALL -- still 65% -- which is the
+     * useful measurement, because it says reach was no longer the binding
+     * constraint. The gate scores WAVE REACHED, so what EMBER lacked was
+     * throughput, and its throughput is the burn rather than the bolt.
+     *
+     * 74% now. The pierce stays at 5 because a tighter crowd genuinely is more
+     * bodies per bolt, but it is the tick that carries the weapon.
+     */
+    props: { burn: 12, burnStack: 1 },
     steps: [
       {
-        note: '12 dmg x3 · burn bites 10/s a stack — three stacks on one target is 30/s for as long as it lives',
+        note: '12 dmg x3 · burn bites 17/s a stack — three stacks on one target is 51/s for as long as it lives',
         add: { count: 1 },
         mul: { damage: 1.35 },
-        prop: { burn: 10 },
+        prop: { burn: 17 },
       },
       {
         note: '17 dmg x4 · every coal now lands TWO stacks, so one hit takes a target most of the way to its cap',
         add: { count: 1 },
         mul: { damage: 1.4 },
-        prop: { burn: 14, burnStack: 2 },
+        prop: { burn: 23, burnStack: 2 },
       },
     ],
   },
