@@ -1106,10 +1106,29 @@ export function percGrid(m: MusicalState): PercGrid {
   for (let i = 0; i < accents.length; i++) {
     candidates.push(i % 2 === 0 ? accents[i] : (accents[i] + PERC_STEPS - 1) % PERC_STEPS);
   }
-  const want = Math.min(
-    candidates.length,
-    Math.round(m.intensity * 2.4) + Math.min(2, Math.floor(stutter / 2)),
-  );
+  /*
+   * RATCHET COUNT IS CAPPED, and the cap is a frame-time fix as much as a
+   * musical one.
+   *
+   * `npm run jank` measures the frame-time tail. Silencing the two percussion
+   * stems halves the dropped frames — 5.5% -> 2.7% over 33ms, 2.6% -> 1.5%
+   * visible hitches, p99 73.1 -> 59.8ms — which makes this the densest thing
+   * the 10Hz scheduler has to query and the only stem whose cost is visible in
+   * the tail at all.
+   *
+   * A ratchet is the expensive part: `[x x x]` puts three haps where one was,
+   * and the old formula grew them with BOTH intensity and the stutter count.
+   * Those are the same conditions under which the field is fullest and the
+   * frame budget is tightest, so the score was at its most expensive exactly
+   * when the game could least afford it.
+   *
+   * Capped at three slots rather than five, and the stutter term is gone. It
+   * is defensible on its own terms too: by the time intensity is high the
+   * arrangement already has ghost snares, a sixteenth grid and the bell
+   * running, and stacking five thirty-second subdivisions on top of that is
+   * where a groove stops being legible and becomes a texture.
+   */
+  const want = Math.min(candidates.length, 3, Math.round(m.intensity * 2.0));
   for (let k = 0; k < want; k++) {
     const at = candidates[(seed >>> (3 * k + 7)) % candidates.length];
     // 2 or 3: a thirty-second pair, or a sixteenth-note triplet in one slot.
@@ -1121,7 +1140,22 @@ export function percGrid(m: MusicalState): PercGrid {
      * than accelerating — the same gesture `kickRhythm`'s half-time fill uses,
      * and the one Drukqs opens bars with.
      */
-    for (let i = 12; i < PERC_STEPS; i++) ratchets[i] = 2 + ((seed >>> i) & 1);
+    /*
+     * All four slots still roll, but never as triplets.
+     *
+     * The first attempt at this cut the fill to its last two sixteenths and
+     * `perccheck` caught it immediately: "3300 fill bars did not roll". It was
+     * right — the roll is a gesture with a shape, and two slots is not that
+     * shape, it is two ratchets near the end of a bar. The gate was asserting
+     * something real rather than a threshold, so the fix moved rather than the
+     * gate.
+     *
+     * `2` instead of `2 + ((seed >>> i) & 1)` keeps every slot rolling and
+     * removes only the thirty-second TRIPLETS, which is where the hap count
+     * doubles for the least legible gain — a triplet inside a sixteenth at
+     * 138bpm is 22 events a second in one slot.
+     */
+    for (let i = 12; i < PERC_STEPS; i++) ratchets[i] = 2;
   }
 
   /*
