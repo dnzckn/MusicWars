@@ -91,6 +91,21 @@ try {
   bestScore = 0;
 }
 
+/*
+ * "Pick upgrades for me, at random." A preference, so it persists across runs.
+ *
+ * Wrapped in try/catch for the same reason `bestScore` is: localStorage throws
+ * outright in a headless context and in private-mode Safari, and a settings
+ * checkbox is not worth failing a boot over.
+ */
+const AUTOPICK_KEY = 'musicwars.autopick';
+let autoPick = false;
+try {
+  autoPick = localStorage.getItem(AUTOPICK_KEY) === '1';
+} catch {
+  autoPick = false;
+}
+
 function paintBest(): void {
   const text = bestScore.toLocaleString('en-US');
   uiBest.textContent = text;
@@ -344,6 +359,19 @@ bindTouchButton('touch-focus', () => {}, (down) => (input.touchFocus = down));
 // ---------------------------------------------------------------------------
 // volume
 // ---------------------------------------------------------------------------
+
+const autoPickBox = document.getElementById('ui-autopick') as HTMLInputElement | null;
+if (autoPickBox) {
+  autoPickBox.checked = autoPick;
+  autoPickBox.addEventListener('change', () => {
+    autoPick = autoPickBox.checked;
+    try {
+      localStorage.setItem(AUTOPICK_KEY, autoPick ? '1' : '0');
+    } catch {
+      /* Preference is still live for this run; only persistence is lost. */
+    }
+  });
+}
 
 const volumeSlider = document.getElementById('ui-volume') as HTMLInputElement;
 const muteButton = document.getElementById('ui-mute') as HTMLButtonElement;
@@ -728,6 +756,14 @@ const loop = new Loop({
      * readout here would cost more than it could possibly buy.
      */
     world.setMusicalState(lastMusical);
+    /*
+     * The auto-pick preference rides on the input rather than living in the
+     * world, for the same reason the offer request does: `World` is driven by
+     * forty headless tools and a preference is not simulation state. It is read
+     * fresh every step so toggling it mid-run takes effect immediately, which
+     * is what a settings checkbox is expected to do.
+     */
+    state.autoPick = autoPick;
     world.update(dt, state);
     director.update(world.snapshot, world.transport, dt);
   },

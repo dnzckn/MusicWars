@@ -1717,6 +1717,21 @@ export class World {
    */
   /** Set on the step the player asks for their banked offers. See `update`. */
   private offerEdge = false;
+  /*
+   * True while the player is working through the offers they asked for.
+   *
+   * Reported from play: "pressing space bar only let you pick one powerup
+   * instead of all of them." The original ask was to "pull up level ups that
+   * happened over time so user can select all at once", and one-press-one-offer
+   * is not that -- banking four levels and then pressing space four times is
+   * the same four interruptions, just moved.
+   *
+   * So the press opens a SESSION rather than an offer. While it lasts, closing
+   * one offer immediately opens the next, and it ends when the queue is empty.
+   * The player asks once and deals with the whole backlog in one sitting, which
+   * is what "all at once" means when each still needs its own choice.
+   */
+  private offerSession = false;
   private heldOpenOffers = false;
   private readonly held = { well: false, reroll: false, banish: false };
   private readonly edge = { well: false, reroll: false, banish: false };
@@ -1752,6 +1767,21 @@ export class World {
        * truthiness test.
        */
       openOffers?: boolean;
+      /*
+       * "Just pick for me." A settings toggle, off by default.
+       *
+       * The owner asked for "a toggle in settings to make selections completely
+       * random if user wants that way no menu ever needing to pull up". This is
+       * that: while it is on, a banked level resolves itself the instant it is
+       * earned and the card screen never appears at all.
+       *
+       * It deliberately does NOT go through `openOfferNow`. Opening an offer
+       * and answering it on the next step would flash the overlay for a frame
+       * and fire `level:offer`, which the HUD, the sound and `offerchurn` all
+       * key on -- the promise is "no menu ever needing to pull up", so no offer
+       * is ever emitted. See `autoPickOffer`.
+       */
+      autoPick?: boolean;
     },
   ): void {
     if (this.frozen) return;
@@ -1880,7 +1910,24 @@ export class World {
      * tools/) is opted out and keeps the bar-line behaviour, see the field's
      * own note.
      */
-    const wants = input.openOffers === undefined ? this.transport.crossedBar() : this.offerEdge;
+    /*
+     * Auto-pick drains the queue before anything else looks at it, so the rest
+     * of the offer machinery below simply never sees a pending level.
+     */
+    if (input.autoPick && this.phase !== 'over') {
+      let guard = 0;
+      while (this.progression.pending > 0 && !prog.isChoosing(this.progression) && guard++ < 8) {
+        if (!this.autoPickOffer()) break;
+      }
+    }
+    if (this.offerEdge) this.offerSession = true;
+    // The session ends when there is nothing left to spend, not when the key
+    // is released -- otherwise a tap would open one and abandon the rest.
+    if (this.progression.pending <= 0 && !prog.isChoosing(this.progression)) this.offerSession = false;
+    const wants =
+      input.openOffers === undefined
+        ? this.transport.crossedBar()
+        : this.offerEdge || (this.offerSession && this.progression.pending > 0);
     if (this.phase !== 'over' && wants) this.openOfferNow();
     this.applyOfferInput(input);
     if (prog.isChoosing(this.progression)) {
@@ -5705,6 +5752,27 @@ export class World {
   // -------------------------------------------------------------------------
 
   /** Open a queued offer. Idempotent; safe to call on every bar line. */
+  /*
+   * Resolve one banked level at random, without ever showing a card.
+   *
+   * `prog.openOffer` is still what builds the option list, because it is the
+   * only thing that knows which cards are LEGAL in the current state -- a
+   * random pick from an illegal set would hand out a maxed instrument or a rig
+   * item with no slot. What is skipped is `emitOffer` and the announcement, so
+   * the overlay never opens and `level:offer` is never fired.
+   *
+   * `chooseOffer` still runs in full, so the choice is applied exactly as a
+   * hand-picked one is and `level:choice` still fires -- the HUD updates, the
+   * sting plays, and a fusion still gets its banner. The player is told what
+   * they got; they are simply not asked.
+   */
+  private autoPickOffer(): boolean {
+    const offer = prog.openOffer(this.progression);
+    if (!offer || !offer.options.length) return false;
+    this.chooseOffer(Math.floor(this.rng.next() * offer.options.length));
+    return true;
+  }
+
   private openOfferNow(): void {
     /*
      * Do nothing if one is already open. Reported from play: "on the item
@@ -5732,8 +5800,16 @@ export class World {
      * and "you already had one" with the same value.
      */
     if (prog.isChoosing(this.progression)) return;
-    // Space out a burst. See `OFFER_MIN_GAP`.
-    if (this.time - this.lastOfferClosed < OFFER_MIN_GAP) return;
+    /*
+     * Space out a burst -- but NOT inside a session the player asked for.
+     *
+     * OFFER_MIN_GAP exists so a run that levels twice in a second does not
+     * throw two card screens at a player who wanted neither. Inside a session
+     * the player has explicitly asked for the whole backlog, so making them
+     * wait six seconds between their own choices is the gap protecting them
+     * from something they requested.
+     */
+    if (!this.offerSession && this.time - this.lastOfferClosed < OFFER_MIN_GAP) return;
     const offer = prog.openOffer(this.progression);
     if (!offer) return;
     this.emitOffer(offer);

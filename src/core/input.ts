@@ -41,6 +41,16 @@ export interface InputState {
   skip: boolean;
   /** Edge-triggered: show the banked level-up offers. */
   openOffers: boolean;
+  /*
+   * Preference, not a key: "pick upgrades for me, at random".
+   *
+   * It lives on the input state rather than in `World` because it is a setting
+   * and not simulation state, and because `World.update` already takes every
+   * other per-step intent this way. `Input` never writes it -- `main.ts` sets
+   * it from the settings checkbox each step -- so it is declared here purely so
+   * the shape the world receives is one type.
+   */
+  autoPick: boolean;
 }
 
 const MOVE_KEYS: Record<string, [number, number]> = {
@@ -182,6 +192,7 @@ export class Input {
     reroll: false,
     skip: false,
     openOffers: false,
+    autoPick: false,
   };
 
   /** Set by the HUD when a card is clicked or tapped; drained by `sample()`. */

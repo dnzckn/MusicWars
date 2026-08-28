@@ -175,10 +175,29 @@ export function snare(rhythm: Patternable, weight = 0.5): Pattern {
  * hap's length was never audible in the first place — only its onset was — and
  * this costs nothing musically.
  */
-export function hatLayer(struct: string, brightness: number, level: Patternable, velocity = 1): Pattern {
+/*
+ * `decay` was the constant `0.018` and the doc comment two blocks up has always
+ * promised that "`openness` lets a few of them ring, which is most of what
+ * separates a driving hat line from a metronome". That parameter was written
+ * for a function that no longer exists; this one had no way to express it, so
+ * every hat in the score was the same 18 ms tick. An 18 ms hat is a closed hat
+ * and a closed hat only — the open/closed alternation is the single oldest
+ * device in hi-hat writing and it was unavailable.
+ *
+ * A number rather than a signal, because the caller picks it PER LAYER: the
+ * grid's accents ring, its bed ticks, and its ratchets tick shorter still. See
+ * `percGrid` in `layers.ts`.
+ */
+export function hatLayer(
+  struct: string,
+  brightness: number,
+  level: Patternable,
+  velocity = 1,
+  decay = 0.018,
+): Pattern {
   return s('white')
     .struct(struct)
-    .ds('0.018:0')
+    .ds(`${decay.toFixed(3)}:0`)
     /*
      * The top comes down to 10.5kHz.
      *
@@ -202,8 +221,23 @@ export const HAT_EIGHTHS = '~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~';
 export const HAT_SIXTEENTHS = '~ x ~ x ~ x ~ x ~ x ~ x ~ x ~ x';
 
 
-/** Ride-ish metallic ping via FM, used to add motion without more noise. */
-export function metal(rhythm: Patternable, level = 0.2): Pattern {
+/**
+ * Ride-ish metallic ping via FM, used to add motion without more noise.
+ *
+ * `pitch` was `'c6'` and nothing else, because the only caller was a ride
+ * cymbal and a ride has no pitch anyone listens to. It is a parameter now
+ * because `percGrid` uses this as a BELL — an inharmonic chord tone on the
+ * grid — and a bell fixed at C6 against a moving harmony is a wrong note
+ * played once a bar. The default is the old value, so the ride reading is
+ * unchanged for anything that calls this with two arguments.
+ *
+ * `fmh(3.7)` is what makes it inharmonic: the modulator sits at 3.7x the
+ * carrier, which is not a member of the carrier's harmonic series, so the
+ * partials it produces are struck-metal rather than sung. That is the same
+ * mechanism as a tubular bell or a prepared piano, and it is the reason this
+ * can state a chord tone without reading as another synth lane.
+ */
+export function metal(rhythm: Patternable, level = 0.2, pitch: Patternable = 'c6'): Pattern {
   /*
    * A triangle carrier, not a square.
    *
@@ -213,7 +247,7 @@ export function metal(rhythm: Patternable, level = 0.2): Pattern {
    * carrier — with a fraction of the energy in the band the ear is most
    * sensitive to.
    */
-  return note('c6')
+  return note(pitch)
     .struct(rhythm)
     .s('triangle')
     .fm(5)

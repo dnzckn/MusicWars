@@ -23,13 +23,39 @@ import { buildChord, contourForBar, degreeToSemitone } from './theory';
 // white-noise uplifter has no equivalent in the canon this score is aiming at.
 // The function is left in `kit.ts` rather than deleted — it is a correct
 // implementation of a thing we have simply stopped wanting.
-// `HAT_EIGHTHS`, `HAT_QUARTERS`, `HAT_SIXTEENTHS`, `hatLayer` and `metal` went
-// with `buildHats` — see the tombstone where that function used to be. They are
-// the hi-hat's subdivision ladder and its noise voices, and there is no hi-hat
-// any more: the pulse moved into a pitched inner voice. They stay exported from
-// `kit.ts` rather than being deleted, for the same reason `riser` did — they are
-// correct implementations of a thing this score has stopped wanting.
-import { clap, impact, kick, ORBIT_AIR, ORBIT_HARMONY, ORBIT_LOW, snare, sub } from './kit';
+/*
+ * `hatLayer` and `metal` ARE IMPORTED AGAIN, and the reason is a brief and not
+ * a bug fix.
+ *
+ * The comment that used to sit here said "there is no hi-hat any more: the
+ * pulse moved into a pitched inner voice", and that argument — recorded at
+ * length in the `buildHats` tombstone further down — is still correct about
+ * the canon it was written against. The Game Boy has four channels and Pokemon
+ * R/B has no drum channel at all, so in that canon the pulse is always carried
+ * by something with a pitch, and a hi-hat is garnish.
+ *
+ * The owner has since asked for Aphex Twin, which is a DIFFERENT canon and
+ * inverts exactly that premise. On Selected Ambient Works and on Drukqs the
+ * drums are the lead instrument: sixteenth and thirty-second hat figures with
+ * rolls and ratchets, ghost snares between the backbeats, and grid positions
+ * that are deliberately a step early or late. That is not garnish and it
+ * cannot be played by a pitched inner voice, because half of what identifies
+ * it is that the sound has no pitch to follow.
+ *
+ * So the hi-hat comes back, and it comes back as a DIFFERENT OBJECT. What was
+ * deleted was `s("white*div")` with `div` chosen from an intensity threshold —
+ * a subdivision dial. What is here now is `percGrid`: a fixed sixteenth
+ * lattice, an additive accent grouping that does not divide 16 evenly, and
+ * ratchets placed from the bar's own coordinates. The tombstone's reasoning is
+ * left in place below and amended rather than deleted, because the reasoning
+ * was never wrong — the target moved.
+ *
+ * `HAT_QUARTERS`, `HAT_EIGHTHS` and `HAT_SIXTEENTHS` stay unimported. They are
+ * the old subdivision ladder's three fixed lattices and `percGrid` computes its
+ * own step sets, so importing them would be importing the thing that was the
+ * problem.
+ */
+import { clap, hatLayer, impact, kick, metal, ORBIT_AIR, ORBIT_HARMONY, ORBIT_LOW, snare, sub } from './kit';
 import { reese, wub, wubFor } from './wobble';
 
 export type StemId =
@@ -843,7 +869,257 @@ export function clapRhythm(intensity: number, fill: boolean, feel: Feel = 'boomc
   return '~ x ~ [x ~ x]';
 }
 
-/** Hats per bar. Deliberately a ladder, not a smooth ramp — halving/doubling. */
+// ---------------------------------------------------------------------------
+// programmed percussion
+// ---------------------------------------------------------------------------
+
+/*
+ * THE SIXTEENTH GRID.
+ *
+ * This is the part of the score that is aimed at Aphex Twin, and it is aimed
+ * at four mechanical properties rather than at a mood:
+ *
+ *   1. INTRICATE PROGRAMMED PERCUSSION. Sixteenths and thirty-seconds with
+ *      ratchets, and ghost snares between the backbeats. The drums are a part,
+ *      not a click track with decoration on it.
+ *   2. RHYTHMIC DISPLACEMENT. The accent figure is an ADDITIVE GROUPING that
+ *      does not divide sixteen evenly — 3+3+3+3+4, 3+3+2+3+3+2, 5+3+5+3 — so
+ *      the bar is legible and permanently slightly wrong-footed against a kick
+ *      that is still marking beat one. On some bars the whole figure starts a
+ *      sixteenth late.
+ *   3. EXTREME DYNAMIC RANGE. Three densities, not one texture: the accents
+ *      are structural and always sound, the eighth bed rides `sig.density`
+ *      (intensity 0.18-0.50) and the sixteenth bed rides `sig.fill`
+ *      (0.58-0.82). At a calm moment this lane is five hits a bar; under
+ *      pressure it is sixteen with thirty-second ratchets on top. Those are
+ *      SIGNALS, so the change is a fade over the notes already scheduled and
+ *      not a rebuild that replaces the part — the lesson `tools/retention.mjs`
+ *      exists to enforce.
+ *   4. BELL TIMBRE. `metal` is an FM triangle with an inharmonic 3.7x
+ *      modulator, which is a struck-metal spectrum: tubular bell, prepared
+ *      piano. It states a chord tone on the grid, so the percussion carries
+ *      harmony without becoming another synth lane.
+ *
+ * WHY THIS IS IN THE `clap` STEM AND NOT A TWELFTH ONE. A new stem id costs
+ * `STEM_IDS`, `STEM_LABELS`, `STEM_CURVES`, `INTRO_ENTRY`, `MOVEMENT_MIX`,
+ * `orchestration`'s role table, the HUD, and every tool that enumerates lanes —
+ * and buys nothing, because `clap` is already the stem that means "the kit
+ * other than the kick" and its curve (`in: 0.26`) is already the statement
+ * "percussion arrives when something is happening". Hats behind the clap fader
+ * is the same fader decision a drummer makes.
+ *
+ * NOTHING HERE IS HARDCODED TO A BAR NUMBER. Every choice below is a function
+ * of state the director already publishes: the grouping and the ratchet
+ * placements come from `percSeed`, which is a hash of the bar's coordinates in
+ * the run; how many ratchets there are comes from `intensity` and from the
+ * STUTTER count, which is the archetype the README already calls "hi-hat"; and
+ * the three densities are signals read per hap.
+ */
+
+/** Steps in the percussion lattice: one bar of sixteenths. */
+const PERC_STEPS = 16;
+
+/*
+ * The additive groupings. Every one sums to sixteen and only the first divides
+ * it evenly.
+ *
+ * This is the whole of trait 2 in one table. `[4,4,4,4]` is the square anchor
+ * and is what plays when the stage is calm, so the ear has something to be
+ * wrong-footed AGAINST — a bar that is always odd is not displaced, it is just
+ * a different meter. The rest are the standard additive cells: `[3,3,3,3,4]` is
+ * the tresillo run with a long tail, `[3,3,2,3,3,2]` is the tresillo doubled,
+ * `[5,3,5,3]` is the wide one that lands a full eighth off the beat twice a
+ * bar.
+ *
+ * They are ordered by how far they sit from square, because `percGrid` selects
+ * from a PREFIX of this list whose length is set by intensity. That way a calm
+ * bar cannot draw `[5,3,5,3]` and the ladder is monotone: getting busier can
+ * only ever open the vocabulary, never close it.
+ */
+const PERC_GROUPINGS: readonly (readonly number[])[] = [
+  [4, 4, 4, 4],
+  [3, 3, 3, 3, 4],
+  [4, 3, 3, 3, 3],
+  [3, 3, 4, 3, 3],
+  [3, 3, 2, 3, 3, 2],
+  [2, 3, 3, 3, 3, 2],
+  [5, 3, 5, 3],
+  [3, 5, 3, 5],
+];
+
+/**
+ * A deterministic 32-bit hash of where this bar sits in the run.
+ *
+ * NOT `Math.random`. Two reasons, and the second is the one that matters: the
+ * director rebuilds a phrase several times inside it (see `phraseSeedVoicing`),
+ * so a random draw would give the same bar a different drum part every time an
+ * enemy died — the exact churn `tools/phrasechurn.mjs` measured on the lead and
+ * that the intensity bucket exists to stop. A hash of `(bar, phrase, wave)` is
+ * stable across rebuilds and still different in every bar of the run.
+ *
+ * `Math.imul` throughout, because the mixing constants overflow 2^53 under
+ * ordinary multiplication and the low bits — which is what the modulos below
+ * read — would come out zero.
+ */
+function percSeed(m: MusicalState): number {
+  let h = Math.imul(m.bar + 1, 0x9e3779b1) ^ 0x85ebca6b;
+  h = Math.imul(h ^ (h >>> 15), 0xc2b2ae35);
+  h ^= Math.imul(m.phrase + 1, 0x27d4eb2f);
+  h = Math.imul(h ^ (h >>> 13), 0x165667b1);
+  h ^= Math.imul(m.wave + 1, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  return h >>> 0;
+}
+
+/** One bar of the grid, as step sets. Exported so tooling can measure it. */
+export interface PercGrid {
+  /** The additive grouping this bar used. Sums to `PERC_STEPS`. */
+  grouping: readonly number[];
+  /** Sixteenths the whole figure is displaced by: 0 or 1. */
+  shift: number;
+  /** Accent steps — the grouping, displaced. Always sound. */
+  accents: number[];
+  /** Even steps not taken by an accent. Ride `sig.density`. */
+  eighths: number[];
+  /** Odd steps not taken by an accent. Ride `sig.fill`. */
+  sixteenths: number[];
+  /** Ghost-snare steps, off the beat and off the backbeat. Ride `sig.fill`. */
+  ghosts: number[];
+  /** Step -> how many hits it splits into (2 or 3). A ratchet. */
+  ratchets: Record<number, number>;
+  /** Steps carrying the bell. The pitch is chosen in `buildClap`. */
+  bells: number[];
+}
+
+/** Render a step set as one bar of mini-notation, honouring ratchets. */
+function stepStruct(steps: readonly number[], ratchets: Record<number, number> = {}): string {
+  const slots = new Array<string>(PERC_STEPS).fill('~');
+  for (const i of steps) {
+    const n = ratchets[i] ?? 1;
+    // `[x x]` keeps the first hit exactly where the plain `x` was, so a ratchet
+    // ADDS a hit rather than moving one. Same nesting property the sub and the
+    // motor are built on, applied to the thirty-second grid.
+    slots[i] = n > 1 ? `[${new Array(n).fill('x').join(' ')}]` : 'x';
+  }
+  return slots.join(' ');
+}
+
+/**
+ * The bar's drum programme.
+ *
+ * Pure, deterministic and free of Strudel, so `tools/` can measure onset
+ * density and grid distribution without building a pattern or making a sound.
+ */
+export function percGrid(m: MusicalState): PercGrid {
+  const seed = percSeed(m);
+  const stutter = m.enemies?.stutter ?? 0;
+
+  /*
+   * How far from square this bar is allowed to be.
+   *
+   * Intensity is the quantised bucket the rebuild key already tracks
+   * (`director.intensityQ`), so this cannot change without a rebuild — which is
+   * the contract that makes the key's own comment true. STUTTER is the
+   * archetype the README describes as "hi-hat: sixteenth-note cluster, density
+   * scales with swarm size", so a swarm of them opening the grid's vocabulary
+   * is the ensemble premise applied to the one enemy that is literally this
+   * instrument.
+   */
+  const reach = Math.min(
+    PERC_GROUPINGS.length,
+    1 + Math.floor(m.intensity * 5) + Math.min(2, Math.floor(stutter / 3)),
+  );
+  const grouping = PERC_GROUPINGS[seed % reach];
+
+  /*
+   * "A figure that starts a sixteenth late", on about a quarter of bars.
+   *
+   * Deliberately 0 or 1 and never more. Two sixteenths is an eighth, which the
+   * ear re-hears as a different but still square placement; one sixteenth is
+   * heard as the same figure arriving wrong, which is the effect being aimed
+   * at. Suppressed on the fill bar because the fill is already the event.
+   */
+  const shift = !m.fillBar && (seed >>> 5) % 4 === 0 ? 1 : 0;
+
+  const accents: number[] = [];
+  for (let at = 0, g = 0; g < grouping.length; g++) {
+    accents.push((at + shift) % PERC_STEPS);
+    at += grouping[g];
+  }
+  accents.sort((a, b) => a - b);
+  const isAccent = new Set(accents);
+
+  const eighths: number[] = [];
+  const sixteenths: number[] = [];
+  for (let i = 0; i < PERC_STEPS; i++) {
+    if (isAccent.has(i)) continue;
+    (i % 2 === 0 ? eighths : sixteenths).push(i);
+  }
+
+  /*
+   * Ratchets. One to three a bar, plus a roll on the fill bar.
+   *
+   * They are placed on the step BEFORE an accent, which is the placement that
+   * reads as a flam into the accent rather than as a stray thirty-second. The
+   * candidate list is therefore derived from the grouping and moves with it,
+   * which is what stops the ratchets sounding like a separate fixed pattern
+   * laid over a moving one.
+   */
+  const ratchets: Record<number, number> = {};
+  const candidates = accents.map((a) => (a + PERC_STEPS - 1) % PERC_STEPS);
+  const want = Math.min(
+    candidates.length,
+    Math.round(m.intensity * 2.4) + Math.min(2, Math.floor(stutter / 2)),
+  );
+  for (let k = 0; k < want; k++) {
+    const at = candidates[(seed >>> (3 * k + 7)) % candidates.length];
+    // 2 or 3: a thirty-second pair, or a sixteenth-note triplet in one slot.
+    ratchets[at] = ((seed >>> (2 * k + 11)) & 1) === 0 ? 2 : 3;
+  }
+  if (m.fillBar) {
+    /*
+     * The stutter fill. The last beat of the phrase ratchets in place rather
+     * than accelerating — the same gesture `kickRhythm`'s half-time fill uses,
+     * and the one Drukqs opens bars with.
+     */
+    for (let i = 12; i < PERC_STEPS; i++) ratchets[i] = 2 + ((seed >>> i) & 1);
+  }
+
+  /*
+   * Ghost snares.
+   *
+   * The eight candidate steps are everything that is neither a beat (0 4 8 12)
+   * nor a backbeat, which is the definition of a ghost: a snare you feel
+   * between the ones you hear. Two or three of them, chosen per bar, so the
+   * backbeat stays exactly where `clapRhythm` put it and the space around it
+   * changes.
+   */
+  const ghostSlots = [2, 3, 6, 7, 10, 11, 14, 15];
+  const ghosts: number[] = [];
+  const ghostCount = 2 + ((seed >>> 17) & 1);
+  for (let k = 0; k < ghostCount; k++) {
+    const at = ghostSlots[(seed >>> (3 * k + 19)) % ghostSlots.length];
+    if (!ghosts.includes(at)) ghosts.push(at);
+  }
+  ghosts.sort((a, b) => a - b);
+
+  /*
+   * The bell, and it is deliberately rare.
+   *
+   * Two steps at most, on half the bars, on chord tones folded high. A struck
+   * inharmonic tone is the most identifiable thing in this whole block and it
+   * is also the fastest to become wallpaper; the version that plays every bar
+   * was written first and reads as a ride cymbal, which is the one thing it
+   * must not be.
+   */
+  const bells: number[] = [];
+  if (m.barInPhrase % 2 === 1 && accents.length > 1) {
+    bells.push(accents[0]);
+    if (m.intensity > 0.5) bells.push(accents[Math.floor(accents.length / 2)]);
+  }
+
+  return { grouping, shift, accents, eighths, sixteenths, ghosts, ratchets, bells };
+}
 
 // ---------------------------------------------------------------------------
 // stems
@@ -1044,7 +1320,102 @@ export function buildClap(m: MusicalState): Pattern {
   } else if (m.intensity > 0.7 && !half) {
     layers.push(snare(m.fillBar ? 'x x x [x x]' : '~ ~ ~ x', m.tension));
   }
+  if (!half) layers.push(...percLayers(m));
   return stack(...layers);
+}
+
+/**
+ * The hat grid, the ghost snares and the bell, as patterns.
+ *
+ * Split out from `buildClap` so the step arithmetic in `percGrid` stays free of
+ * Strudel and can be measured on its own — `tools/` reads the grid directly for
+ * onset density and grid distribution, and building a `Pattern` to count its
+ * onsets would be measuring the scheduler instead of the writing.
+ *
+ * Silent under TIMEWARP, which is the one state where adding hits is the wrong
+ * answer: the powerup's whole gesture is the arrangement holding its breath,
+ * `buildMotor` already collapses to a dotted-eighth displacement for it, and a
+ * thirty-second ratchet under half-time is an argument rather than a groove.
+ */
+function percLayers(m: MusicalState): Pattern[] {
+  const g = percGrid(m);
+  const out: Pattern[] = [];
+
+  /*
+   * THREE HAT LAYERS ON ONE LATTICE, and the levels are three separate
+   * decisions rather than one dial.
+   *
+   * Gain is squared by superdough's `setGainCurve`, so these are further apart
+   * than they look: 0.52 / 0.30 / 0.21 is 0 / -4.8 / -7.9 dB, not 0 / -4.8/2.
+   * That spread is the articulation. A hat line where every hit is the same
+   * level is a shaker.
+   *
+   * The decays are the open/closed alternation `hatLayer`'s own comment has
+   * promised since it was written and could not express until it took a decay
+   * argument: the accents ring for 46 ms, the eighth bed for 22, the
+   * sixteenths for 14. At 128 bpm a sixteenth is 117 ms, so nothing overlaps
+   * and the difference is heard as weight rather than as smear.
+   */
+  out.push(
+    hatLayer(stepStruct(g.accents, g.ratchets), m.brightness, 0.52, 1, 0.046),
+  );
+  out.push(
+    hatLayer(stepStruct(g.eighths, g.ratchets), m.brightness, m.sig.density.range(0, 0.3), 0.8, 0.022)
+      // Opposite the accents' 0.56. The two hat densities are separated in the
+      // field rather than in the spectrum, because they are the same noise
+      // source through the same filter and there is nowhere else to put them.
+      .pan(0.44),
+  );
+  out.push(
+    hatLayer(stepStruct(g.sixteenths, g.ratchets), m.brightness, m.sig.fill.range(0, 0.21), 0.6, 0.014)
+      .pan(0.62),
+  );
+
+  /*
+   * Ghost snares.
+   *
+   * `.velocity()` and not `.gain()`. `snare()` is a two-part construction — a
+   * band-limited noise crack at 0.36 over a tuned triangle body at 0.26 — and
+   * a `.gain()` on the outside REPLACES both of those with one number, which
+   * is the "later writes win" trap in AGENTS §4 and would flatten the two
+   * halves into one. Velocity multiplies, so the internal balance survives.
+   *
+   * `weight` 0.2 keeps `snare`'s `distort` near the bottom of its useful range
+   * — 1.38, which attenuates and softens rather than colouring. Never zero:
+   * superdough builds the waveshaper curve from this value and it collapses to
+   * silence at 0.
+   */
+  if (g.ghosts.length) {
+    out.push(
+      snare(stepStruct(g.ghosts), 0.2)
+        .velocity(m.sig.fill.range(0.1, 0.34))
+        .pan(0.38),
+    );
+  }
+
+  /*
+   * The bell, on a chord tone folded above the motor.
+   *
+   * MIDI 81-92 — above the motor's 57-69 window and above the lead's measured
+   * 57-68 doubling, so it cannot mask either. It reads as percussion because
+   * of its spectrum rather than because of its register: `fmh(3.7)` is
+   * inharmonic, so the ear files it with the struck things even though it is
+   * stating the harmony.
+   */
+  if (g.bells.length) {
+    const tone = m.chord.notes[g.bells.length > 1 ? 2 % m.chord.notes.length : 0];
+    let pitch = tone;
+    while (pitch < 81) pitch += 12;
+    while (pitch > 92) pitch -= 12;
+    out.push(
+      metal(stepStruct(g.bells), 0.2, String(pitch))
+        .velocity(m.sig.density.range(0.35, 0.85))
+        .room(0.3)
+        .pan(0.5),
+    );
+  }
+
+  return out;
 }
 
 /**
@@ -1477,6 +1848,38 @@ export function buildMotor(m: MusicalState): Pattern {
  * lands`. That rename was subsequently, deliberately rejected, so its exit
  * condition could never occur and it would have sat here forever — 130 lines of
  * working code inviting someone to wire the pulse back into the drum kit.
+ *
+ * ---------------------------------------------------------------------------
+ * AMENDMENT: there is a hi-hat again, and the argument above is not what moved
+ * ---------------------------------------------------------------------------
+ *
+ * The owner asked for Aphex Twin. That reference does the opposite of the
+ * canon this tombstone was written against — the drums ARE the lead instrument
+ * — so `percGrid` puts a sixteenth hat grid back into the `clap` stem. Read
+ * the two decisions together rather than as a reversal, because three of the
+ * four claims above survive intact and one does not:
+ *
+ *   SURVIVES: the pulse stays in `buildMotor`. Nothing here keeps time. The
+ *   grid's accent figure is an additive grouping that does not divide sixteen
+ *   evenly, which only works as displacement BECAUSE a pitched inner voice is
+ *   holding the clock underneath it. This is the thing the tombstone's own
+ *   refactor made possible.
+ *
+ *   SURVIVES: the floor does not have to be loud and there is still no
+ *   sidechain. The hats sit behind `clap`'s fader, which enters at tension
+ *   0.26 and is not a bed.
+ *
+ *   SURVIVES: the deleted function's actual defect. `s("white*div")` with
+ *   `div` chosen from an intensity threshold replaced every hit on every step
+ *   of the dial (`tools/retention.mjs`: 45% nested, the worst lane in the
+ *   mix). `percGrid` fixes the lattice at sixteen and rides `sig.density` and
+ *   `sig.fill` for the two bed layers, so pressure fades notes in over the
+ *   ones already sounding. That defect is not being re-imported.
+ *
+ *   DOES NOT SURVIVE: "the kit is garnish, which is precisely why removing it
+ *   costs nothing." True of the SNES and the Game Boy, false of the reference
+ *   the score is now aiming at, and it is the only sentence above that the new
+ *   brief actually contradicts.
  */
 
 export function buildBass(m: MusicalState): Pattern {
