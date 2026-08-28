@@ -39,7 +39,23 @@
  * world.ts and renderer.ts are clean — one `.map` and one `.filter` between
  * them, neither per-frame — so it is the audio side, where querying a Strudel
  * pattern allocates a hap per event per query. That is a scheduling change, it
- * is NOT DONE, and this gate exists so the effect is visible when it is.
+ * is PARTLY DONE. Memoising the mini-notation parser (see engine.ts) cut total
+ * sampled allocation from 9.3 MB to 3.8 MB over the same 9-second window — 59%
+ * — and the parser's own share from 25% to 5.4%. The hitch rate did NOT move:
+ * 1.8-2.2% before and after.
+ *
+ * That pair of facts is the most useful thing measured here, because it rules
+ * GC out as the dominant cause. An earlier probe already hinted at it and was
+ * over-read at the time: only 2 of 19 slow frames coincided with a heap drop.
+ * Halving allocation with no effect on the tail confirms it.
+ *
+ * WHAT IS LEFT. The scheduler is a `setInterval` at 10Hz (zyklus default 0.1s)
+ * which synchronously queries 0.15s of music across the ~5 audible stems on the
+ * MAIN THREAD. That is main-thread work arriving ten times a second, and it is
+ * the remaining candidate. It cannot be moved to a worker: engine.ts records
+ * that `sync: true` selects a SharedWorker clock whose file Vite inlines as a
+ * data: URL, which Chrome rejects. So the route is fewer or cheaper patterns
+ * per tick, not a different thread.
  *
  * ONE FIX WAS TRIED AND REVERTED. `mini()` runs a full krill PEG parse on
  * every call and `miniAllStrings()` installs it as the parser for EVERY
