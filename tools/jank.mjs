@@ -57,6 +57,30 @@
  * data: URL, which Chrome rejects. So the route is fewer or cheaper patterns
  * per tick, not a different thread.
  *
+ * THE HARNESS IS NOT THE CAUSE, which was the last alternative worth ruling
+ * out given this project's history of measuring its own instruments. A BLANK
+ * PAGE under this exact playwright setup, same flags, same sampler, reads:
+ *
+ *     p50 16.7ms   p99 18.3ms   over 33ms 0.1%   over 50ms 0.1%
+ *
+ * against the game's 1.8-2.2%. Twenty times cleaner. The defect is real and it
+ * is ours.
+ *
+ * SEVEN CANDIDATES ELIMINATED WITH NUMBERS, so nobody repeats them:
+ *   renderer          bloom costs 0.00ms on a real GPU
+ *   director rebuild  0.70ms in the slow frames, already one stem per call
+ *   mini parser       96% of its work removed, no change to the tail
+ *   GC                59% less allocation, no change to the tail
+ *   SFX               throttled to ~18/sec by CHANNEL_SPACING already
+ *   scheduler interval  overlap is fixed at 0.1s, so a smaller interval
+ *                       INCREASES total query volume rather than reducing it
+ *   the harness       a blank page is 20x cleaner
+ *
+ * What is left is the 10Hz `setInterval` querying ~5 audible stems on the main
+ * thread. About one tick in four costs a dropped frame, which is consistent
+ * with ~2.5 drops a second at 10 ticks a second. `lastRebuildMs` does not see
+ * it because the QUERY is not the REBUILD.
+ *
  * ONE FIX WAS TRIED AND REVERTED. `mini()` runs a full krill PEG parse on
  * every call and `miniAllStrings()` installs it as the parser for EVERY
  * string used as a pattern, so memoising it looks like the obvious win — the
