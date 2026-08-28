@@ -930,7 +930,34 @@ function blank(): Enemy {
  * in it teaches nothing.
  */
 export function lungeChance(difficulty: number): number {
-  return Math.min(0.75, 0.3 + difficulty * 0.45);
+  /*
+   * 0.72 -> 0.96, up from 0.30 -> 0.75, and this is a measurement rather than
+   * a taste change.
+   *
+   * The old numbers were carried over from the armed-shooter chance they
+   * replaced, where they were right: a field where every body shot at you is a
+   * bullet hell, and `armedChance` existed to keep most shapes silent. A lunge
+   * is not a volley. It is the ONLY thing an enemy does now that the player has
+   * to answer, and a body without one is scenery that happens to be solid.
+   *
+   * Measured on the shipped value, 60s at 0.1s resolution: 6,024 enemy samples,
+   * 5,243 of them with NO LUNGE SPEC AT ALL — 87%. Of a field averaging about
+   * thirty bodies, 1.2 could attack. The whole 75-second run committed FIVE
+   * lunges, which is why `tools/telegraph.mjs` reported "only 0 attacks in 75s"
+   * and could not measure its own grid, and why hits taken had collapsed to
+   * 6-16 across a twenty-minute run.
+   *
+   * Three of the twelve archetypes carry `lunge: null` deliberately and are
+   * untouched — the unarmed escorts that make an early wave readable are still
+   * the reason that field exists. The floor moves instead, so that most of
+   * what CAN dash does.
+   *
+   * Contact damage is unaffected either way: every body has always hurt on
+   * touch, and that is what the owner asked for. This is about whether anything
+   * ever comes AT you, which is a different question and the one the difficulty
+   * curve rests on now that there are no bullets.
+   */
+  return Math.min(0.96, 0.72 + difficulty * 0.24);
 }
 
 export function spawnEnemy(
