@@ -14,12 +14,32 @@
  * frame tool in this repo reports a mean or a median, and this failure mode
  * lives entirely in the top percentile.
  *
- * THE CAUSE IS KNOWN AND IS NOT THE RENDERER. `tools/rebuildrate.mjs` reports
- * the director rebuilding its patterns 10 times per 10 seconds at wave 24, for
- * 438ms of that 10 seconds — about 44ms of SYNCHRONOUS work per rebuild, on the
- * main thread, which is two to three dropped frames every time. `rebuildrate`
- * passes, because it asserts on the RATE and the rate is fine; the stall size
- * is what hurts, and it was never asserted.
+ * THE CAUSE, run down — and NOT what it first looked like.
+ *
+ * The obvious suspect was the director's pattern rebuild: `rebuildrate` reports
+ * 10 rebuilds per 10s at wave 24 for 438ms of that 10s, which reads as ~44ms of
+ * synchronous work each. It is not. `drainRebuild` already builds ONE stem per
+ * call, so that total is spread over about 110 drains. Correlating frame time
+ * against `lastRebuildMs` over 656 frames:
+ *
+ *     slow frames (>40ms, n=22)         mean rebuild 0.70ms
+ *     fast frames (<=20ms)              mean rebuild 0.49ms
+ *     largest rebuild ever seen         17ms
+ *     slow frames with a pending queue  4 of 22
+ *
+ * Rebuild work is sub-millisecond in the slow frames and they are LESS likely
+ * to be draining a queue than the fast ones. The director is exonerated.
+ *
+ * It is GARBAGE COLLECTION, driven by allocation rate:
+ *
+ *     title screen, no run   44.6 KB per frame
+ *     playing                544 KB per frame, past 1.5 MB under load
+ *                            = 30-96 MB/sec, 37 collections in 12 seconds
+ *
+ * world.ts and renderer.ts are clean — one `.map` and one `.filter` between
+ * them, neither per-frame — so it is the audio side, where querying a Strudel
+ * pattern allocates a hap per event per query. That is a scheduling change, it
+ * is NOT DONE, and this gate exists so the effect is visible when it is.
  *
  * WHAT IT ASSERTS. Not a frame rate — the tail. A run may not spend more than a
  * small share of its frames past the point a player perceives a hitch. The
