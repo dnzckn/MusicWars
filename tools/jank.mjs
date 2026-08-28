@@ -41,6 +41,26 @@
  * pattern allocates a hap per event per query. That is a scheduling change, it
  * is NOT DONE, and this gate exists so the effect is visible when it is.
  *
+ * ONE FIX WAS TRIED AND REVERTED. `mini()` runs a full krill PEG parse on
+ * every call and `miniAllStrings()` installs it as the parser for EVERY
+ * string used as a pattern, so memoising it looks like the obvious win — the
+ * score is built almost entirely from string literals and the same handful
+ * recur constantly. Wrapping `setStringParser` with a Map cache had NO
+ * EFFECT: p99 60.5 -> 67.7ms, hitches 1.8% -> 2.2%, both inside noise. The
+ * counters said why — parses 0, hits 0, size 0. The override was never
+ * invoked at all, because `setStringParser` reached through
+ * `@strudel/core/pattern.mjs` is not the same module instance `@strudel/mini`
+ * mutates once the dev bundle has resolved both. The change was reverted
+ * rather than left in place: an inert optimisation carrying a confident
+ * comment is worse than no optimisation, because the next person reads the
+ * comment and believes the problem is solved.
+ *
+ * So the parse cost is real and 25% of sampled allocation, and the route to
+ * it is NOT the public string-parser hook. Anyone retrying this should first
+ * check `miniCacheStats`-style counters BEFORE trusting a frame measurement:
+ * the frame numbers moved by less than noise and would have been read either
+ * way, while the zero counters were unambiguous.
+ *
  * WHAT IT ASSERTS. Not a frame rate — the tail. A run may not spend more than a
  * small share of its frames past the point a player perceives a hitch. The
  * thresholds are deliberately generous, because this is a floor against
