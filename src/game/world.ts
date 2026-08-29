@@ -4629,9 +4629,35 @@ export class World {
       // anything. `hurt` counts the fire, at the hit that cashes it.
     }
     if (p.freeze > 0 && !boss) {
+      /*
+       * A BODY CANNOT BE RE-FROZEN IMMEDIATELY. Reported from play: "why do
+       * enemies just freeze often, not sure if they natively stop when shot at."
+       *
+       * They do, and 5% per HIT was never the number it looked like. `sfxrate`
+       * measures 88.8 enemy hits per SECOND at wave 13, so a 5% roll is about
+       * 4.4 freezes a second landing on a field of thirty, each lasting 2.2s —
+       * a steady state of roughly ten bodies held still at any moment, and any
+       * individual body re-frozen long before it has taken a step. The design
+       * intent was "occasionally something locks up"; the delivered effect was
+       * permanent area denial, and it reads as the game being broken rather
+       * than as the player being strong.
+       *
+       * The chance is unchanged. What is added is a refractory window equal to
+       * the freeze itself, so a body that has just thawed is briefly immune.
+       * That keeps the moment-to-moment feel — things still lock up, at the
+       * same rate — while making it impossible for one enemy to spend its whole
+       * life frozen. It is the standard shape for hard crowd control and it is
+       * the one this game needed the moment hit rates went from a handful a
+       * second to ninety.
+       *
+       * Deliberately NOT a lower chance. Halving the roll would halve the
+       * number of frozen bodies and leave each of them frozen forever, which is
+       * the same defect with a smaller denominator.
+       */
       this.propChances.freeze++;
-      if (this.rng.next() < p.freeze) {
+      if (this.rng.next() < p.freeze && e.freezeLock <= 0) {
         if (PROP.freezeTime > e.freezeTime) e.freezeTime = PROP.freezeTime;
+        e.freezeLock = PROP.freezeTime * 2;
         e.status |= Status.Freeze;
         this.propFires.freeze++;
       }
@@ -5003,6 +5029,13 @@ export class World {
       this.propTicks.hold++;
       e.freezeTime -= dt;
       if (e.freezeTime <= 0) e.status &= ~Status.Freeze;
+    }
+    // Decays whether or not the body is currently frozen — the window is
+    // measured from when the freeze STARTED, so a thawed body is briefly immune
+    // and then eligible again. Outside the Freeze branch on purpose: inside it
+    // the lock would stop ticking the moment the freeze ended and never expire.
+    if (e.freezeLock > 0) {
+      e.freezeLock -= dt;
     }
     if (st & Status.Slow) {
       this.propTicks.slow++;

@@ -287,6 +287,8 @@ export interface Enemy {
   bleedDmg: number;
   /** Seconds held motionless. A frozen body also takes `PROP.freezeVuln` more. */
   freezeTime: number;
+  /** Refractory window after a freeze ends; blocks an immediate re-freeze. */
+  freezeLock: number;
   /** Seconds slowed, and the fraction of its speed that is gone. */
   slowTime: number;
   slowFactor: number;
@@ -515,10 +517,27 @@ const stutterHop: MoveFn = (e, dt, ctx) => {
     e.hopToX = e.x + ux * close - uy * side;
     e.hopToY = e.y + uy * close + ux * side;
   }
-  // Fraction through the current subdivision, eased so most of the travel
-  // happens in the first third — that snap is what makes it a hop.
+  /*
+   * Eased into the first HALF of the subdivision, not the first third.
+   *
+   * Reported from play: "why do enemies just freeze often". This is half the
+   * answer, and it is the half that applies whatever the player is holding.
+   *
+   * The cube put 70% of the travel in the first third, which reads as a snap —
+   * correctly, that is the point. But it also means that from halfway through
+   * every eighth note the body covers only the last 12% of its distance, so
+   * the most numerous enemy in the game is VISIBLY STATIONARY for half of
+   * every beat. On a shooting field that read as rhythm. Under contact damage
+   * it reads as broken, and it makes the shape less dangerous than its speed
+   * suggests, because half its time is spent not closing.
+   *
+   * Squared keeps the snap — 75% of the travel is still done by the halfway
+   * point against the cube's 87% — while the back half keeps moving instead of
+   * asymptoting. The hop still lands on the subdivision, which is what puts
+   * the beat in the movement layer.
+   */
   const frac = Math.min(1, Math.max(0, ctx.beat * 2 - step));
-  const eased = 1 - Math.pow(1 - frac, 3);
+  const eased = 1 - Math.pow(1 - frac, 2);
   e.x = e.hopFromX + (e.hopToX - e.hopFromX) * eased;
   e.y = e.hopFromY + (e.hopToY - e.hopFromY) * eased;
   void dt;
@@ -955,6 +974,7 @@ function blank(): Enemy {
     bleedTime: 0,
     bleedDmg: 0,
     freezeTime: 0,
+    freezeLock: 0,
     slowTime: 0,
     slowFactor: 0,
     blindTime: 0,
