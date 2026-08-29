@@ -1701,6 +1701,9 @@ export class World {
       height: this.height,
       difficulty: this.plan.difficulty,
       beat: this.warpedBeat,
+      // Real seconds per beat, from the live transport rather than a literal.
+      // See `EnemyContext.secPerBeat` for the defect that made this necessary.
+      secPerBeat: 1 / Math.max(0.001, this.transport.cps * BEATS_PER_BAR),
     };
   }
 
@@ -3778,7 +3781,23 @@ export class World {
      * Swept rather than guessed: 5.0 gives encirclement 0.11, 12.0 gives 0.12,
      * 22.0 gives 0.20, 32.0 gives 0.24, 40.0 gives 0.27 and clears the bar.
      */
-    const scale = 1 + this.plan.difficulty * 40.0 + Math.min(10, this.plan.escalation) * 4.5;
+    /*
+     * 7.0 and 1.6, down from 40.0 and 4.5.
+     *
+     * Reported from play: "monsters shouldnt be that tanky, some monsters take
+     * forever to die". At difficulty 1 the old line was a 41x multiplier, and
+     * `spawnEnemy` has already applied 1.85x before this runs -- so an ordinary
+     * body carried about SEVENTY-SIX times its archetype's stated hp. It got
+     * there honestly, one compensation at a time, as the player's damage grew;
+     * but the endpoint is a swarm of sponges, and a sponge is the one thing a
+     * survivors-like cannot afford, because the entire feedback loop is things
+     * dying in numbers.
+     *
+     * The trade is the genre's own: MORE BODIES, LESS HEALTH EACH. Total health
+     * on the field is roughly preserved -- what changes is that it arrives as
+     * forty things that die when hit rather than six that do not.
+     */
+    const scale = 1 + this.plan.difficulty * 7.0 + Math.min(10, this.plan.escalation) * 1.6;
     e.hp = e.maxHp = Math.max(1, Math.round(e.maxHp * scale));
     /*
      * ESCALATION BUYS CLOSING SPEED, and this is the term the difficulty gate
@@ -4014,7 +4033,35 @@ export class World {
     homeY: number;
   }): void {
     this.rollGap();
-    const bearing = this.spawnBearing(entry.formation);
+    /*
+     * BIAS THE ARRIVAL TOWARD WHERE THE PLAYER IS RUNNING.
+     *
+     * The plan named this risk before any of it was built: "contact-only damage
+     * may make the game trivial ... without bullets, kiting may beat
+     * everything." It was right, and raising the count did not answer it.
+     * Measured across three passes: on-screen population p50 7.7 -> 10.7 ->
+     * 13.7 and p90 up to 45, while hits taken over twenty minutes went 18.3 ->
+     * 1.3 -> 1.0. More bodies arriving BEHIND a running ship is more scenery.
+     *
+     * A slow enemy cannot threaten a fast one by chasing it. It can only be
+     * somewhere the ship is going. Vampire Survivors spawns on the screen edge
+     * weighted toward the direction of travel for exactly this reason, and it
+     * is what lets its crowd stay dangerous while individually being slower
+     * than the player.
+     *
+     * Two thirds weight, not all of it. A ring that only ever fills ahead is a
+     * wall to be turned away from, and turning would then always be free --
+     * the danger has to be in FRONT without the space behind being empty, so
+     * the trailing third keeps the ring closed enough that doubling back costs
+     * something. `rollGap` still carves the escape corridor on top of this, so
+     * there is always a way out to be found.
+     */
+    const speed = Math.hypot(this.player.vx, this.player.vy);
+    const heading = speed > 40 ? Math.atan2(this.player.vy, this.player.vx) : null;
+    const bearing =
+      heading !== null && this.rng.next() < 0.66
+        ? heading + this.rng.range(-0.7, 0.7)
+        : this.spawnBearing(entry.formation);
     const ring = this.spawnRing();
     const positions = arenaSpawnPositions(entry.formation, entry.count, ring, bearing, SPAWN_MARGIN);
     /*

@@ -279,7 +279,16 @@ export function planWave(index: number): WavePlan {
    * enemies live long enough to accumulate — the file's own warning that group
    * count and group size compound is why it is 1.35 and not 1.0.
    */
-  const groups = 4 + Math.floor(index / 0.9) + Math.floor(escalation * 3.4);
+  /*
+   * More groups, and smaller/weaker bodies in them.
+   *
+   * "increase the monster count by a lot ... monsters shouldnt be that tanky".
+   * Those are one change: the field's total health is roughly held while the
+   * number of things carrying it goes up, so a screen that used to be six
+   * sponges becomes thirty things that die when hit. That is the survivors
+   * shape and it is what makes a crowd readable as a crowd.
+   */
+  const groups = 9 + Math.floor(index / 0.42) + Math.floor(escalation * 6.0);
   const entries: SpawnEntry[] = [];
 
   let beat = 0;
@@ -330,7 +339,7 @@ export function planWave(index: number): WavePlan {
     // supply side of the post-3-level-ladder rebalance, deliberately modest,
     // because this file's own history is two difficulty passes that overshot by
     // tightening several hands at once.
-    const scale = 1.7 + difficulty * 3.1;
+    const scale = 3.4 + difficulty * 6.0;
     const count = Math.max(
       1,
       Math.round(

@@ -102,6 +102,19 @@ export interface EnemyContext {
   height: number;
   /** Transport position in beats, so movement can step in time. */
   beat: number;
+  /*
+   * Seconds per beat, because a mover that steps on the grid needs to know how
+   * long a subdivision actually LASTS.
+   *
+   * `stutterHop` computed its hop as `e.vy * 0.5`, reading the 0.5 as "half a
+   * beat" and getting away with it only because nothing checked. At 128bpm a
+   * beat is 0.469s, so half of one is 0.234 -- the hop was covering half a
+   * SECOND of travel in a quarter of one, and the most numerous shape in the
+   * game moved at 2.1x its own stat block. That is why it outran the player
+   * while its speed said it could not, and why it then stood still waiting for
+   * the next subdivision. One number, both complaints.
+   */
+  secPerBeat: number;
   /** Wave difficulty, roughly 0..1 over a long run. */
   difficulty: number;
 }
@@ -422,7 +435,7 @@ const LEAD_SECONDS = 0.9;
  * rule it encodes is "a running ship always gains, however slowly": kiting gets
  * more expensive for the whole length of a run and never stops working.
  */
-export const SPEED_CEILING = 340;
+export const SPEED_CEILING = 285;
 /*
  * 340, down from 408, and the old number is why you could not run away.
  *
@@ -512,7 +525,7 @@ const stutterHop: MoveFn = (e, dt, ctx) => {
      * instead of arriving in single file.
      */
     const { ux, uy, d } = toPlayer(e, ctx);
-    const close = Math.min(e.vy * 0.5, Math.max(0, d - e.standoff));
+    const close = Math.min(e.vy * ctx.secPerBeat * 0.5, Math.max(0, d - e.standoff));
     const side = Math.sin(step * 0.7 + e.homeX * 0.02) * 46;
     e.hopToX = e.x + ux * close - uy * side;
     e.hopToY = e.y + uy * close + ux * side;
