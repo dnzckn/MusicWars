@@ -1996,7 +1996,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     label: 'OSTINATO',
     shape: 'wake',
     weight: 0.9,
-    blurb: '34 dmg pools dropped behind you twice a second while you move · stand still and it stops dropping and starts striking instead.',
+    blurb: '34 dmg pools dropped behind you twice a second while you steer · let go of the stick and it stops dropping and starts striking instead.',
     character: 'eerie — a figure repeated under everything else',
     /*
      * VS Shadow Pinion: "damaging zones when moving, strikes when stopping",
@@ -2009,7 +2009,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     props: { poison: 6, poisonStack: 1 },
     steps: [
       {
-        note: 'two pools a drop, lying 60% longer · and standing still now lands two strikes instead of one',
+        note: 'two pools a drop, lying 60% longer · and coasting now lands two strikes instead of one',
         add: { count: 1 },
         mul: { linger: 1.6 },
         prop: { poison: 8 },
@@ -3981,7 +3981,7 @@ export const RIG: readonly RigDef[] = [
       { chargeSeconds: 1.5, chargeDamage: 2.6 },
     ],
     notes: [
-      'hold still a breath and the band swells — planted shots land half again as hard, and it drops when you move',
+      'coast a breath and the band swells — planted shots land half again as hard, and it drops when you steer',
       'the swell arrives sooner and climbs to double',
       'a second and a half planted and you hit for two and a half — standing your ground is the weapon now',
     ],

@@ -81,7 +81,7 @@ await p.evaluate((wave) => {
     while (pb.count < want) {
       pb.spawn({
         x: 60 + Math.random() * (w.width - 120),
-        y: 60 + Math.random() * (w.height - 120),
+        y: w.camera.viewY + 60 + Math.random() * (w.viewH - 120),
         angle: Math.random() * Math.PI * 2,
         speed: 40,
         radius: 4.5,

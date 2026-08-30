@@ -17,7 +17,12 @@ const sample = async (focus) => {
     void before;
     // Fire one volley by hand through the same path the game uses.
     w.player['fireTimer'] = 0;
-    w.player.update(1 / 120, { x: 0, y: 0, shoot: true, focus: f }, { w: w.width, h: w.height }, w.playerBullets, () => {});
+    // `Player.update` takes a world RECTANGLE now, not a `{ w, h }` field size:
+    // the travel axis is unbounded and the ship is bounded by the track
+    // window instead. `{ w, h }` would silently clamp the ship to (NaN, NaN).
+    w.player.update(1 / 120, { x: 0, y: 0, shoot: true, focus: f },
+      { x0: 12, y0: -Infinity, x1: w.width - 12, y1: w.trackBack, yHome: w.player.y },
+      w.playerBullets, () => {});
     const n = w.playerBullets.count;
     let minA = Infinity, maxA = -Infinity, dmg = 0;
     for (let i = 0; i < n; i++) { minA = Math.min(minA, w.playerBullets.angle[i]); maxA = Math.max(maxA, w.playerBullets.angle[i]); dmg = w.playerBullets.damage[i]; }

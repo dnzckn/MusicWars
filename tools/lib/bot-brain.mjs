@@ -124,33 +124,45 @@ export function makeBrain(mode) {
       my += Math.sin(out) * enc * 1.8;
     }
     /*
-     * Stay off all four walls, not just the two vertical ones: being pinned
-     * against any edge in the round means half the escape directions are gone.
+     * Stay off the walls: being pinned against an edge means half the escape
+     * directions are gone.
      *
-     * THE MARGIN IS A FRACTION OF THE FIELD, NOT 110 PIXELS.
+     * THE MARGIN IS A FRACTION OF THE FIELD, NOT 110 PIXELS. This read
+     * `if (px > w.width - 110)`, in this file and in seven verbatim copies.
+     * 110px was tuned against a 900x1120 field, where it is 12.2% of the short
+     * side. On a 3x arena it is 3.7%, and a bot that stays near the action is
+     * never inside it — the term does nothing, silently, and every balance
+     * number every tool driving this brain prints re-baselines against a
+     * player that changed at the same moment as the thing being measured.
      *
-     * This read `if (px > w.width - 110)`, in this file and in seven verbatim
-     * copies. 110px was tuned against a 900x1120 field, where it is 12.2% of
-     * the short side. On a 3x arena it is 3.7%, and a bot that stays near the
-     * action is never inside it — the term does nothing, silently. Nothing
-     * fails; every balance number every tool driving this brain prints just
-     * re-baselines, against a player that changed at the same moment as the
-     * thing being measured. That is exactly the reading a field refactor
-     * cannot afford, so the player model is pinned to a scale-invariant form
-     * BEFORE the field moves.
+     * TWO WALLS AND A WINDOW. The arena is bounded across the track and
+     * unbounded along it, so `Math.min(w.width, w.height)` is
+     * `Math.min(3000, Infinity)` and the two y terms below it broke in the
+     * loudest possible way: `py < wall` is TRUE for every step after the first
+     * second of a run and stays true forever, so this bot would have held the
+     * brake for twenty simulated minutes and every number every tool driving
+     * it prints would have been a measurement of a player pinned against the
+     * back of the frame.
      *
-     * The SHORT side, not per-axis. A per-axis margin would be 1120*110/900 =
-     * 136.9 vertically and would therefore change the bot today; this change
-     * has to be a numeric no-op at 900x1120, and `Math.min(900, 1120) *
-     * (110/900)` is exactly 110 in IEEE754 (checked, not assumed).
+     * Across the track: unchanged in form, and `w.width * (110/900)` is
+     * exactly the value the old expression produced at 3000 wide, so this half
+     * is a numeric no-op.
+     *
+     * Along it: the bound is the TRACK WINDOW, read off `World` rather than
+     * re-derived from `TRACK_AHEAD`/`TRACK_BEHIND` here — a tool holding its
+     * own copy of a constant is the failure `docs/research-camera.md` §7b
+     * catalogues, and this term is the worked example of it. The margin is
+     * 22% of the window at each end, which at the default view is 128 px, the
+     * same order as the lateral 366 relative to its own bound.
      *
      * Written the same way in all eight copies. `makeBrain` still takes no
      * imports and no closures, because `makeBrain.toString()` is what the
-     * browser path evaluates — a shared constant module would break that.
+     * browser path evaluates.
      */
-    const wall = Math.min(w.width, w.height) * (110 / 900);
+    const wall = w.width * (110 / 900);
     if (px < wall) mx += 1; if (px > w.width - wall) mx -= 1;
-    if (py < wall) my += 1; if (py > w.height - wall) my -= 1;
+    const room = (w.trackBack - w.trackFront) * 0.22;
+    if (py < w.trackFront + room) my += 1; if (py > w.trackBack - room) my -= 1;
 
     const len = Math.hypot(mx, my);
     inp.x = len > 0.05 ? mx / len : 0;

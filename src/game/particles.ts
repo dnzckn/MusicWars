@@ -20,6 +20,19 @@ export class ParticlePool {
   readonly capacity: number;
   count = 0;
 
+  /**
+   * Move every live particle along the travel axis by `dy`, forward being -y.
+   *
+   * Rides the treadmill with the rest of the world (`World.carryStage`). A
+   * spark belongs to the thing that made it, and the things that make sparks
+   * are all standing on the ground; without this an explosion would separate
+   * from its own debris at 360 px/s.
+   */
+  carry(dy: number): void {
+    const y = this.y;
+    for (let i = 0; i < this.count; i++) y[i] -= dy;
+  }
+
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly vx: Float32Array;

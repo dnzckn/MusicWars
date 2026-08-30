@@ -27,8 +27,19 @@ const r = await p.evaluate(async () => {
    * what it has always measured, so 6.7px is what it measures now.
    */
   const DRIFT_PX = 6.7;
-  const mid = w.height * 0.5;
+  /*
+   * MID-FIELD IS MID-WINDOW NOW, and it has to be re-read every tick.
+   *
+   * `w.height * 0.5` is `Infinity` — the arena is unbounded along the travel
+   * axis — so the hold below would have written `NaN` into `player.y` on its
+   * first tick and every register reading after that would have been about a
+   * ship that does not exist. The treadmill's equivalent of "hovering
+   * mid-field" is hovering in the middle of the TRACK WINDOW, which moves
+   * forward at 300 px/s, so the target is recomputed rather than captured.
+   * The drift is still 6.7 px, which is what this file has always measured.
+   */
   const hold = setInterval(() => {
+    const mid = (w.trackFront + w.trackBack) * 0.5;
     w.player.y = mid + Math.sin(performance.now() / 400) * DRIFT_PX;
   }, 16);
   const watch = setInterval(() => {

@@ -32,7 +32,7 @@
  */
 
 import { clamp, damp } from '../core/math';
-import { PLAYFIELD_H, PLAYFIELD_W, VIEW_H, VIEW_W } from './field';
+import { PLAYFIELD_W, TRACK_ANCHOR, VIEW_H, VIEW_W } from './field';
 
 /*
  * How far the aim point may drift from the centre of the view before the
@@ -50,7 +50,14 @@ import { PLAYFIELD_H, PLAYFIELD_W, VIEW_H, VIEW_W } from './field';
  * repository will ever go red because they are wrong.
  */
 const DEADZONE_X = 0.16;
-const DEADZONE_Y = 0.14;
+/*
+ * `DEADZONE_Y = 0.14` was here and is deleted with the axis it guarded. The
+ * travel axis has no deadzone because it has no follow: `viewY` is the
+ * treadmill rail, assigned from `World.trackY`. The band the ship moves in
+ * along that axis is `TRACK_AHEAD`..`TRACK_BEHIND` in `field.ts`, which is a
+ * window the player drives inside rather than a threshold the camera reacts
+ * to — 0.52 of the view deep against this constant's 0.28.
+ */
 
 /** Seconds of travel to lead the ship by, and the furthest that lead may reach. */
 const LOOKAHEAD_SECONDS = 0.38;
@@ -93,9 +100,7 @@ export class Camera {
 
   /** Last target handed to `follow`, and the smoothed velocity derived from it. */
   private lastTargetX = 0;
-  private lastTargetY = 0;
   private velX = 0;
-  private velY = 0;
   private following = false;
 
   /** Seconds of simulation freeze remaining. */
@@ -164,14 +169,38 @@ export class Camera {
    * `dt <= 0` is ignored: a paused frame has no velocity to estimate, and
    * dividing by it would put an Infinity into the view offset.
    */
-  follow(px: number, py: number, dt: number): void {
+  /**
+   * @param trackY where the top of the view sits on the TRAVEL axis, in world
+   *   space. Owned by `World` (`World.trackY`), not derived here.
+   *
+   * THE TWO AXES ARE NO LONGER THE SAME KIND OF CAMERA and that is the whole
+   * of this change. Across the track (`x`) this is still a follow camera with
+   * a deadzone, a lookahead and a clamp to the arena walls — untouched, and it
+   * is what keeps a sideways dodge from sliding the whole world. Along the
+   * track (`y`) there is nothing to follow: the treadmill is a rail the
+   * simulation owns, and the camera's job is to show it, so `viewY` is assigned
+   * rather than damped.
+   *
+   * ASSIGNED, NOT DAMPED, deliberately. A deadzone on the travel axis would
+   * mean the ship drifting up and down the frame as the camera decided whether
+   * to bother, on an axis where the player is trying to hold a position
+   * relative to the frame; and smoothing a rail that already moves at a
+   * constant velocity adds lag and removes nothing, because a constant
+   * velocity has no jerk to smooth. The rail's own motion is the smoothing.
+   *
+   * This keeps the property the previous stage established — the camera is
+   * strictly DOWNSTREAM of the simulation. `trackY` is computed in
+   * `World.update` from the player and the clock; nothing here can feed back
+   * into it. That matters because the spawn line, the population census, the
+   * bullet cull and `hasEntered` are all derived from this rectangle.
+   */
+  follow(px: number, py: number, trackY: number, dt: number): void {
     if (!(dt > 0)) return;
 
     if (!this.following) {
       // First frame: snap the estimate to the target rather than reading the
       // ship's whole starting offset as one frame of enormous velocity.
       this.lastTargetX = px;
-      this.lastTargetY = py;
       this.following = true;
       /*
        * And snap the VIEW too, or every run opens with a swoop.
@@ -187,49 +216,58 @@ export class Camera {
       this.centreOn(px, py);
     }
     const rawVx = (px - this.lastTargetX) / dt;
-    const rawVy = (py - this.lastTargetY) / dt;
     this.lastTargetX = px;
-    this.lastTargetY = py;
     this.velX = damp(this.velX, rawVx, VELOCITY_HALFLIFE, dt);
-    this.velY = damp(this.velY, rawVy, VELOCITY_HALFLIFE, dt);
 
     // Lead the ship along its own motion, so what the player is flying toward
-    // is on screen before they get there.
+    // is on screen before they get there. Across the track only: the lead along
+    // it is the track window itself, which is 40% of the view deep.
     const aimX = px + clamp(this.velX * LOOKAHEAD_SECONDS, -LOOKAHEAD_MAX, LOOKAHEAD_MAX);
-    const aimY = py + clamp(this.velY * LOOKAHEAD_SECONDS, -LOOKAHEAD_MAX, LOOKAHEAD_MAX);
 
-    // How far the aim point is outside the deadzone rectangle, which is
-    // centred on the view. Inside it, the camera does not move at all.
+    // How far the aim point is outside the deadzone, which is centred on the
+    // view. Inside it, the camera does not move at all.
     const halfX = VIEW_W * DEADZONE_X;
-    const halfY = VIEW_H * DEADZONE_Y;
     const offX = aimX - (this.viewX + VIEW_W / 2);
-    const offY = aimY - (this.viewY + VIEW_H / 2);
     const pushX = offX > halfX ? offX - halfX : offX < -halfX ? offX + halfX : 0;
-    const pushY = offY > halfY ? offY - halfY : offY < -halfY ? offY + halfY : 0;
 
     /*
-     * Clamped to the field, which is what keeps the player from ever seeing
-     * outside the arena. `Math.max(0, ...)` rather than assuming a positive
-     * range: a view WIDER than the field gives an inverted clamp, and
-     * `clamp(v, 0, negative)` would NaN out the render offset. That is not
-     * hypothetical — it is the state this function shipped in for a whole
-     * stage, and it is the state a `PLAYFIELD_*` typo would put it back in.
+     * Clamped to the field ACROSS the track, which is what keeps the player
+     * from ever seeing outside the arena. `Math.max(0, ...)` rather than
+     * assuming a positive range: a view WIDER than the field gives an inverted
+     * clamp, and `clamp(v, 0, negative)` would NaN out the render offset. That
+     * is not hypothetical — it is the state this function shipped in for a
+     * whole stage, and it is the state a `PLAYFIELD_W` typo would put it back
+     * in.
+     *
+     * ALONG the track there is no clamp, and there cannot be one: the old line
+     * read `clamp(..., 0, PLAYFIELD_H - VIEW_H)` and `PLAYFIELD_H` is
+     * `Infinity` now, so it would have been `clamp(v, 0, Infinity)` — a floor
+     * at zero that the very first second of a run drives straight through, and
+     * the treadmill would have stopped dead at the origin with nothing
+     * reporting it.
      */
     this.viewX = clamp(damp(this.viewX, this.viewX + pushX, FOLLOW_HALFLIFE, dt), 0, Math.max(0, PLAYFIELD_W - VIEW_W));
-    this.viewY = clamp(damp(this.viewY, this.viewY + pushY, FOLLOW_HALFLIFE, dt), 0, Math.max(0, PLAYFIELD_H - VIEW_H));
+    this.viewY = trackY;
     this.compose();
   }
 
   /**
-   * Put a world point in the middle of the view immediately, clamped.
+   * Put a world point where the ship BELONGS in the view, immediately.
    *
    * No damping and no deadzone: this is for discontinuities — the start of a
    * run — where smoothing is not motion, it is the camera visibly catching up
    * with something that teleported.
+   *
+   * Centred across the track and at `TRACK_ANCHOR` along it, not centred on
+   * both axes: the anchor is where the ship sits with the stick centred, so
+   * putting it anywhere else means the run opens with the ship out of position
+   * and the first thing the treadmill does is slide it back. `World.start()`
+   * seeds `trackY` from the same constant, and this call is what makes the
+   * first frame agree with it before `follow` takes over.
    */
   centreOn(px: number, py: number): void {
     this.viewX = clamp(px - VIEW_W / 2, 0, Math.max(0, PLAYFIELD_W - VIEW_W));
-    this.viewY = clamp(py - VIEW_H / 2, 0, Math.max(0, PLAYFIELD_H - VIEW_H));
+    this.viewY = py - VIEW_H * TRACK_ANCHOR;
     this.compose();
   }
 
@@ -255,7 +293,6 @@ export class Camera {
     this.viewX = 0;
     this.viewY = 0;
     this.velX = 0;
-    this.velY = 0;
     this.following = false;
     this.x = 0;
     this.y = 0;

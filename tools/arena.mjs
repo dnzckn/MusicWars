@@ -161,11 +161,20 @@ function drive(w, inp, pickCard) {
   // player that quietly changed. See tools/lib/bot-brain.mjs for the full
   // reasoning. Math.min(900, 1120) * (110/900) is exactly 110, so this is a
   // no-op at today's field size.
-  const wall = Math.min(w.width, w.height) * (110 / 900);
+  /*
+   * TWO WALLS AND A WINDOW. `w.height` is `Infinity` — the arena is bounded
+   * across the track and unbounded along it — so the two y terms this
+   * replaces were `py < 366`, which is true for every step after the first
+   * second of a run: the bot would have held the brake for the whole run. The
+   * travel axis is bounded by the TRACK WINDOW instead, read off `World` so
+   * this file does not hold its own copy of it. See tools/lib/bot-brain.mjs.
+   */
+  const wall = w.width * (110 / 900);
   if (px < wall) mx += 1;
   if (px > w.width - wall) mx -= 1;
-  if (py < wall) my += 1;
-  if (py > w.height - wall) my -= 1;
+  const room = (w.trackBack - w.trackFront) * 0.22;
+  if (py < w.trackFront + room) my += 1;
+  if (py > w.trackBack - room) my -= 1;
 
   const len = Math.hypot(mx, my);
   inp.x = len > 0.05 ? mx / len : 0;
@@ -505,7 +514,7 @@ console.log(`  fusions         ${f2(mean((r) => r.evolves))}`);
 console.log(`  time paused     ${(mean((r) => r.choosingFraction) * 100).toFixed(1)}% of the run`);
 
 /*
- * Three properties are asserted and the rest is reported.
+ * Structural properties are asserted and the rest is reported.
  *
  * The bar is deliberately low and it is deliberately about STRUCTURE rather
  * than about balance. Every threshold this repository has ever set on a
@@ -515,7 +524,134 @@ console.log(`  time paused     ${(mean((r) => r.choosingFraction) * 100).toFixed
  * balance gate written today would be a guess with an exit code.
  *
  * What CAN be asserted is that the machine turns over: things die, levels
- * arrive, and the encirclement is neither absent nor total.
+ * arrive, and the player is under pressure they can survive.
+ *
+ * ------------------------------------------------------------------------
+ * THE ENCIRCLEMENT PAIR IS GONE, AND IT IS REPLACED RATHER THAN RELAXED.
+ * `encirclement` is still SAMPLED and still PRINTED; what it no longer does is
+ * gate.
+ *
+ * It asserted `p90 > 0.25` — "the player does get surrounded" — and on a ring
+ * that was the danger signal the whole arena refactor was built around. The
+ * owner's instruction removed the ring: everything arrives inside
+ * `ARRIVAL_CONE` of the STERN, so the bearings of the crowd occupy a rear arc
+ * and the half-plane ahead of the ship is open BY DESIGN. `encirclement` is
+ * `1 - widest_gap / TAU`, so a rear-only crowd cannot exceed about 0.5 however
+ * dangerous it is, and it measures 0.24 at p90 on a build where the median
+ * on-screen population is 21.3 — twice the pre-treadmill tree's 10.7 — and the
+ * bot takes 11 hits where it used to take 2. The number went down because the
+ * game got harder in a shape this metric cannot see.
+ *
+ * That is AGENTS.md §3's distinction, and this is the side of it that has to
+ * be said out loud: the test encoded an assumption the design deliberately
+ * changed. It is not being removed because it failed.
+ *
+ * Its partner `p10 < 0.9` — "and does get out again" — goes with it for a
+ * different and worse reason: with the metric capped near 0.5 it could not have
+ * failed under any circumstances, which makes it decoration.
+ *
+ * WHAT REPLACES IT is ONE assertion, and it is one rather than three because
+ * the other two candidates were fail-tested and did not discriminate. Every
+ * column below was run; the two fail-tests are at 6 min x 2, the rest at the
+ * default:
+ *
+ *                        this build  pre-treadmill  D: cruise x4  E: no carry
+ *   on-screen p50            21.3        10.7           2.0          1.0
+ *   mid-charge p90            8.3         1.7           1.0          2.5
+ *   survived                1200s       1200s          360/360      360/360
+ *
+ * ON-SCREEN p50 IS THE ONE THAT WORKS. It is 5x its threshold on a healthy
+ * build and under it in BOTH fail-tests, and it is the column
+ * `docs/research-density.md` §6e concluded every future density figure should
+ * be denominated in.
+ *
+ * `bodies mid-charge` was written here first and is NOT asserted on, because
+ * the fail-tests say it cannot be. The argument for it was good — a lunge is
+ * the only attack an enemy has and `tickLunge` is gated on `hasEntered`, so it
+ * should read "how much of the crowd is close enough, for long enough, to
+ * threaten you" — and it is simply not sensitive enough: 1.0 and 2.5 in two
+ * broken builds against 2.0 on a healthy short run. Shipping it would have
+ * been a line that always says ok, which is the definition of decoration.
+ *
+ * `survived` is kept, and its status is stated rather than implied: it has
+ * been seen red exactly once, on the build before the stage carry existed
+ * (195s of 360), and it does not separate either fail-test above. It is a
+ * cheap backstop against a build that kills the bot in the first minute, not
+ * evidence about the geometry.
+ *
+ * THE OTHER HALF OF THE QUESTION — does what arrives behind you ever GET to
+ * you — is not answerable from a population count and has its own file.
+ * `tools/pursuit.mjs` tracks every arrival to its closest approach, with the
+ * pre-treadmill tree as a control (394px) and the stage carry removed as a
+ * measured red state (724px).
+ * ------------------------------------------------------------------------
+ *
+ * THE HISTORY OF THE PAIR, kept because it is the evidence for replacing it.
+ * Even while arrivals still came from the bow, `encP90` had stopped being able
+ * to go red.
+ *
+ * `encP90 > 0.25` was the danger gate the whole arena refactor was built
+ * around, and on a ring it discriminated: enemies arrived all round, and a
+ * geometry change that stopped closing the circle moved it. On a TREADMILL it
+ * measures something different and much harder to break. The ship flies INTO
+ * the crowd rather than being converged on by it, so for the seconds it spends
+ * crossing a group it is genuinely surrounded — and `p90` is a peak statistic,
+ * so it survives almost anything that leaves any traffic at all.
+ *
+ * Fail-tested, twice, by breaking the geometry on purpose and watching:
+ *
+ *   ARRIVAL_CONE 1.05 -> 0.001   every group arrives on ONE bearing, in
+ *                                single file up the middle of the track.
+ *                                encirclement p90 0.51. STILL GREEN.
+ *   CRUISE_SPEED 300 -> 1400     the ship outruns everything; on-screen
+ *                                population p50 11.0 -> 3.0, kills/min
+ *                                575 -> 100, level at six minutes 25.5 -> 2.5,
+ *                                and the bot dead at 195s of 360.
+ *                                encirclement p90 0.55. STILL GREEN.
+ *
+ * Re-run with the assertions below in place, fail-test D goes red on them and
+ * the encirclement pair stays green — which is the whole argument for adding
+ * them written out as an exit code.
+ *
+ * The second of those is a game that has stopped working in the most obvious
+ * possible way, and the danger gate did not notice. AGENTS.md §3: a gate that
+ * has never been seen red is not evidence.
+ *
+ * SO IT IS KEPT AND JOINED, not relaxed and not deleted. Kept because it is
+ * still TRUE and still worth knowing — a build where the player was never
+ * surrounded would fail it, and that is a real regression it can still catch.
+ * Joined by two assertions that DID move in both fail-tests, expressed as the
+ * thing a treadmill is actually supposed to guarantee: PRESSURE ARRIVES AND IS
+ * SURVIVABLE.
+ *
+ *   on-screen p50   there is a crowd around the ship at the MEDIAN, not only
+ *                   at the peak. This is the column `docs/research-density.md`
+ *                   §6e concluded every future density figure should be
+ *                   denominated in. 3.0 in fail-test D.
+ *
+ * It does not move in fail-test C, and that is correct rather than a gap: a
+ * single-file queue is still pressure. What a queue is not is a LINE ACROSS
+ * THE TRACK, and that is asserted where it can be seen — `tools/spawnring.mjs`
+ * gates the share of arrivals that come from behind the ship and their lateral
+ * spread, and both of those go red on fail-test C.
+ *
+ * A THIRD ASSERTION WAS WRITTEN HERE AND IS REMOVED, and it is removed because
+ * it was measured against a control and could not tell anything apart — not
+ * because it went red. It read "nearest threat p50 < 0.6: something is
+ * actually on you". That threshold was fitted to ONE revision of the geometry,
+ * the one where arrivals came from ahead and the ship flew into them, which
+ * pushed the number to 0.41-0.45. Run against the pre-treadmill tree at the
+ * same settings it reads 0.75, so the assertion would have failed the game it
+ * was supposed to be protecting; and in fail-test D — a ship travelling 4.7x
+ * too fast with nothing on screen — it reads 0.68, so it cannot separate a
+ * healthy build from a broken one in either direction. That is a threshold
+ * that describes a build rather than a property.
+ *
+ * The intent behind it survives and is asserted properly in
+ * `tools/pursuit.mjs`, which tracks every arrival to its closest approach and
+ * has both a control (the pre-treadmill tree, 394px) and a measured red state
+ * (the stage carry removed, 724px) behind its threshold.
+ * ------------------------------------------------------------------------
  */
 let bad = 0;
 const check = (ok, label, detail) => {
@@ -526,10 +662,17 @@ console.log('\nSTRUCTURE');
 const kpm = mean((r) => r.killsPerMin);
 check(kpm > 4, 'the player can kill things', `${f1(kpm)} kills/min`);
 check(mean((r) => r.level) > 2, 'levels arrive', `L${f1(mean((r) => r.level))} reached`);
-const encP90 = mean((r) => r.enc.p90);
-const encP10 = mean((r) => r.enc.p10);
-check(encP90 > 0.25, 'the player does get surrounded', `p90 encirclement ${f2(encP90)}`);
-check(encP10 < 0.9, 'and does get out again', `p10 encirclement ${f2(encP10)}`);
+// PRESSURE ARRIVES AND IS SURVIVABLE — what replaces the encirclement pair.
+// See the long note at the head of this block for the control, the two
+// fail-tests, and why `encirclement` is now reported rather than gated.
+const seenP50 = mean((r) => r.onScreen.p50);
+check(seenP50 >= 4, 'there is a crowd on screen, not just a peak', `${f1(seenP50)} enemies at the median`);
+const lived = mean((r) => r.elapsed);
+check(lived > 300, 'and the run survives it', `${f1(lived)}s mean, of ${MINUTES * 60}s offered`);
+console.log(
+  `  ..    encirclement p90 ${f2(mean((r) => r.enc.p90))}, bodies mid-charge p90 ${f1(mean((r) => r.lunging.p90))}` +
+    ' — REPORTED, not gated; see the note above',
+);
 
 console.log(bad === 0 ? '\nARENA HOLDS\n' : `\n${bad} STRUCTURAL FAILURE(S)\n`);
 process.exit(bad === 0 ? 0 : 1);

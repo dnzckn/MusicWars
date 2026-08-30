@@ -67,12 +67,34 @@ const strudel = await import('@strudel/core');
 // place in the repo that holds the package to its word.
 const tonal = await import('@strudel/tonal');
 const { buildChords } = await import('../src/audio/layers.ts');
-const { buildChord, voiceLead, PROGRESSIONS, degreeToSemitone } = await import(
+const { buildChord, voiceLead, PROGRESSIONS, degreeToSemitone, extensionSemitone, LANE_RANGE } = await import(
   '../src/audio/theory.ts'
 );
 
-const STAB_BOTTOM = 64;
-const STAB_TOP = 76;
+/*
+ * IMPORTED, NOT RESTATED — and the old pair of literals had made the register
+ * assertion VACUOUS, which is a worse failure than being wrong.
+ *
+ * This file used to declare `STAB_BOTTOM = 64` / `STAB_TOP = 76` and then, in
+ * section 3, SELECT the stab's notes by filtering the bar's haps to that window
+ * before asserting that every selected note was inside it. Nothing could ever
+ * fail: the filter and the assertion were the same comparison. That is exactly
+ * the "a ready row has away: 0 and every aim has at least 1" shape AGENTS.md
+ * §3 records as the archetypal dead assertion.
+ *
+ * Two changes, and both make the check stronger. The window comes from
+ * `theory.LANE_RANGE.stab`, which is the table the builder folds to — so the
+ * two cannot disagree, and moving the window moves the assertion with it. And
+ * the stab is selected by TIMBRE rather than by register: it is the only voice
+ * in this lane that is a `pulse` at 25% duty (`pw(0.5)`), the pad being
+ * `pw(0)` and the colour tones a triangle. The old comment argued that
+ * selecting by register "keeps this tool from holding a copy of the timbre",
+ * which is true and which cost the entire assertion.
+ */
+const STAB_BOTTOM = LANE_RANGE.stab.lo;
+const STAB_TOP = LANE_RANGE.stab.hi;
+/** The stab's voice group: a 25%-duty pulse. See the note above. */
+const isStab = (e) => e.s === 'pulse' && e.pw === 0.5;
 const MODES_TO_TEST = Object.keys(PROGRESSIONS);
 
 /** Interval class above the chord root, 0-11. */
@@ -283,12 +305,12 @@ for (const mode of MODES_TO_TEST) {
       const m = state({ mode, degree, extend, tension: 0.6 });
       const evs = notesIn(buildChords(m), 1);
       barsChecked++;
-      // The stab is the only voice group in this lane inside 64-76: the pad
-      // folds to 51-62 and the colour pair sits at 79-91. Selecting by register
-      // rather than by `pw` keeps this tool from holding a copy of the timbre.
+      // Selected by TIMBRE, so the register assertion below is a real one.
+      // See the note on `isStab`.
       const stab = evs
+        .filter(isStab)
         .map((e) => (typeof e.note === 'number' ? e.note : Number(e.note)))
-        .filter((n) => Number.isFinite(n) && n >= STAB_BOTTOM && n <= STAB_TOP);
+        .filter((n) => Number.isFinite(n));
       if (!stab.length) continue;
       const root = m.chord.root;
       const ivs = new Set(stab.map((n) => iv(n, root)));
@@ -297,7 +319,17 @@ for (const mode of MODES_TO_TEST) {
         missingSeventh.push(`${mode}/deg${degree}  stab plays {${[...ivs].sort((a, b) => a - b)}}, no seventh (${seventhIv})`);
       }
       if (extend === 'ninth') {
-        const ninthIv = iv(57 + degreeToSemitone(mode, degree + 8), root);
+        /*
+         * IMPORTED, NOT RESTATED. This was `degreeToSemitone(mode, degree + 8)`
+         * — the tool's own copy of "what a ninth is" — and it was WRONG in the
+         * same way the builder's copy was: eight scale steps is the octave in an
+         * eight-note scale, so in octatonic this asked whether the stab plays
+         * the root. It reported two bars failing and the defect was real, but
+         * the tool would have gone on agreeing with the builder however wrong
+         * both of them were, because both held the same arithmetic.
+         * `theory.extensionSemitone` is now the one definition.
+         */
+        const ninthIv = iv(57 + extensionSemitone(mode, degree, 14), root);
         if (!ivs.has(ninthIv)) {
           missingNinth.push(`${mode}/deg${degree}  stab plays {${[...ivs].sort((a, b) => a - b)}}, no ninth (${ninthIv})`);
         }
@@ -340,6 +372,71 @@ if (seventhMax === 0 || ninthMax === 0) {
   console.log(`\n  ONSETS — unlocking the ninth ADDED a voice (${seventhMax} -> ${ninthMax}). It must replace, not join.`);
 } else {
   console.log('  ok   onsets — unlocking the ninth replaces a tone rather than adding one');
+}
+
+/* ------------------- 4. no sustained lane holds a low cluster */
+
+/*
+ * THE FOLD CAN MAKE MUD, and this is the assertion that catches it.
+ *
+ * Every lane in this score folds its tones into a declared window
+ * (`theory.LANE_RANGE`), and a fold is an octave transposition: it preserves
+ * pitch class and destroys spacing. On a two-note shape that is harmless — a
+ * fifth folds to a fourth — but a three- or four-note chord folded into
+ * thirteen semitones puts tones a SECOND apart, and a second held for a whole
+ * bar at 110-220 Hz is the most reliable way there is to make a mix muddy.
+ *
+ * MEASURED when it happened: the pad emitted `[49,50,54,57]` and
+ * `[49,52,54,57]` in **38 of 88 bars** the day the chord grew a seventh, with
+ * every register gate green — because a cluster is not a register defect, it
+ * is a SPACING defect, and nothing in the repo was looking at spacing.
+ *
+ * SUSTAINED LANES ONLY. The stab and the clav are transient; the ear reads a
+ * close interval in a 220 ms strike as bite rather than as mud, and forbidding
+ * it there would ban the guide-tone pair this same file asserts two sections
+ * up (a third and a seventh are a second apart in several qualities). The pad
+ * is the lane that holds its notes under everything.
+ *
+ * How it could be gamed: by emptying the pad, so the count of bars that
+ * actually produced two or more pad tones is printed and zero is a failure.
+ */
+const CLUSTER = 2;
+const clusters = [];
+let padBars = 0;
+for (const mode of MODES_TO_TEST) {
+  for (const [degree] of PROGRESSIONS[mode]) {
+    for (const extend of ['seventh', 'ninth']) {
+      for (const tension of [0.2, 0.6]) {
+        const m = state({ mode, degree, extend, tension });
+        const evs = notesIn(buildChords(m), 1);
+        // The pad: the only 50%-duty pulse in this lane. `pw(0)` is superdough's
+        // 50% square; the stab is `pw(0.5)`, which is 25%.
+        const pad = [
+          ...new Set(
+            evs
+              .filter((e) => e.s === 'pulse' && e.pw === 0)
+              .map((e) => (typeof e.note === 'number' ? e.note : Number(e.note)))
+              .filter((n) => Number.isFinite(n)),
+          ),
+        ].sort((a, b) => a - b);
+        if (pad.length < 2) continue;
+        padBars++;
+        for (let i = 1; i < pad.length; i++) {
+          if (pad[i] - pad[i - 1] <= CLUSTER) {
+            clusters.push(`${mode}/deg${degree}/${extend}/t${tension}  pad=[${pad}]`);
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+console.log('');
+if (padBars === 0) fail('CLUSTER — the pad produced no bar with two tones. That is a failure, not a pass.', []);
+else if (clusters.length) {
+  fail(`CLUSTER — ${clusters.length} of ${padBars} pad bars hold two tones ${CLUSTER} semitones or closer:`, clusters);
+} else {
+  console.log(`  ok   spacing — none of ${padBars} pad bars holds two tones within ${CLUSTER} semitones`);
 }
 
 console.log('');

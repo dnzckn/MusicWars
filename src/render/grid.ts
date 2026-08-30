@@ -88,35 +88,61 @@ export class WarpGrid {
   private readonly width: number;
   private readonly height: number;
 
+  /**
+   * World y of row 0. Always a multiple of `SPACING`; moves with the camera.
+   *
+   * The lattice is anchored to the world across the track and SCROLLS along
+   * it, so this is the only piece of state that says where the sheet is.
+   */
+  private originY = 0;
+
   /*
-   * THE LATTICE IS ALLOCATED FROM THE WORLD, ON PURPOSE, and the draw clip is
-   * what makes the field size free rather than a smaller allocation.
+   * THE LATTICE IS ALLOCATED FROM THE WORLD ACROSS THE TRACK AND FROM THE VIEW
+   * ALONG IT, which is the shape the field itself now has.
    *
-   * `research-camera.md` §9 Stage 3 proposed the other option: allocate at
-   * VIEW plus a cell of bleed and scroll the home positions with the camera,
-   * snapped to `SPACING`. It is not done, and the reasons are measurements
-   * rather than taste.
+   * WHAT THIS REPLACES. The lattice used to be the whole field, and that was
+   * the right answer while the field was 3000x3000: `research-camera.md` §9
+   * Stage 3 proposed a view-sized allocation with scrolling home positions and
+   * it was measured and REJECTED, because the cliff turned out to be
+   * rasterisation rather than allocation — clipping the DRAW to the view took
+   * a 3x field from 5.0 ms/frame to 0.198 ms, and a view-sized allocation
+   * would have saved only the integration pass, 0.9% of a frame. Against that
+   * 0.9% it cost three things: `impulse()` mapping a world pixel straight to a
+   * cell index, deformation outside the view being forgotten, and a scroll
+   * that needs snapping to `SPACING` or the points pop.
    *
-   * The cliff that made this a blocker was RASTERISATION, not allocation.
-   * `tools/gridraster.mjs` put a 3x field at 5.0 ms/frame — 30% of a 60Hz
-   * budget — where `tools/gridcost.mjs` put the JavaScript at 0.156 ms, 0.9%.
-   * Clipping the draw to the view takes the raster cost to 0.198 ms, 25x
-   * cheaper, and that is the whole cliff gone. A view-sized allocation would
-   * additionally save the integration pass: 0.9% of a frame, at a field size
-   * this game does not yet have.
+   * THE TREADMILL SETTLES ALL THREE, AND TWO OF THEM STOP BEING COSTS.
    *
-   * Against that 0.9% it costs three things. `impulse()` maps a world pixel
-   * straight to a cell index (`floor(px / SPACING)`), which stops being true
-   * the moment home positions scroll, so every shock, every wake and every
-   * breath would need translating. Deformation OUTSIDE the view would be
-   * discarded rather than remembered, so scrolling back to where a bomb went
-   * off would show an undisturbed sheet. And snapping the scroll to `SPACING`
-   * to stop the points popping is a feel problem that needs a browser and a
-   * person, which is `research-camera.md`'s own Stage 7.
+   *   The field is unbounded along the travel axis, so a world-sized lattice
+   *   is not a 0.9% question any more, it is an infinite `Float32Array`. This
+   *   is no longer an optimisation; it is the only representation that exists.
    *
-   * So: world-sized allocation, view-clipped draw. If the integration pass
-   * ever shows up in a real frame budget, `gridcost` is the tool that will say
-   * so and this decision can be revisited with a number attached.
+   *   "Deformation outside the view is discarded rather than remembered, so
+   *   scrolling back to where a bomb went off would show an undisturbed sheet"
+   *   was the strongest of the three objections, and it is now unreachable:
+   *   nothing scrolls back. The ship's slowest forward speed is 170 px/s and
+   *   the rail never reverses, so ground that has left the frame behind you is
+   *   ground you cannot return to. The rejected option's one real cost is a
+   *   cost this stage cannot pay.
+   *
+   *   `impulse()` needed translating, and it is: one subtraction of `originY`
+   *   on the row index. The column index is untouched, because ACROSS the
+   *   track the field is still a bounded 3000 px and the lattice still spans
+   *   it exactly as before.
+   *
+   * SNAPPED TO `SPACING`, so the sheet does not shimmer. `scrollTo` moves the
+   * origin in whole cells only, shifts the four state arrays by that many
+   * rows, and seeds the vacated rows at rest. A point that is still on screen
+   * keeps its exact displacement and velocity across a scroll — the shift is a
+   * renumbering, not a re-simulation — so an explosion's tear travels down the
+   * screen with the ground it happened on.
+   *
+   * FLOAT32 IS FINE AT THESE MAGNITUDES, and it was checked rather than
+   * assumed, because the travel axis is unbounded and these are
+   * `Float32Array`s. Home positions are integer multiples of 62, and float32
+   * represents every integer exactly up to 16,777,216 — 15.5 hours at cruise.
+   * The displaced positions sit within `MAX_OFFSET` (44 px) of home, where the
+   * representable spacing at a million pixels is 0.0625 px.
    *
    * Explicit fields, not parameter properties — see the note on `Latch` in
    * `core/math.ts`; `erasableSyntaxOnly` in tsconfig enforces it.
@@ -147,6 +173,69 @@ export class WarpGrid {
     }
   }
 
+  /**
+   * Put row 0 at or just above `worldY`, in whole cells.
+   *
+   * Called once per frame with the top of the view minus a cell of bleed. A
+   * no-op when the camera has not crossed a cell boundary, which at cruise is
+   * five frames out of six.
+   *
+   * `Math.floor` on the division rather than rounding: the origin must never
+   * be BELOW the requested y, or the top row of the sheet would be inside the
+   * view and the lattice would visibly end in mid-air.
+   *
+   * The `copyWithin` is a memmove of four arrays of `cols * rows` floats —
+   * 1029 points at the default view, so 16 KB — and it happens once every
+   * 62 px of travel, which is five times a second at cruise. A jump larger
+   * than the whole lattice (a retry, or a very long frame) falls through to a
+   * full re-seed rather than shifting past the end.
+   */
+  scrollTo(worldY: number): void {
+    const want = Math.floor(worldY / SPACING) * SPACING;
+    const dr = Math.round((want - this.originY) / SPACING);
+    if (dr === 0) return;
+    this.originY = want;
+    const { cols, rows, count, homeX, homeY, x, y, vx, vy } = this;
+    if (Math.abs(dr) >= rows) {
+      for (let r = 0; r < rows; r++) {
+        const hy = want + r * SPACING;
+        for (let c = 0; c < cols; c++) {
+          const i = r * cols + c;
+          homeY[i] = hy;
+          x[i] = homeX[i];
+          y[i] = hy;
+          vx[i] = 0;
+          vy[i] = 0;
+        }
+      }
+      return;
+    }
+    // Row r of the new lattice is row r + dr of the old one. Everything that
+    // survives keeps its exact state; the rows that fall off one end are
+    // re-seeded at rest at the other.
+    const shift = dr * cols;
+    for (const arr of [x, y, vx, vy]) {
+      if (shift > 0) arr.copyWithin(0, shift);
+      else arr.copyWithin(-shift, 0, count + shift);
+    }
+    for (let r = 0; r < rows; r++) {
+      const hy = want + r * SPACING;
+      for (let c = 0; c < cols; c++) homeY[r * cols + c] = hy;
+    }
+    const r0 = dr > 0 ? rows - dr : 0;
+    const r1 = dr > 0 ? rows : -dr;
+    for (let r = r0; r < r1; r++) {
+      const hy = want + r * SPACING;
+      for (let c = 0; c < cols; c++) {
+        const i = r * cols + c;
+        x[i] = homeX[i];
+        y[i] = hy;
+        vx[i] = 0;
+        vy[i] = 0;
+      }
+    }
+  }
+
   reset(): void {
     this.x.set(this.homeX);
     this.y.set(this.homeY);
@@ -164,8 +253,10 @@ export class WarpGrid {
     // Only the rows/columns that can possibly be in range, rather than all 350.
     const c0 = Math.max(0, Math.floor((px - radius) / SPACING));
     const c1 = Math.min(this.cols - 1, Math.ceil((px + radius) / SPACING));
-    const r0 = Math.max(0, Math.floor((py - radius) / SPACING));
-    const r1 = Math.min(this.rows - 1, Math.ceil((py + radius) / SPACING));
+    // Rows are relative to `originY`, which scrolls. Columns are not: across
+    // the track the lattice still spans the whole bounded field from zero.
+    const r0 = Math.max(0, Math.floor((py - radius - this.originY) / SPACING));
+    const r1 = Math.min(this.rows - 1, Math.ceil((py + radius - this.originY) / SPACING));
 
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
@@ -195,7 +286,7 @@ export class WarpGrid {
    */
   breathe(strength: number, view?: GridView): void {
     const cx = view ? view.x + view.w * 0.5 : this.width * 0.5;
-    const cy = view ? view.y + view.h * 0.5 : this.height * 0.5;
+    const cy = view ? view.y + view.h * 0.5 : this.originY + this.height * 0.5;
     const radius = view ? Math.max(view.w, view.h) : Math.max(this.width, this.height);
     this.impulse(cx, cy, radius, strength);
   }
@@ -282,8 +373,8 @@ export class WarpGrid {
     if (view) {
       c0 = Math.max(0, Math.floor(view.x / SPACING) - 1);
       c1 = Math.min(cols, Math.ceil((view.x + view.w) / SPACING) + 2);
-      r0 = Math.max(0, Math.floor(view.y / SPACING) - 1);
-      r1 = Math.min(rows, Math.ceil((view.y + view.h) / SPACING) + 2);
+      r0 = Math.max(0, Math.floor((view.y - this.originY) / SPACING) - 1);
+      r1 = Math.min(rows, Math.ceil((view.y + view.h - this.originY) / SPACING) + 2);
       if (c1 <= c0 || r1 <= r0) return;
     }
 

@@ -41,7 +41,9 @@ const rows = await p.evaluate(async (TYPES) => {
    * pinned against a far wall.
    */
   const SEPARATION = 504;                 // px between ship and target
-  const SHIP_Y = w.height / 2 + 336;      // px below the field centre
+  // Anchored to the middle of the VIEW, not of the field: `w.height` is
+  // `Infinity` on an unbounded travel axis. Same point at one screen.
+  const SHIP_Y = w.camera.viewY + w.viewH / 2 + 336;
   const TARGET_Y = SHIP_Y - SEPARATION;
   const LANE_X = w.width / 2;             // both on one vertical line
   /*

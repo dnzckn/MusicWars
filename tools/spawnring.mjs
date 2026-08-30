@@ -33,6 +33,23 @@
  * over a population that quietly stopped containing arrivals is the vacuous
  * pass AGENTS.md §3 warns about.
  *
+ * AND THEN THE RING BECAME A LINE ASTERN. The stage is a treadmill now: the
+ * ship always moves forward, and groups arrive inside `ARRIVAL_CONE` of
+ * straight BEHIND rather than anywhere on a circle — the owner's call, in the
+ * owner's words, "enemies spawn infront of me, they should only spawn behind
+ * me". That is the single most important property of the new geometry and
+ * NOTHING IN THIS REPOSITORY CHECKED IT — the cone could revert to a full ring
+ * tomorrow, or flip back to the bow, and every gate would stay green including
+ * this one, because a body placed anywhere on the ring is still outside the
+ * view and still clears it by 46 px. Assertions 4 and 5 below are what closes
+ * that, and they are written here rather than in a new file because this is
+ * already the tool that classifies arrivals against the live camera.
+ *
+ * WHETHER THEY THEN REACH THE SHIP is a different question and this file
+ * cannot answer it — placement is not pursuit. `tools/pursuit.mjs` does, and
+ * the two together are the pair: this one says where the crowd comes from,
+ * that one says whether it arrives.
+ *
  * WHAT IT ASSERTS
  *
  *   1. Every ARRIVAL — mobs and the boss — is OUTSIDE the view rect as it stood
@@ -45,6 +62,17 @@
  *      AGENTS.md §3, where a check examined zero rows and exited green — and a
  *      run with no births would mean the classification above had never been
  *      exercised and could be inverted without anything noticing.
+ *   4. BEHIND. At least `MIN_BEHIND` of arrivals are astern of the ship on the
+ *      travel axis. Not all of them: a wide formation (`rhythm` spans 1.7 rad,
+ *      `sides` 2.4) can put a wing level with or slightly ahead of the ship
+ *      even when its centre bearing is dead astern, and that is the spread the
+ *      design wants rather than a defect.
+ *   5. SPREAD. Arrivals are distributed ACROSS the leading edge rather than
+ *      arriving down one lane. Measured as the p10-to-p90 span of the arrival's
+ *      x within the view, which must be at least `MIN_SPREAD` of the view's
+ *      width. This is the half of "a line ahead, with some spread" that
+ *      assertion 4 cannot see: a cone of zero would satisfy 4 perfectly and
+ *      produce a single-file queue.
  *
  * WHAT IT REPORTS RATHER THAN GATES
  *
@@ -79,6 +107,42 @@ const DT = 1 / 120;
  * currently produce, including `arc`, whose bow costs it depth at the middle.
  */
 const MIN_CLEARANCE = 30;
+
+/**
+ * The share of arrivals that must be BEHIND the ship.
+ *
+ * NOT 1.0, and the slack is a formation's angular width rather than tolerance
+ * for error. `arenaSpawnPositions` lays a group out over `FORMATION_ARC` of the
+ * ring about its centre bearing — up to 2.4 rad for `sides` — so a group
+ * centred at the edge of `ARRIVAL_CONE` legitimately reaches past the ship's
+ * own latitude on one wing.
+ *
+ * A FULL RING IS THE THING THIS IS SIZED AGAINST, and it was fail-tested by
+ * doing exactly that. With `ARRIVAL_CONE` widened to `Math.PI` — a uniform
+ * draw over the whole circle — the equivalent assertion read 60.3% and went
+ * red. 0.8 sits below every formation's worst case and well above what a ring
+ * produces.
+ */
+const MIN_BEHIND = 0.8;
+
+/**
+ * How much of the view's width the arrivals must be spread across, p10 to p90.
+ *
+ * The negative control for `MIN_AHEAD`. A cone of zero — every group arriving
+ * on one bearing, in single file up the middle of the track — passes "is it
+ * ahead" PERFECTLY (100.0%) and is not a stage.
+ *
+ * 0.95, AND THE FIRST DRAFT'S 0.5 WAS VACUOUS. Fail-tested by setting
+ * `ARRIVAL_CONE` to 0.001 and re-running: arrivals ahead went to 100.0% as
+ * expected and the spread only fell from 1.32 to 0.73, so a gate at 0.5 stayed
+ * green through the exact collapse it was written to catch. The reason is
+ * worth recording because it is not obvious: most of the lateral spread comes
+ * from `FORMATION_ARC` — a `rhythm` group is 1.7 rad wide and a `sides` group
+ * 2.4 — so the formations scatter a group across the leading edge even when
+ * every group arrives on the same bearing. 0.95 sits between the two measured
+ * values with 28% of headroom under the live one.
+ */
+const MIN_SPREAD = 0.95;
 
 const { World } = await import('../src/game/world.ts');
 const { VIEW_W, VIEW_H } = await import('../src/game/field.ts');
@@ -122,6 +186,15 @@ function runOnce(seed) {
       y: e.y,
       vx: w.camera.viewX,
       vy: w.camera.viewY,
+      // Forward is -y, so "behind" is a LARGER y. Measured against the SHIP
+      // rather than the view because the ship's position inside the track
+      // window is the player's own choice, and an arrival that is astern of
+      // the frame but ahead of the ship is one the ship is flying into.
+      behind: e.y > w.player.y,
+      // Where along the leading edge it came in, as a fraction of the view.
+      // Outside [0,1] for the flanks, which is correct and is why the spread
+      // is reported as a quantile span rather than a min and a max.
+      lane: (e.x - w.camera.viewX) / w.viewW,
       wave: w.waveIndex + 1,
     });
   };
@@ -155,6 +228,8 @@ let arrivals = 0;
 let births = 0;
 let inside = 0;
 let tooClose = 0;
+let behind = 0;
+const lanes = [];
 let worst = { c: Infinity };
 const perRun = [];
 
@@ -172,6 +247,8 @@ for (let r = 0; r < RUNS; r++) {
     if (s.c <= 0) inside++;
     else if (s.c < MIN_CLEARANCE) tooClose++;
     if (s.c < worst.c) worst = s;
+    if (s.behind) behind++;
+    lanes.push(s.lane);
   }
   perRun.push(out);
   console.log(
@@ -198,6 +275,18 @@ console.log(`  outside but < ${MIN_CLEARANCE}px clear   ${tooClose}`);
 console.log(
   `  closest arrival           ${worst.c === Infinity ? 'n/a' : `${worst.c.toFixed(1)}px  (${worst.archetype} at ${worst.x.toFixed(0)},${worst.y.toFixed(0)} — view at ${worst.vx.toFixed(0)},${worst.vy.toFixed(0)})`}`,
 );
+
+const behindShare = arrivals > 0 ? behind / arrivals : 0;
+lanes.sort((a, b) => a - b);
+const at = (q) => (lanes.length ? lanes[Math.min(lanes.length - 1, Math.floor(q * lanes.length))] : 0);
+const spread = lanes.length ? at(0.9) - at(0.1) : 0;
+console.log('');
+console.log(`  arrivals BEHIND the ship  ${behind} / ${arrivals}   ${(behindShare * 100).toFixed(1)}%   (gate ${(MIN_BEHIND * 100).toFixed(0)}%)`);
+console.log(
+  `  lateral lane p10/p50/p90   ${at(0.1).toFixed(2)} / ${at(0.5).toFixed(2)} / ${at(0.9).toFixed(2)}` +
+    `   spread ${spread.toFixed(2)} of the view   (gate ${MIN_SPREAD.toFixed(2)})`,
+);
+
 console.log('');
 console.log(`  waves reached (total)     ${totWaves}`);
 console.log(`  enemies killed / escaped  ${totKill} / ${totEsc}`);
@@ -210,7 +299,17 @@ if (arrivals === 0) problems.push('nothing was checked — 0 arrivals observed')
 if (births === 0) problems.push('0 births observed — the arrival/birth split was never exercised');
 if (inside > 0) problems.push(`${inside} of ${arrivals} arrivals landed INSIDE the view`);
 if (tooClose > 0) problems.push(`${tooClose} of ${arrivals} arrivals cleared the view by less than ${MIN_CLEARANCE}px`);
+if (arrivals > 0 && behindShare < MIN_BEHIND) {
+  problems.push(
+    `only ${(behindShare * 100).toFixed(1)}% of arrivals were behind the ship — the spawn line has become a ring again, or flipped to the bow`,
+  );
+}
+if (arrivals > 0 && spread < MIN_SPREAD) {
+  problems.push(
+    `arrivals span only ${spread.toFixed(2)} of the view across the track — a line ahead with no spread is a queue`,
+  );
+}
 
 for (const p of problems) console.log(`  FAIL  ${p}`);
-console.log(problems.length ? '\ncheck the spawn ring\n' : '\nEVERYTHING ARRIVES FROM OFF SCREEN\n');
+console.log(problems.length ? '\ncheck the spawn line\n' : '\nEVERYTHING ARRIVES FROM OFF SCREEN, ASTERN, AND SPREAD\n');
 if (problems.length) process.exit(1);

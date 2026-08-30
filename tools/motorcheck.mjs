@@ -34,10 +34,18 @@ import { makeSignals, notesIn, pc } from './lib/headless-audio.mjs';
 
 const strudel = await import('@strudel/core');
 const { buildMotor } = await import('../src/audio/layers.ts');
-const { buildChord, MODES, PROGRESSIONS } = await import('../src/audio/theory.ts');
+const { buildChord, MODES, PROGRESSIONS, LANE_RANGE } = await import('../src/audio/theory.ts');
 
-const LOW = 57;
-const HIGH = 69;
+/*
+ * IMPORTED, NOT RESTATED. These were `const LOW = 57; const HIGH = 69;` — a
+ * tool holding its own copy of a constant, which AGENTS.md §3 says "will lie
+ * the day it moves". `layers.ts` now takes MOTOR_BOTTOM/MOTOR_TOP from the same
+ * table, so the assertion and the builder cannot disagree, and a future
+ * narrowing of the motor's window tightens this check automatically instead of
+ * silently loosening it.
+ */
+const LOW = LANE_RANGE.motor.lo;
+const HIGH = LANE_RANGE.motor.hi;
 const FEELS = ['boomchick', 'chase', 'gallop', 'shuffle', 'halftime'];
 const MODES_TO_TEST = Object.keys(PROGRESSIONS);
 

@@ -174,6 +174,23 @@ export class BulletPool {
   readonly capacity: number;
   count = 0;
 
+  /**
+   * Move every live bolt along the travel axis by `dy`, forward being -y.
+   *
+   * The pool rides the treadmill with the rest of the world; see
+   * `World.carryStage`. Without it a bolt fired astern would be crossing the
+   * ground at its own speed MINUS the stage's, so every range, every lifetime
+   * and every bounce in `weapons.ts` would mean something different depending
+   * on which way the ship was pointing.
+   *
+   * A flat pass over `count` and not `capacity`: dead slots are compacted to
+   * the end by `update`, so there is nothing above `count` to move.
+   */
+  carry(dy: number): void {
+    const y = this.y;
+    for (let i = 0; i < this.count; i++) y[i] -= dy;
+  }
+
   readonly x: Float32Array;
   readonly y: Float32Array;
   /** Previous-step position, used for render interpolation and swept collision. */

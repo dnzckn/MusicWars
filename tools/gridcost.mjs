@@ -119,9 +119,12 @@ if (at3x) {
   console.log(`  at 3x: ${at3x.points} points at ${at3x.ms.toFixed(3)} ms/frame — ${share.toFixed(1)}% of a 60Hz frame, before rasterising anything`);
 }
 console.log('');
-console.log('  The lattice is allocated from the WORLD, not the view (grid.ts:85-86 reads');
-console.log('  width/height straight into cols/rows), so every one of those points is');
-console.log('  integrated and drawn whether or not it is on screen. Culling to the view');
-console.log('  plus a cell of bleed is what makes the field size free; it is Stage 3 of');
-console.log('  docs/research-camera.md and it is not done.');
+console.log('  THE ROWS ABOVE ARE A SWEEP, NOT THE GAME. This file constructs a WarpGrid');
+console.log('  at each size to measure how the cost scales, and the shipped lattice is no');
+console.log('  longer one of them: `Renderer.makeGrid` allocates the whole field ACROSS');
+console.log('  the track and one view plus a cell of bleed ALONG it, because the travel');
+console.log('  axis is unbounded and a world-sized allocation is now an infinite array.');
+console.log('  At the default view that is 49 x 19 = 931 points against the 2401 a');
+console.log('  3000x3000 field used to take, and the draw is clipped to the view on top');
+console.log('  of that (see tools/gridview.mjs, which gates the clip).');
 console.log('');

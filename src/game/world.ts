@@ -25,7 +25,15 @@ import { Rng } from '../core/rng';
 import { BEATS_PER_BAR, Transport } from '../core/transport';
 import { BulletFlag, BulletPool } from './bullets';
 import { Camera } from './camera';
-import { PLAYFIELD_H, PLAYFIELD_W, VIEW_H, VIEW_W } from './field';
+import {
+  PLAYFIELD_H,
+  PLAYFIELD_W,
+  TRACK_AHEAD,
+  TRACK_ANCHOR,
+  TRACK_BEHIND,
+  VIEW_H,
+  VIEW_W,
+} from './field';
 import {
   ARCHETYPE_INFO,
   commitBossPhase,
@@ -38,7 +46,7 @@ import {
   type EnemyContext,
 } from './enemies';
 import { ParticlePool, ParticleShape } from './particles';
-import { angleDelta, PLAYER_CONTACT, Player } from './player';
+import { angleDelta, CRUISE_SPEED, PLAYER_CONTACT, Player } from './player';
 import {
   pickPowerup,
   powerupDef,
@@ -170,6 +178,48 @@ const OFFER_MIN_GAP = 6;
 const CULL_MARGIN = 320;
 
 /**
+ * How many times one body may be moved back to the line ahead before it is
+ * dropped instead.
+ *
+ * The backstop on the population gate in `updateEnemies`, and it exists so
+ * that "everything you pass eventually leaves" is true unconditionally rather
+ * than only while the stage is busy. Three is chosen against the wave clock
+ * rather than against feel: a body that has been re-dealt three times has been
+ * in front of the player for at least three crossings of 0.9 view diagonals,
+ * which at cruise is upwards of twelve seconds of being ignored. Something
+ * ignored for twelve seconds is not the fight the player is having.
+ *
+ * It is a cap and not a timer on purpose. `enemies.ts` already carries an
+ * 18-second `leaveAt` and `docs/research-density.md` §6a records that constant
+ * being tested and found not to matter — the deadline almost never fires
+ * because bodies die first. A cap counts a thing that actually happens.
+ */
+const RECYCLE_LIMIT = 3;
+
+/**
+ * The ground a pickup has to be caught across because the ship only passes it
+ * once, in pixels. ADDED to the rig-scaled radius, not multiplied into it.
+ *
+ * WHY ADDITIVE, and this is the whole reason it is a separate constant rather
+ * than a bigger 210. `pickupRadius` is a rig statistic that runs 1.0 to about
+ * 3.4 fully invested, and scaling this term with it would have taken a maxed
+ * MAGNET build from 714 px of reach to 1768 — past the view's own diagonal, so
+ * the investment would buy "everything on screen" and stop being a decision.
+ * The flat term is not about the player's build at all: it is how much ground
+ * the stage moves under them during a pass, and the stage moves at
+ * `CRUISE_SPEED` whatever they have chosen.
+ *
+ * 310, derived. At cruise the ship covers 310 px in just over a second, and a
+ * shard is ineligible to commit for the first 0.28 s of its life (it leans
+ * toward the player first, so the player can see it) — so the flat term buys
+ * back the lean plus enough to catch a shard dropped at an enemy's standoff
+ * distance (120-280 px) on the way past. Once committed a shard accelerates to
+ * about 1265 px/s, so catching a 300 px/s ship from behind is never the
+ * difficulty; being noticed is.
+ */
+const PASS_REACH = 310;
+
+/**
  * Half-width of the escape corridor left open in the encirclement, in radians.
  *
  * 0.62 is about a 71-degree wedge. The number is the whole difficulty of the
@@ -181,6 +231,66 @@ const CULL_MARGIN = 320;
  * thing you have to keep doing rather than a place you get to be.
  */
 const ENCIRCLE_GAP_HALF = 0.62;
+
+/**
+ * Which way "forward" is, in world bearings. `-PI/2` is up the screen.
+ *
+ * Written once so that the sign of the travel axis appears in exactly one
+ * place. Everything else — the spawn line, the corridor, the boss's entry —
+ * is expressed as an offset from this.
+ */
+const FORWARD_ANGLE = -Math.PI / 2;
+
+/**
+ * The bearing groups arrive on: `+PI/2`, straight behind.
+ *
+ * THE OWNER REVERSED THIS AND IT IS THE OWNER'S CALL. The first revision put
+ * the spawn line AHEAD — the Star Fox reading, where you fly into the traffic
+ * — and the note is: "enemies spawn infront of me, they should only spawn
+ * behind me". So the cone is centred on the stern and nothing is ever placed
+ * in front of the ship.
+ *
+ * WHAT HAD TO CHANGE WITH IT, because "behind" does not work on its own. A
+ * body placed behind a ship that is permanently moving away from it can never
+ * close, and a stage full of things that cannot reach you is empty rather than
+ * hard — measured in play at 16 enemies alive and 0 on screen, and recorded
+ * independently in `docs/research-density.md` §6 where bodies arriving behind
+ * a running ship read as scenery. The crowd therefore travels WITH the stage
+ * (see `updateEnemies`), so an arrival closes at its own speed exactly as it
+ * did before there was a treadmill, and the ship's ability to pull away is
+ * `TRIM_SPEED` rather than the whole cruise.
+ *
+ * DERIVED FROM `FORWARD_ANGLE` RATHER THAN WRITTEN AS `PI/2`, so the one place
+ * that decides which way is forward decides both. A sign error between two
+ * independently-written constants would be invisible: arrivals would appear in
+ * front, still be off screen, still clear the view by 46 px, and still pass
+ * every geometric check except the one `tools/spawnring.mjs` gates on.
+ */
+const ARRIVAL_ANGLE = FORWARD_ANGLE + Math.PI;
+
+/**
+ * Half-width of the arc ahead that groups arrive on, in radians.
+ *
+ * THE SPAWN RING BECAME A SPAWN LINE, and this constant is how wide the line
+ * is. `edgePoint` still casts a ray from the middle of the view out to the
+ * view rectangle, so a bearing near `FORWARD_ANGLE` lands somewhere along the
+ * LEADING EDGE and the spread across that edge is what the cone buys: at the
+ * default 900x1120 view the leading edge subtends `atan(900/1120) = 0.675`
+ * rad either side of straight ahead, so 1.05 puts about two thirds of the
+ * draw on the edge the player is flying into and the rest on the top thirds of
+ * the two flanks. That is "a line ahead, with some spread", and the flanks are
+ * the part that stops turning being free.
+ *
+ * IT BEHAVES ACROSS THE RESPONSIVE RANGE, which is the reason it is a cone
+ * rather than a lateral offset in pixels. `field.ts` bounds the view's aspect
+ * to [0.47, 1.9]; at the widest the leading edge subtends 1.09 rad and the
+ * cone falls entirely on it, at the tallest it subtends 0.44 and the cone
+ * reaches a third of the way down each flank. Both are legible arrivals. A
+ * cone much wider than this stops reading as "ahead" — at 1.4 rad a group
+ * arrives level with the ship and is behind it two seconds later, which is the
+ * waste the ring version was making.
+ */
+const ARRIVAL_CONE = 1.05;
 
 /**
  * How far off the facing the auto-aim will snap a shot, in radians.
@@ -416,7 +526,47 @@ export interface Shard {
 
 export class World {
   readonly width = PLAYFIELD_W;
+  /**
+   * `Infinity`. There is no bottom of the arena and there is no top of it.
+   *
+   * KEPT RATHER THAN DELETED, and the reason is that it is the honest answer
+   * to the question every caller was asking. Eight tools and a dozen sites in
+   * this file asked "how tall is the field"; the answer is now "it does not
+   * end", and a field that reports `Infinity` makes every one of them either
+   * obviously inert (`e.y > Infinity` is never true) or obviously broken
+   * (`clamp(y, 60, Infinity)` snaps a ship 400,000 px up the track to y = 60).
+   * A large finite stand-in would have let all of them keep compiling and keep
+   * being subtly wrong, which is the silent re-baseline `research-camera.md`
+   * §7b describes.
+   *
+   * Every reader inside `src` was converted with this change: the player's
+   * bounds became `trackBounds()`, the enemy cull became `retireBehind`, five
+   * placement clamps became `onTrack()`, `playerHeight` became the ship's
+   * position in the track window, and `EnemyContext.width/height` were deleted
+   * because — as their own comment invited — nothing read them.
+   */
   readonly height = PLAYFIELD_H;
+
+  /**
+   * THE TREADMILL. Where the top of the view sits on the travel axis.
+   *
+   * This is the rail: it decreases every step, never increases, and everything
+   * that used to be "the view" is measured from it. `Camera.viewY` is assigned
+   * from it, so the spawn line, the bullet cull, `hasEntered`, the population
+   * census and the drop horizon all ride it without knowing it exists.
+   *
+   * IT LIVES IN THE WORLD AND NOT IN THE CAMERA, on purpose. The rail decides
+   * where the player may be and where enemies arrive, which makes it
+   * simulation state; a camera that owned it would be a viewport reaching into
+   * the game. Keeping it here preserves the property the arena refactor
+   * established and paid for — the camera is strictly downstream — and it is
+   * the reason `tools/arena.mjs` can still measure this game without a
+   * renderer.
+   *
+   * Seeded in `start()`. `update()` advances it in exactly two lines and
+   * nothing else writes it.
+   */
+  trackY = 0;
 
   /**
    * The size of the rectangle the camera shows, in world units.
@@ -443,6 +593,135 @@ export class World {
 
   get viewH(): number {
     return VIEW_H;
+  }
+
+  /**
+   * The rectangle the ship may occupy this step, in world coordinates.
+   *
+   * Across the track it is the arena, inset by the ship's own radius, exactly
+   * as it always was. Along it there is only a BACK edge — the point in the
+   * frame past which the treadmill starts carrying you rather than letting you
+   * drift — and no front edge at all.
+   *
+   * WHY THE FRONT IS NOT A WALL. It is enforced by `update()` dragging the
+   * rail forward to meet a ship that has got ahead of it, which is a different
+   * thing from stopping the ship: a clamp against a front edge that is itself
+   * moving at 300 px/s would zero the ship's forward velocity on the frame it
+   * touched, then let it re-accelerate, then zero it again, and the ship would
+   * buzz against the top of the window instead of pushing it. The back edge
+   * has no such problem because it is the ship that is going slower than the
+   * rail there, so the clamp is genuinely a carry.
+   */
+  private trackBounds(): { x0: number; y0: number; x1: number; y1: number; yHome: number } {
+    return {
+      x0: 12,
+      x1: PLAYFIELD_W - 12,
+      y0: -Infinity,
+      y1: this.trackBack,
+      yHome: this.trackY + VIEW_H * TRACK_ANCHOR,
+    };
+  }
+
+  /**
+   * Carry the whole world forward with the stage, once per step.
+   *
+   * THIS IS WHAT MAKES IT A TREADMILL RATHER THAN A LONG CORRIDOR. Everything
+   * that exists in the world moves with the ground at `CRUISE_SPEED`; the ship
+   * is the only thing that does not, and what the player controls is how hard
+   * they push against it (`TRIM_SPEED`) and where they go across it. In the
+   * stage's frame the entire pre-treadmill game is preserved exactly — the same
+   * weapon ranges, the same standoffs, the same drop physics, the same pickup
+   * radii, all still calibrated — and what is added is that the ground is
+   * visibly going past and the ship cannot stop.
+   *
+   * WHY A SINGLE ENUMERATED SWEEP AND NOT A DRIFT SCATTERED THROUGH THE FILE.
+   * The failure mode of this design is one array that was missed: its contents
+   * then recede at 360 px/s and are gone in a second, silently, in a build that
+   * otherwise looks perfect. That is the same risk that ruled out WRAPPING the
+   * world (see `field.ts`), and the answer is that there is exactly ONE place
+   * that does it and the list is written out. When a new kind of world object
+   * is added, it goes here.
+   *
+   * MEASURED, because the first version carried only enemies and the miss was
+   * exactly this shape. Shards and drops stayed put, the ship flew away from
+   * every corpse it made, and collection fell to 28.3% against 54.6% on the
+   * pre-treadmill tree.
+   *
+   * ALONG THE TRAVEL AXIS ONLY. Across the track the field is a bounded 3000px
+   * that does not move, so `x` is untouched everywhere.
+   *
+   * NOT CARRIED, deliberately, and this is the whole exception list:
+   *
+   *   the player   the point of the exercise.
+   *   the boss     orbits the camera centre already (`bossMove`).
+   *   `shocks`     a per-frame queue the renderer drains and clears; nothing
+   *                in it survives to the next step.
+   *   the camera   derived from `trackY`, which is advanced in `update`.
+   *
+   * On the RAW dt, not `simDt`: this is called from the same block that rolls
+   * `trackY`, so the ground and the things standing on it advance by exactly
+   * the same amount. A mismatch between the two would show as the entire world
+   * sliding relative to the lattice.
+   */
+  private carryStage(dt: number): void {
+    const c = CRUISE_SPEED * dt;
+    for (const n of this.notes) n.y -= c;
+    for (const d of this.drops) d.y -= c;
+    for (const w of this.wells) w.y -= c;
+    for (const n of this.novas) n.y -= c;
+    for (const e of this.effects) e.y -= c;
+    for (const p of this.popups) p.y -= c;
+    this.particles.carry(c);
+    this.playerBullets.carry(c);
+  }
+
+  /**
+   * The two ends of the track window, in world coordinates.
+   *
+   * PUBLIC, and the reason is the tools rather than the game. Eight harnesses
+   * carry a copy of a wall-repulsion term written as
+   * `if (py > w.height - wall) my -= 1`, and `w.height` is `Infinity` now: the
+   * y half of every one of them either never fires or fires forever. They need
+   * the real bound, and `docs/research-camera.md` §7b is a list of what
+   * happens when a tool holds its own copy of one instead — so the bound is
+   * published rather than re-derived from `TRACK_*` in eight places, and
+   * `tools/lib/driver.mjs` can read it even though it is a string evaluated
+   * inside a page and cannot import anything.
+   *
+   * `trackFront` is as far ahead as the ship can get before it starts dragging
+   * the stage with it; `trackBack` is where the stage starts carrying the ship.
+   */
+  get trackFront(): number {
+    return this.trackY + VIEW_H * TRACK_AHEAD;
+  }
+
+  get trackBack(): number {
+    return this.trackY + VIEW_H * TRACK_BEHIND;
+  }
+
+  /**
+   * Clamp a placed object into the arena across the track and into the visible
+   * stretch of it along the track.
+   *
+   * Five sites used to write `clamp(x, 60, this.width - 60)` alongside
+   * `clamp(y, 60, this.height - 60)` — a wave gift, the mercy ENCORE, a
+   * summoned corpse and two effect placements. The second half of each pair is
+   * now `clamp(y, 60, Infinity)`, which on a ship at y = -400,000 does not
+   * clamp, it TELEPORTS: every one of them would have dropped its object at
+   * y = 60, four hundred thousand pixels behind the player, alive and
+   * uncollectable, with nothing throwing.
+   *
+   * The replacement is the view rather than the field because that is what
+   * these five sites always meant. Each one is placing something the player is
+   * supposed to walk into within the next second or two, and each already
+   * computes a position relative to the ship; the clamp exists to stop that
+   * position leaving the screen.
+   */
+  private onTrack(x: number, y: number): { x: number; y: number } {
+    return {
+      x: clamp(x, 60, PLAYFIELD_W - 60),
+      y: clamp(y, this.trackY + 60, this.trackY + VIEW_H - 60),
+    };
   }
 
   readonly bus = new EventBus();
@@ -1055,6 +1334,15 @@ export class World {
    */
   private gapAngle = 0;
   /**
+   * Which flank of the track that corridor is on: -1 is port, +1 starboard.
+   *
+   * The corridor is a SIDE now rather than a bearing on a circle, because the
+   * arrivals are a line ahead rather than a ring. `gapAngle` above is derived
+   * from this and kept because it is what the debug accessor and the shape of
+   * the old design both name; this is the state.
+   */
+  private gapSide: 1 | -1 = 1;
+  /**
    * Run totals, for the summary at the end.
    *
    * A game over currently reports a score and a wave, which says nothing about
@@ -1320,14 +1608,61 @@ export class World {
   /** Damage a `chain` keeps per hop. See `fireChain` for the power arithmetic. */
   static readonly CHAIN_FALLOFF = 0.85;
   /**
-   * px/s below which the ship counts as stationary for FERMATA's charge.
+   * px/s of DRIFT below which the ship counts as stationary, for FERMATA's
+   * charge and for OSTINATO's stopped half.
    *
    * `Player.update` damps velocity rather than zeroing it, and its own comment
    * puts the slide from top speed at about 40px — so a released stick decays
    * through this within a couple of frames while any real input sits far above
-   * it. Well under the ~460px/s top speed, so it cannot be gamed by feathering.
+   * it. It cannot be gamed by feathering.
+   *
+   * THE NUMBER IS UNCHANGED AND THE QUANTITY IT MEASURES IS NOT. It used to be
+   * compared against `hypot(vx, vy)` — the ship's speed over the ground — and
+   * the treadmill made that test UNREACHABLE: the slowest the ship can travel
+   * is `CRUISE_SPEED - TRIM_SPEED` = 170 px/s, four times this threshold, so
+   * "stationary" became a state the game contains no input for.
+   *
+   * `tools/propfire.mjs` caught it and is the reason this entry exists: it
+   * reported `wake/wakestrike: 1 chances and it delivered 0 times` where the
+   * same run before the treadmill had 66 chances and 38 deliveries. One
+   * chance, on the frame of a death. Two authored behaviours — OSTINATO's
+   * strike and the whole of FERMATA — silently stopped existing, and no other
+   * gate noticed, because both still compiled and both still had counters
+   * ticking a denominator of zero.
+   *
+   * SO IT IS RE-POINTED, NOT DELETED, and the distinction matters (AGENTS.md
+   * §3). The design was never really about the ground: it was "is the player
+   * doing anything with the stick", and its two poles are a matched pair —
+   * UP-TEMPO pays for moving and FERMATA pays for not. The treadmill's version
+   * of a released stick is a ship coasting at exactly cruise with no lateral
+   * input, so the comparison is against velocity RELATIVE TO THE STAGE'S OWN
+   * MOTION: `hypot(vx, vy + CRUISE_SPEED)`, which is zero when the stick is
+   * centred and grows the moment it is not. Same number, same tolerance, same
+   * sentence — measured in the frame the player is actually in.
+   *
+   * `driftSpeed()` is the one place that arithmetic lives, so the two callers
+   * cannot drift apart.
    */
   static readonly STILL_SPEED = 40;
+
+  /**
+   * How fast the ship is moving RELATIVE TO THE TREADMILL, px/s.
+   *
+   * Zero with the stick centred, whatever the stage is doing. This is the
+   * quantity `STILL_SPEED` is compared against; see its note.
+   *
+   * UP-TEMPO's trail reads this too, and that changed with the crowd. While
+   * bodies were being left behind, "ground covered" was the world axis and the
+   * trail was right to accumulate `hypot(vx, vy)`. Now that the stage carries
+   * the fight, the ground the trail is laid on IS the stage — a ship coasting
+   * at cruise is stationary relative to everything it could hurt, and a trail
+   * that ticked anyway would be free damage for holding no keys. Both poles
+   * are measured in the stage's frame, which is the only frame in which
+   * "moving" and "not moving" are still opposites.
+   */
+  private driftSpeed(): number {
+    return Math.hypot(this.player.vx, this.player.vy + CRUISE_SPEED);
+  }
   /**
    * Hues for the two rings the RIG produces, as opposed to the ten an
    * instrument produces.
@@ -1501,9 +1836,24 @@ export class World {
     this.drops = [];
     this.playerBullets.clear();
     this.particles.clear();
-    // The middle of the arena, not the bottom of the screen. There is no
-    // "behind you" any more, so there is no safe edge to start against.
-    this.player.reset(this.width / 2, this.height / 2);
+    /*
+     * The middle of the arena across the track, and the origin along it.
+     *
+     * Was `(this.width / 2, this.height / 2)`, which is now `(1500, Infinity)`
+     * — a NaN generator one multiplication downstream. The travel axis has no
+     * middle; it has a START, and zero is as good a place to begin counting
+     * from as any. A run drives this steadily negative and never returns, so
+     * `player.y` is effectively "how far you have come", in pixels, negated.
+     */
+    this.player.reset(PLAYFIELD_W / 2, 0);
+    /*
+     * Seed the rail so the ship opens at the anchor rather than sliding to it.
+     * `Camera.centreOn` uses the same expression on the first frame of
+     * `follow`; if these two ever disagree the run opens with the stage
+     * jumping half a screen, which is the sort of thing that looks like a
+     * dropped frame rather than like a bug.
+     */
+    this.trackY = this.player.y - VIEW_H * TRACK_ANCHOR;
     this.camera.reset();
     this.shocks.length = 0;
     this.novas.length = 0;
@@ -1586,7 +1936,12 @@ export class World {
     prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter);
     this.mods = prog.modifiers(this.progression);
     this.rules = prog.rules(this.progression);
-    this.gapAngle = this.rng.range(0, TAU);
+    // Which flank opens first is still a draw, so two runs of the same seed
+    // are not the only thing that makes the opening identical. One `rng.next()`
+    // where there used to be one `rng.range`, so the draw count per run is
+    // unchanged and the rest of the stream is not re-rolled.
+    this.gapSide = this.rng.next() < 0.5 ? -1 : 1;
+    this.gapAngle = ARRIVAL_ANGLE + this.gapSide * ENCIRCLE_GAP_HALF;
     this.nearestThreat = 1;
     this.encirclement = 0;
     this.popups.length = 0;
@@ -1686,14 +2041,16 @@ export class World {
     if (index === 1 || this.plan.isBoss) {
       // Near the ship rather than at the top of the screen. `y: 70` was the
       // player's own half of a vertical field; in the round it is a corner.
+      const at = this.onTrack(this.player.x + this.rng.range(-90, 90), this.player.y - 130);
       this.drops.push({
-        x: clamp(this.player.x + this.rng.range(-90, 90), 60, this.width - 60),
-        y: clamp(this.player.y - 130, 60, this.height - 60),
+        x: at.x,
+        y: at.y,
         vx: 0,
         vy: 0,
         kind: this.rollDrop().kind,
         age: 0,
         alive: true,
+        committed: false,
       });
     }
     this.waveBeatBias = 0;
@@ -1761,8 +2118,8 @@ export class World {
       playerY: this.player.y,
       playerVX: this.player.vx,
       playerVY: this.player.vy,
-      width: this.width,
-      height: this.height,
+      viewCX: this.camera.viewX + VIEW_W / 2,
+      viewCY: this.camera.viewY + VIEW_H / 2,
       difficulty: this.plan.difficulty,
       beat: this.warpedBeat,
       // Real seconds per beat, from the live transport rather than a literal.
@@ -1783,8 +2140,18 @@ export class World {
    * consumer treating a level as an edge, and a single object with both would
    * put the wrong field one keystroke away from the right one.
    */
-  /** Bodies moved back to the ring because the player outran them. Diagnostic. */
+  /** Bodies moved back to the line ahead because the ship outran them. Diagnostic. */
   recycled = 0;
+  /**
+   * Bodies dropped because the ship outran them and the line ahead was full.
+   *
+   * The counterpart to `recycled` and printed beside it, because the two are
+   * the halves of one decision and reading either alone is misleading: all
+   * recycles and no retires is a population that never leaves, all retires and
+   * no recycles is a stage that empties out behind the player. Neither is
+   * visible from `enemies.length`.
+   */
+  retired = 0;
   /** Set on the step the player asks for their banked offers. See `update`. */
   private offerEdge = false;
   /*
@@ -1922,7 +2289,16 @@ export class World {
      * would jerk on every impact, and hitstop is meant to be felt in the world
      * rather than in the viewport.
      */
-    this.camera.follow(this.player.x, this.player.y, dt);
+    /*
+     * `this.trackY` as it stands, i.e. as of the START of this step — the rail
+     * is advanced further down, inside the block that knows `simDt`, because
+     * the treadmill has to stop when the world stops and the two things that
+     * stop it (hitstop and an open level-up offer) are both resolved after
+     * this line. The view is therefore one step behind the window the ship is
+     * clamped into: 2.5 px at the fixed 120 Hz step, a constant offset rather
+     * than jitter, because both advance at the same rate.
+     */
+    this.camera.follow(this.player.x, this.player.y, this.trackY, dt);
     let simDt = this.camera.consumeHitstop(dt);
     if (simDt <= 0) return;
 
@@ -2054,12 +2430,39 @@ export class World {
     this.applyRigHealth();
 
     if (this.phase !== 'over') {
+      /*
+       * THE TREADMILL, IN TWO LINES, AND THE ORDER OF THEM IS THE DESIGN.
+       *
+       * ROLL. The rail advances whatever the player does. This is the half
+       * that makes "you cannot stop" structural rather than a rule: there is
+       * no input, no status effect and no build that reaches this line. It is
+       * on `simDt`, so hitstop and the level-up pause freeze the track along
+       * with everything else — a stage that kept scrolling behind four cards
+       * would be the exact pressure the pause exists to remove.
+       *
+       * DRAG, after the ship has moved. If the ship has got ahead of the front
+       * of the window, the window comes with it; it never goes back. `Math.min`
+       * because forward is -y, and it is a min rather than a clamp for the
+       * same reason: a rail that could be pushed BACKWARDS by a ship drifting
+       * to the rear would be a rail that stops, and then the treadmill is just
+       * a camera again.
+       *
+       * The two together are the whole speed model. Hands off: 300 px/s, and
+       * the ship sits at `TRACK_ANCHOR`. Hold forward: the ship pulls out to
+       * `TRACK_AHEAD` at +130 px/s relative, touches the front, and from then
+       * on the WHOLE STAGE travels at 430. Hold back: the ship falls to
+       * `TRACK_BEHIND` at -130, touches the back, and is carried at 300 with
+       * the crowd closing.
+       */
+      this.trackY -= CRUISE_SPEED * simDt;
+      this.carryStage(simDt);
       const expired = this.player.update(
         simDt,
         input,
-        { w: this.width, h: this.height },
+        this.trackBounds(),
         this.mods.moveSpeed,
       );
+      this.trackY = Math.min(this.trackY, this.player.y - VIEW_H * TRACK_AHEAD);
       for (const kind of expired) this.bus.emit('powerup:expire', { kind });
 
       if (input.bomb && this.player.bombs > 0 && this.player.invuln <= 0) this.detonateBomb();
@@ -2141,14 +2544,17 @@ export class World {
        * counted whether or not either passive is held, so a zero fire count can
        * be told apart from a run that never moved or never stopped.
        */
-      const speed = Math.hypot(this.player.vx, this.player.vy);
+      // One read of the ship's speed RELATIVE TO THE STAGE, feeding both poles
+      // of the pair: UP-TEMPO pays for having it and FERMATA pays for not.
+      // See `driftSpeed` for why it is the stage's frame and not the world's.
+      const speed = this.driftSpeed();
       const alive = this.phase !== 'over' && !this.player.dead;
       if (speed > 0 && alive) this.ruleChances.trail++;
       if (speed < World.STILL_SPEED && alive) this.stillTime += simDt;
       else this.stillTime = 0;
     }
     if (this.rules.trailDamage > 0 && this.phase !== 'over' && !this.player.dead) {
-      this.trailSince += Math.hypot(this.player.vx, this.player.vy) * simDt;
+      this.trailSince += this.driftSpeed() * simDt;
       if (this.trailSince >= Math.max(20, this.rules.trailEvery) && this.novas.length < World.TRAIL_CEILING) {
         this.trailSince = 0;
         const maxR = Math.max(12, this.rules.trailRadius);
@@ -2617,6 +3023,70 @@ export class World {
       if (!lunging) e.move(e, dt * scale, ctx);
 
       /*
+       * THE CROWD TRAVELS WITH THE STAGE.
+       *
+       * WHY THIS EXISTS AND WHY IT IS ONLY ENEMIES. The owner's second note
+       * reversed the arrival direction: everything spawns BEHIND the ship now.
+       * A body placed behind a ship that is permanently moving away from it
+       * can never close — at the first revision's numbers the fastest mob made
+       * 285 px/s against a cruise of 300, so the entire population was
+       * unreachable by construction. Measured in play: 16 enemies ALIVE and
+       * ZERO on screen. `docs/research-density.md` §6 has the same finding from
+       * the other side, where bodies arriving behind a running ship read as
+       * scenery and hits taken fell 18.3 to 1.0.
+       *
+       * So the stage carries them. Every body is advanced along the travel
+       * axis at exactly `CRUISE_SPEED`, which means that IN THE STAGE'S FRAME
+       * the pursuit behaves precisely as it did before there was a treadmill:
+       * the same `spec.speed`, the same `SPEED_CEILING`, the same standoff, the
+       * same lunge reach, all of it still calibrated. What the treadmill adds
+       * is that the ship can push against the stage by `TRIM_SPEED` — pull away
+       * from the crowd by 260 px/s, or drop back into it by the same — and
+       * that the ground is visibly going past.
+       *
+       * THE FIRST VERSION CARRIED ONLY ENEMIES AND THAT WAS WRONG, measured.
+       * The argument for it was that shards and drops already COMMIT and home
+       * at up to 1265 px/s, that pools are laid ON the ground and are supposed
+       * to be left behind, and that particles are cosmetic. Every one of those
+       * is a statement about a ship that flies INTO the place things are
+       * dropped, which is what the geometry was before the owner reversed it.
+       * The ship now flies AWAY from every corpse: a shard appears astern and
+       * is receding at `CRUISE_SPEED` from the frame it exists, so it is
+       * outrun before the commit radius can ever see it. Shard collection fell
+       * to 28.3% against 54.6% on the pre-treadmill tree, XP income with it,
+       * and `arena` reported level 20 at eighteen minutes against 61.
+       *
+       * So EVERYTHING in the world rides — see `carryStage`, which enumerates
+       * it — and the only thing that does not is the ship, which is the whole
+       * definition of a treadmill. The boss is the one exception among enemies:
+       * it orbits `ctx.viewCX/viewCY`, which is the camera, which already
+       * rides, so carrying it too would make it fight its own easing.
+       *
+       * `hopFromY`/`hopToY` are carried too. `stutterHop` writes `e.y`
+       * ABSOLUTELY from a pair of endpoints captured when the hop began, so a
+       * drift applied to `e.y` alone would be thrown away on the very next step
+       * and the most numerous shape in the game would be the one that could not
+       * keep up. That is the kind of thing that is invisible until somebody
+       * counts, so it is counted: `tools/pursuit.mjs` reports arrivals that
+       * reach contact range, per archetype.
+       *
+       * On the RAW dt, not `dt * scale`: TIMEWARP slows the enemy CLOCK, and
+       * the stage is not on the enemy clock. A frozen or slowed body still
+       * rides, exactly as a frozen body on a real conveyor would.
+       */
+      if (e.archetype !== 'conductor') {
+        const carry = CRUISE_SPEED * dt;
+        e.y -= carry;
+        e.hopFromY -= carry;
+        e.hopToY -= carry;
+      }
+      // The rest of the world is carried by `carryStage`, once per step, for
+      // the reasons written there. Enemies are carried HERE instead because
+      // `stutterHop` writes `e.y` absolutely from endpoints captured at the
+      // start of the hop, so the carry has to land after that mover has run and
+      // has to move the endpoints with it.
+
+      /*
        * Culled on all four edges, at a much deeper margin than it spawns at.
        *
        * The old test was "past the bottom, or well off either side", which is
@@ -2648,96 +3118,149 @@ export class World {
        * culling against the view and would land in the same place.
        */
       /*
-       * RECYCLE A BODY THE PLAYER HAS LEFT BEHIND, rather than letting it
-       * loiter nine hundred pixels away for the rest of the run.
+       * WHAT HAPPENS TO A BODY THE SHIP HAS OUTRUN — and on a treadmill that
+       * is EVERY body, eventually, which is why the rule that used to live
+       * here could not survive unchanged.
        *
-       * THE DEFECT THIS FIXES, measured. arena reported 117 enemies ALIVE
-       * against 7.7 ON SCREEN -- roughly 93% of the population outside the
-       * view. That is not a rendering curiosity, it is the difficulty curve:
-       * `hasEntered` gates the lunge on being inside the view rect, correctly,
-       * because a body nobody can see must not charge out of the dark. So
-       * ninety-three percent of the crowd was structurally unable to attack,
-       * `tickLunge` was entered 314 times in 3,600 steps where it should have
-       * been entered about five times that, and it committed ZERO charges.
+       * WHAT IT WAS. Anything further from the player than 0.9 of the view
+       * diagonal was teleported back to a fresh point on the ring, keeping its
+       * type, health, statuses and investment. That fixed a measured defect —
+       * 117 enemies ALIVE against 7.7 ON SCREEN, 93% of the crowd structurally
+       * unable to attack because `hasEntered` gates the lunge on being visible
+       * — and it was measured again against the obvious alternative: culling
+       * at `view ± CULL_MARGIN` raised escapes per wave 8.58 -> 13.27 AND left
+       * the screen emptier, because it deletes shapes that are alive and
+       * chasing. The 0.9 radius itself was swept (0.7 halved the damage taken,
+       * because a recycled body has its `lungeBeat` reset and a field of
+       * shapes perpetually winding up never lands a charge).
        *
-       * The cause is geometry rather than a constant. Groups arrive on a ring
-       * around the VIEW, the player then moves, and the bodies left behind are
-       * still well inside a 3000x3000 field -- so the field cull below never
-       * touches them and they simply accumulate. Every one is paying full
-       * simulation cost to be somewhere the player will never look.
+       * WHY IT CANNOT STAY AS IT IS. All of that was reasoned about a player
+       * who sometimes leaves things behind. This player leaves EVERYTHING
+       * behind, permanently and by design: `CRUISE_SPEED` is 300 against a
+       * `SPEED_CEILING` of 285, so no mob can hold station and every body ever
+       * spawned crosses this radius sooner or later. An unconditional recycle
+       * therefore means nothing ever leaves the run — the population only ever
+       * grows, the wave-end condition (`enemies.length === 0`) can never be
+       * met, and outrunning a group you cannot kill stops being a decision
+       * because the group is simply re-dealt in front of you forever.
        *
-       * WHY RECYCLING RATHER THAN CULLING. `research-camera.md` §4 already ran
-       * the experiment: culling against `view ± CULL_MARGIN` raised escapes per
-       * wave from 8.58 to 13.27 AND left the screen emptier, because it deletes
-       * shapes that are alive and chasing. Vampire Survivors does the other
-       * thing, and it is the right one -- a body that falls too far behind is
-       * MOVED back to the ring, keeping its type, its health, its statuses and
-       * its level of investment. Nothing is destroyed, so nothing is escaped
-       * and the wave accounting is untouched; the crowd is simply kept where
-       * the player is.
+       * SO IT IS A BUDGET RATHER THAN A RULE, in two independent parts.
        *
-       * The radius is generous on purpose. It has to sit outside the spawn ring
-       * or a body would be recycled on the frame it arrives, and outside the
-       * cull-relevant band so a shape crossing the view edge is not yanked
-       * about. A diagonal and a half of the view is comfortably past both.
+       *   The POPULATION gate. Recycling only happens while the crowd around
+       *   the player is under the wave own target (`targetOnScreen`, which
+       *   `populationNearPlayer` is already the census for and which the
+       *   spawner already uses to decide whether to pull the next group
+       *   forward). Under the target, a passed body is the cheapest possible
+       *   way to fill the line ahead — it keeps the crowd where the player is,
+       *   which is the finding above, and it costs no spawn. At or over the
+       *   target there is nothing to fill, and the body is retired.
        *
-       * `lungeBeat` is reset so a recycled body cannot arrive already overdue
-       * and charge the instant it appears -- the same contract the offer pause
-       * honours when it pushes every schedule forward by the beats it cost.
+       *   The PER-BODY cap. `RECYCLE_LIMIT` applies regardless of population,
+       *   so that everything leaves eventually even through a long starved
+       *   stretch. Without it a single tough shape could ride the whole run
+       *   round and round in front of one player, which reads as the stage
+       *   having run out of ideas.
+       *
+       * RETIRED MEANS `escaped`, which is the existing vocabulary for "left
+       * without being killed": no score, no shard, no XP, `enemy:death` with
+       * `byPlayer: false`, and the wave accounting already handles it. That is
+       * the honest description of what the player did — they drove past it.
+       * It is also the answer to "things you have already passed should
+       * leave": they leave by being retired, and the ones that come back come
+       * back because the line ahead was thin.
+       *
+       * BACK TO THE LINE AHEAD, not to a random bearing on a ring. The old
+       * call drew `rng.range(0, TAU)`, which on a treadmill would put a third
+       * of every recycle behind the ship to be outrun again within the second.
        */
       if (e.archetype !== 'conductor' && !e.leaving) {
         const rdx = e.x - this.player.x;
         const rdy = e.y - this.player.y;
         /*
-         * 0.9 of the view diagonal, about 1294px.
+         * 2.5 view diagonals, about 3590px at the default view. IT WAS 0.9.
          *
-         * The first draft used 1.5, giving 2156px — and on a 3000x3000 field a
-         * player near the middle is at most about 2121px from the furthest
-         * corner, so the test could essentially never be true. `recycled`
-         * measured 0 across a full run: a rule that reads correctly and fires
-         * never, which is this repo's most-recorded defect and exactly why the
-         * counter was written alongside it.
+         * 0.9 WAS RIGHT FOR A CROWD THAT COULD BE LEFT BEHIND AND IS WRONG FOR
+         * ONE THAT RIDES. It was swept against a build where enemies stood on
+         * a static field and a moving player genuinely outran them — the sweep
+         * is worth keeping: 0.7 made the game EASIER by a factor of two in
+         * damage taken, because every recycle resets `lungeBeat` and buys the
+         * body a fresh windup it never finishes.
          *
-         * Swept rather than picked. The view's own half-diagonal is 718px and
-         * bodies arrive at 788 (that plus SPAWN_MARGIN), so anything at or
-         * under about 800 would recycle a shape on the frame it spawned.
+         * With the stage carrying the crowd, a body 1294px astern is not lost;
+         * it is closing at its own 180-285 px/s and is five to seven seconds
+         * away. Deleting it there deletes an enemy that was about to arrive,
+         * and it showed up as exactly that. Measured, arena at 6 min x 2:
          *
-         * Swept above that, and TIGHTER IS NOT BETTER, which was not obvious
-         * until it was measured:
+         *              enemies alive p50   on screen p50   nearest threat p50
+         *   0.9              12.5               3.0               0.75
+         *   2.2              28.0               6.5               0.59
+         *   control          26.5               8.5               0.75
          *
-         *              on-screen p90   mid-charge p90   hits taken   encircle p90
-         *   0.9 (this)     41.0             6.0            19.0          0.52
-         *   0.7            38.7             3.7             8.7          0.60
+         * DERIVED, not swept, and the derivation is `leaveAt`. A body that has
+         * genuinely been escaped is one that cannot get back before it gives
+         * up: `enemies.ts` sets `leaveAt = 18` seconds, and a mob closes at
+         * roughly 200 px/s in the stage's frame, so 3600px is the distance at
+         * which the two rules agree. 2.5 diagonals is 3590px at the default
+         * view and scales with the viewport, which a flat 3600 would not.
          *
-         * 0.7 keeps the crowd nominally closer and makes the game EASIER, by
-         * a factor of two in damage taken. The mechanism is in this block: a
-         * recycled body has its `lungeBeat` reset so it cannot arrive already
-         * overdue, so every recycle also buys that body a fresh cadence before
-         * it can charge. Recycle more often and the field fills with shapes
-         * that are perpetually winding up and never landing. 0.9 recycles
-         * enough to keep the population local and seldom enough that a charge
-         * still completes.
+         * IT IS A SAFETY NET NOW RATHER THAN A MECHANIC, and the counters say
+         * so: 37 recycles and 8 retirements across 8 simulated minutes, against
+         * 2,382 and 724 at 0.9. What it still catches is the one case the
+         * carry cannot — a ship that holds the boost, or runs to the far side
+         * of a 3000px-wide field, for long enough to leave the crowd for good.
          */
-        const recycleAt = Math.hypot(this.viewW, this.viewH) * 0.9;
-        if (rdx * rdx + rdy * rdy > recycleAt * recycleAt) {
-          const at = edgePoint(this.rng.range(0, TAU), this.spawnRing(), SPAWN_MARGIN);
-          e.x = at.x;
-          e.y = at.y;
-          e.prevX = at.x;
-          e.prevY = at.y;
-          e.lungeBeat = -1;
-          e.lungeTime = 0;
-          this.recycled++;
+        const passedAt = Math.hypot(this.viewW, this.viewH) * 2.5;
+        if (rdx * rdx + rdy * rdy > passedAt * passedAt) {
+          if (e.recycles >= RECYCLE_LIMIT || this.populationNearPlayer() >= this.targetOnScreen()) {
+            e.escaped = true;
+            e.alive = false;
+            this.retired++;
+          } else {
+            const at = edgePoint(this.spawnBearing('line'), this.spawnRing(), SPAWN_MARGIN);
+            e.x = at.x;
+            e.y = at.y;
+            e.prevX = at.x;
+            e.prevY = at.y;
+            // Reset so a recycled body cannot arrive already overdue and
+            // charge the instant it appears -- the same contract the offer
+            // pause honours when it pushes every schedule forward by the beats
+            // it cost.
+            e.lungeBeat = -1;
+            e.lungeTime = 0;
+            e.recycles++;
+            this.recycled++;
+          }
         }
       }
 
-      if (
-        e.archetype !== 'conductor' &&
-        (e.x < -CULL_MARGIN ||
-          e.x > this.width + CULL_MARGIN ||
-          e.y < -CULL_MARGIN ||
-          e.y > this.height + CULL_MARGIN)
-      ) {
+      /*
+       * The field cull, now on ONE AXIS, because the field has one edge left.
+       *
+       * It used to test all four sides of the 3000x3000 rectangle at
+       * `CULL_MARGIN` (320), and that choice was measured rather than assumed:
+       * `research-camera.md` §4 predicted that culling against the VIEW would
+       * make `escaped` fire for live enemies, the experiment agreed (escapes
+       * per wave 55% above the one-screen baseline, and the screen emptier
+       * with it), so enemies alone stayed on the field when everything else
+       * moved to the view.
+       *
+       * Two of those four sides no longer exist. `this.height` is `Infinity`,
+       * so `e.y > this.height + CULL_MARGIN` is a comparison that can never be
+       * true, and `e.y < -CULL_MARGIN` is one that becomes true for EVERY body
+       * about a second into a run — the ship crosses y = -320 at cruise in
+       * 1.1 s and never comes back, so left as it was this branch would have
+       * deleted the entire population, every wave, from the first minute
+       * onward. That is not a cull margin needing a retune; it is a rectangle
+       * that stopped being a rectangle.
+       *
+       * The travel axis is handled above instead, by pass-and-retire, which is
+       * the same job done in the frame of reference that still means
+       * something: distance from the SHIP rather than distance from an origin
+       * the ship left four hundred thousand pixels ago. The lateral margin is
+       * unchanged and still catches the one case it always caught — something
+       * driven sideways out of the arena by a knockback.
+       */
+      if (e.archetype !== 'conductor' && (e.x < -CULL_MARGIN || e.x > PLAYFIELD_W + CULL_MARGIN)) {
         e.escaped = true;
         e.alive = false;
       }
@@ -3251,7 +3774,38 @@ export class World {
      * genuinely playing a different game, but they gave up three other rig
      * levels for it.
      */
-    const pullRange = 210 * this.mods.pickupRadius;
+    /*
+     * 210 -> PICKUP_REACH, because a pickup on a treadmill gets ONE PASS.
+     *
+     * MEASURED, and it is the largest regression the treadmill produced.
+     * Three 6-minute runs of the dodge bot, shards spawned vs collected:
+     *
+     *     pre-treadmill (HEAD)          23444 / 12793   54.6%
+     *     treadmill, 210 x radius       22017 /  6921   31.4%
+     *     + PASS_REACH (this)           23913 / 10010   41.9%
+     *
+     * Kills were within 9% across all three, so nothing about the fight
+     * changed: 43% of the XP income simply stopped being picked up, and
+     * `arena` showed it downstream as level 61 -> 26 at an unchanged kill rate.
+     *
+     * THE REMAINING GAP IS THE TREADMILL AND IS NOT A BUG. 41.9% against 54.6%
+     * is a shard the ship went past and could not turn round for, which is the
+     * thing being bought by making the stage a track. Closing it entirely means
+     * a reach past the view's own diagonal, at which point collection is
+     * automatic and the MAGNET rig line stops being a decision. A flat 520
+     * (i.e. folding this term into the multiplier instead of adding it) reads
+     * 48.7% and does exactly that at high investment: 1768 px at a maxed
+     * `pickupRadius`. Measured, rejected, recorded.
+     *
+     * The mechanism is geometry rather than tuning. A shard commits the first
+     * step it is inside `pullRange` and homes forever after, so before the
+     * treadmill a player could turn round and go back for one. Now they cannot:
+     * the ship's slowest forward speed is 170 px/s and the rail never reverses.
+     * A shard that drops BEHIND the ship is receding from the moment it exists
+     * and there is no later — so the reach has to cover the PASS, which is a
+     * different job from the one 210 was sized for.
+     */
+    const pullRange = 210 * this.mods.pickupRadius + PASS_REACH;
     const pullSq = pullRange * pullRange;
     const magnet = this.mods.pickupRadius > 1.6;
 
@@ -3577,8 +4131,12 @@ export class World {
            * is the difference between a provable no-op and a plausible one.
            */
           const ring = this.spawnRing();
-          const entry = { x: ring.cx, y: ring.cy - ring.h / 2 - 120 };
-          const boss = spawnBoss(entry.x, entry.y, this.plan.difficulty, ring.cx, ring.cy, variant);
+          // FROM BEHIND, with everything else. It was `- ring.h/2 - 120`, the
+          // north edge, which is the one direction the owner asked for nothing
+          // to come from — and a boss that entered ahead would have been the
+          // single arrival `tools/spawnring.mjs` fails on.
+          const entry = { x: ring.cx, y: ring.cy + ring.h / 2 + 120 };
+          const boss = spawnBoss(entry.x, entry.y, this.plan.difficulty, variant);
           /*
            * A boss gets HALF the roster's ensemble scaling, and the asymmetry
            * is deliberate rather than a compromise.
@@ -4064,30 +4622,73 @@ export class World {
     this.spawnGroup(entry);
   }
 
+  /**
+   * Flip which flank of the track ahead is the clear one.
+   *
+   * WAS A JUMP AROUND A RING: `gapAngle += range(TAU/4, 3TAU/4)`, because a
+   * corridor that drifts a few degrees is a corridor you can stand in. The
+   * intent survives exactly; the geometry it is expressed in does not, because
+   * there is no ring any more — everything arrives inside `ARRIVAL_CONE` of
+   * straight ahead, and a gap placed at 200 degrees would be a gap in a wall
+   * that was never there.
+   *
+   * So the corridor is a SIDE of the track rather than a bearing on a circle,
+   * and rolling it means changing sides. `gapSide` is the sign of the clear
+   * flank; `gapAngle` is kept as the bearing of that flank so the debug
+   * accessor and anything downstream still has an angle to read.
+   *
+   * ALWAYS FLIPS. Strict alternation is learnable in a way a random jump is
+   * not, and the mitigation is that the group's own offset inside the cone is
+   * still rolled (`spawnBearing`), so knowing which side is thinner does not
+   * tell you where the traffic is. What it does tell you is which way to
+   * steer, which is the whole point of having a corridor at all.
+   */
   private rollGap(): void {
-    this.gapAngle = (this.gapAngle + this.rng.range(TAU * 0.25, TAU * 0.75)) % TAU;
+    this.gapSide = this.gapSide === 1 ? -1 : 1;
+    this.gapAngle = ARRIVAL_ANGLE + this.gapSide * ENCIRCLE_GAP_HALF;
   }
 
   /**
-   * Pick the bearing a group arrives on, guaranteeing it clears the corridor.
+   * Pick the bearing a group arrives on: inside the cone ahead, pushed away
+   * from the clear flank.
    *
-   * The group's own angular width is added to the exclusion, so a wide
-   * formation cannot have one wing straddling the gap. Without that the
-   * corridor silently narrows with the width of whatever formation was rolled,
-   * and a `sides` group (2.4 rad across) would close it entirely.
+   * WHAT THIS REPLACES, AND WHY THE OLD SHAPE COULD NOT SURVIVE. It used to
+   * draw uniformly from the whole circle minus a wedge of
+   * `ENCIRCLE_GAP_HALF + formationWidth/2`, and both halves of that stop
+   * working on a treadmill. The circle is wrong because everything the player
+   * passes is leaving, so a third of every wave used to be placed behind a
+   * ship that was already outrunning it — arrivals as scenery. And the
+   * additive exclusion is wrong because it was sized against `TAU`: at
+   * `sides`' 2.4 rad the wedge is 1.82 either side, which fits comfortably in
+   * a circle and does not fit at all in a cone 1.05 wide, so every wide
+   * formation would have fallen into the guard branch and arrived at the same
+   * place every time.
+   *
+   * A SOFT CORRIDOR, THEN, RATHER THAN AN EXCLUSION. The offset is drawn
+   * across the whole cone and then shifted 0.55 of a cone away from the clear
+   * flank, so the loaded side is dense, straight ahead is still live, and the
+   * clear side is thin without ever being empty. Compare the ring version's
+   * hard wedge: on a ring an empty wedge is an escape route, and on a track
+   * there is always an escape route (sideways, or the brake), so the corridor
+   * no longer has to guarantee survival — it has to give the next few seconds
+   * of steering a right answer.
+   *
+   * The `formation` argument is kept and is still read: a wide formation is
+   * pulled further toward its own side so its far wing does not sweep across
+   * the thin flank. That is the same sentence the old exclusion was making,
+   * scaled to fit.
    */
   private spawnBearing(formation: Formation): number {
-    const half = ENCIRCLE_GAP_HALF + formationWidth(formation) / 2;
-    const open = TAU - half * 2;
-    // Unreachable with today's table, and kept as the guard it is. The widest
-    // formation is `sides` at 2.4 rad, giving half = 1.82 and open = 2.64; the
-    // narrowest open arc over all six formations is that one, ten times this
-    // threshold (enumerated by `tools/deadhunt-ranges.mjs`). It would start to
-    // bite at a formation arc above about 5.0 rad, which is what makes it worth
-    // keeping — `crossstrung` and `stringsection` already carry 6.28 on the
-    // player's side, so an enemy formation that wide is not a strange idea.
-    if (open <= 0.2) return this.gapAngle + Math.PI;
-    return this.gapAngle + half + this.rng.next() * open;
+    const width = formationWidth(formation);
+    // `ENCIRCLE_GAP_HALF / ARRIVAL_CONE` is the corridor expressed as a share
+    // of the cone -- 0.59 today -- so the one constant that has always said
+    // "how wide is the way through" still says it, in the geometry that
+    // replaced the ring. The formation term adds up to 0.35 more for a wide
+    // group, which is the old exclusion's `+ formationWidth / 2` scaled to a
+    // cone it can actually fit inside.
+    const bias = this.gapSide * (ENCIRCLE_GAP_HALF / ARRIVAL_CONE + Math.min(0.35, width / 8));
+    const offset = clamp(this.rng.range(-1, 1) - bias, -1, 1);
+    return ARRIVAL_ANGLE + offset * ARRIVAL_CONE;
   }
 
   private spawnGroup(entry: {
@@ -4098,34 +4699,34 @@ export class World {
   }): void {
     this.rollGap();
     /*
-     * BIAS THE ARRIVAL TOWARD WHERE THE PLAYER IS RUNNING.
+     * ARRIVALS COME FROM AHEAD, and the heading bias that used to approximate
+     * that is GONE because the treadmill makes it exact.
      *
-     * The plan named this risk before any of it was built: "contact-only damage
-     * may make the game trivial ... without bullets, kiting may beat
-     * everything." It was right, and raising the count did not answer it.
-     * Measured across three passes: on-screen population p50 7.7 -> 10.7 ->
-     * 13.7 and p90 up to 45, while hits taken over twenty minutes went 18.3 ->
-     * 1.3 -> 1.0. More bodies arriving BEHIND a running ship is more scenery.
+     * What stood here: two thirds of groups were placed within 0.7 rad of the
+     * player's current heading, one third anywhere on the ring. Its reasoning
+     * is worth keeping and is now the reasoning for `ARRIVAL_CONE` -- "a slow
+     * enemy cannot threaten a fast one by chasing it, it can only be somewhere
+     * the ship is going", measured at the time as on-screen p50 7.7 -> 13.7
+     * with hits taken 18.3 -> 1.0 as the bias went in. That finding is why the
+     * spawn LINE is the right shape for this stage rather than a compromise.
      *
-     * A slow enemy cannot threaten a fast one by chasing it. It can only be
-     * somewhere the ship is going. Vampire Survivors spawns on the screen edge
-     * weighted toward the direction of travel for exactly this reason, and it
-     * is what lets its crowd stay dangerous while individually being slower
-     * than the player.
+     * Three reasons it is deleted rather than kept alongside the cone. It read
+     * `atan2(player.vy, player.vx)` and the ship's heading is now within 68
+     * degrees of straight ahead by construction, so two thirds of the draws
+     * would land inside the cone anyway and the term would be doing nothing
+     * while looking decisive -- this repository's most-recorded defect. Its
+     * `speed > 40` guard can no longer be false, because the ship's slowest
+     * forward speed is 170. And the trailing third it deliberately kept is the
+     * part that has actually stopped working: a group placed behind a ship
+     * cruising at 300 px/s against a `SPEED_CEILING` of 285 is a group that
+     * can never close, so it is not "the space behind not being empty", it is
+     * bodies spawned to be outrun. The flanks of the cone do that job now.
      *
-     * Two thirds weight, not all of it. A ring that only ever fills ahead is a
-     * wall to be turned away from, and turning would then always be free --
-     * the danger has to be in FRONT without the space behind being empty, so
-     * the trailing third keeps the ring closed enough that doubling back costs
-     * something. `rollGap` still carves the escape corridor on top of this, so
-     * there is always a way out to be found.
+     * Two `rng` draws became one, so the stream advances differently from here
+     * and no run is comparable to a pre-treadmill run body-for-body. That is
+     * the change, not a side effect of it.
      */
-    const speed = Math.hypot(this.player.vx, this.player.vy);
-    const heading = speed > 40 ? Math.atan2(this.player.vy, this.player.vx) : null;
-    const bearing =
-      heading !== null && this.rng.next() < 0.66
-        ? heading + this.rng.range(-0.7, 0.7)
-        : this.spawnBearing(entry.formation);
+    const bearing = this.spawnBearing(entry.formation);
     const ring = this.spawnRing();
     const positions = arenaSpawnPositions(entry.formation, entry.count, ring, bearing, SPAWN_MARGIN);
     /*
@@ -4210,22 +4811,33 @@ export class World {
       }
       if (this.movement === 'flank') {
         /*
-         * FLANKED, in the round.
+         * FLANKED, on a track.
          *
-         * "They come from the wings" needs a redefinition here, because on a
-         * ring every arrival is from a wing. What made it distinct was that the
-         * group arrived SPLIT — pressure from two bearings at once instead of
-         * one — so that is what it means now: half the group is placed a half
-         * turn away from the other half. It is the one movement that
-         * deliberately puts enemies on both sides of the escape corridor
-         * without closing it, which is exactly the flanking feeling.
+         * "They come from the wings" has been redefined twice now. On a ring
+         * every arrival is from a wing, so what made it distinct there was that
+         * the group arrived SPLIT — two bearings at once — and the other half
+         * was placed `bearing + PI`, a half turn away.
+         *
+         * A HALF TURN IS BEHIND YOU HERE, and that is the whole of this fix.
+         * Half of every flanking wave would have been placed at the ship's
+         * stern, where it is outrun before it can close, so the movement whose
+         * banner says THEY COME FROM THE WINGS would in fact have sent half its
+         * bodies to trail the player harmlessly out of shot.
+         *
+         * Mirrored across the track instead: reflecting the bearing through
+         * `FORWARD_ANGLE` puts the second half on the opposite flank of the
+         * same leading edge, at the same distance and the same depth. Both
+         * halves arrive, both are ahead, and the ship has to pick a side —
+         * which is what flanking has always meant here and is now literally
+         * true of the geometry.
          */
         if (i % 2 === 1) {
           // The same ring, deliberately captured once above rather than
           // re-derived: the camera moves between frames but not between the two
           // halves of one group, and re-reading it here would let a fast pan
           // split a formation across two different rectangles.
-          const opposite = arenaSpawnPositions(entry.formation, entry.count, ring, bearing + Math.PI, SPAWN_MARGIN)[i];
+          const mirrored = 2 * ARRIVAL_ANGLE - bearing;
+          const opposite = arenaSpawnPositions(entry.formation, entry.count, ring, mirrored, SPAWN_MARGIN)[i];
           e.x = e.prevX = e.homeX = opposite.x;
           e.y = e.prevY = e.homeY = opposite.y;
         }
@@ -4548,7 +5160,7 @@ export class World {
   private dropPowerup(x: number, y: number): void {
     this.secsSinceDrop = 0;
     const def = this.rollDrop();
-    this.drops.push({ x, y, vx: this.rng.range(-40, 40), vy: 0, kind: def.kind, age: 0, alive: true });
+    this.drops.push({ x, y, vx: this.rng.range(-40, 40), vy: 0, kind: def.kind, age: 0, alive: true, committed: false });
   }
 
   // -------------------------------------------------------------------------
@@ -5874,14 +6486,16 @@ export class World {
     const hitsLeft = (this.player.lives - 1) * this.player.maxHp + this.player.hp;
     if (!this.player.dead && hitsLeft <= 3 && this.encoresThisWave === 0 && this.snapshot.campPressure < World.CAMP_MERCY_BLOCK) {
       this.encoresThisWave++;
+      const at = this.onTrack(this.player.x, this.player.y - 110);
       this.drops.push({
-        x: clamp(this.player.x, 60, this.width - 60),
-        y: clamp(this.player.y - 110, 60, this.height - 60),
+        x: at.x,
+        y: at.y,
         vx: 0,
         vy: 0,
         kind: 'encore',
         age: 0,
         alive: true,
+        committed: false,
       });
     }
 
@@ -8184,6 +8798,12 @@ export class World {
    * imported from the class rather than re-picked here, because two "is the
    * ship moving" numbers would drift and the player would have to learn both.
    *
+   * "STOP" MEANS LET GO, not stand still: the ship cannot stand still on a
+   * treadmill, and the threshold is compared against `driftSpeed()` — velocity
+   * relative to the stage — for the reasons written at `STILL_SPEED`. This
+   * half of OSTINATO fired 38 times before the treadmill and ZERO after, until
+   * that was fixed; `tools/propfire.mjs` is what found it.
+   *
    * The two halves are counted separately (`wake` and `wakestrike`) because
    * half of this working is a card that lies half the time: a weapon that laid
    * pools and never struck would look completely healthy from the outside.
@@ -8200,7 +8820,7 @@ export class World {
    */
   private fireWake(id: string, s: InstrumentStats): void {
     const p = this.player;
-    const moving = Math.hypot(p.vx, p.vy) >= World.STILL_SPEED;
+    const moving = this.driftSpeed() >= World.STILL_SPEED;
     const n = clamp(Math.round(s.count) || 1, 1, 3);
 
     if (moving) {
@@ -8220,13 +8840,8 @@ export class World {
        */
       const back = Math.atan2(-p.vy, -p.vx);
       const before = this.wells.length;
-      this.pushField(
-        id,
-        s,
-        clamp(p.x + Math.cos(back) * 42, 60, this.width - 60),
-        clamp(p.y + Math.sin(back) * 42, 60, this.height - 60),
-        n,
-      );
+      const at = this.onTrack(p.x + Math.cos(back) * 42, p.y + Math.sin(back) * 42);
+      this.pushField(id, s, at.x, at.y, n);
       this.deliveryFires.wake += this.wells.length - before;
       return;
     }
@@ -8512,13 +9127,8 @@ export class World {
     // which is what it used to be and which in the round would fire it into a
     // wall roughly half the time.
     const reach = 210;
-    this.pushField(
-      held.id,
-      held.stats,
-      clamp(p.x + p.facingX * reach, 60, this.width - 60),
-      clamp(p.y + p.facingY * reach, 60, this.height - 60),
-      clamp(Math.round(held.stats.count) || 1, 1, 3),
-    );
+    const at = this.onTrack(p.x + p.facingX * reach, p.y + p.facingY * reach);
+    this.pushField(held.id, held.stats, at.x, at.y, clamp(Math.round(held.stats.count) || 1, 1, 3));
     this.camera.shake(0.35);
     this.announce(labelOf(held.id), '', 'item');
   }
@@ -8539,13 +9149,8 @@ export class World {
     const spread = Math.max(40, s.area) * 0.85;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * TAU;
-      this.pushWell(
-        id,
-        s,
-        clamp(x + Math.cos(a) * spread, 60, this.width - 60),
-        clamp(y + Math.sin(a) * spread, 60, this.height - 60),
-        1 / n,
-      );
+      const at = this.onTrack(x + Math.cos(a) * spread, y + Math.sin(a) * spread);
+      this.pushWell(id, s, at.x, at.y, 1 / n);
     }
   }
 
@@ -8666,20 +9271,32 @@ export class World {
       else for (const lane of this.tacetLanes) hushed.push(lane);
     }
     /*
-     * DEPRECATED, and kept populated only so nothing downstream breaks on the
-     * frame this lands.
+     * UNDEPRECATED. It has a referent again, and it is the one it always had.
      *
-     * "How far up the playfield the player is" was a genuine danger proxy in
-     * the vertical game and means nothing in the round: the player lives near
-     * the middle, so this now spends a run hovering around 0.5. It is exactly
-     * the shape `tools/deadconditions.mjs` exists to find — a condition that
-     * looks responsive in the source and is a constant in play.
+     * "How far up the playfield the player is" was a real danger proxy in the
+     * vertical game, and the arena killed it: on a ring the ship lives near
+     * the middle, so `1 - y/height` spent a run hovering at 0.5 — a condition
+     * that looks responsive in the source and is a constant in play, which is
+     * exactly the shape `tools/deadconditions.mjs` exists to find. It was left
+     * populated so nothing downstream broke, and marked dead.
      *
-     * `nearestThreat` and `encirclement` are the replacements. Nothing here
-     * re-derives the melody's register from them; that is the audio side's call
-     * and changing it from this file would be changing someone else's music.
+     * The treadmill gives it back, in the same words: the ship's position in
+     * the TRACK WINDOW is how far up the playfield it is, 0 at `TRACK_BEHIND`
+     * and 1 at `TRACK_AHEAD`. It is the same sentence and the same danger — up
+     * the screen is where the arrivals are — and it is a quantity the player
+     * moves on purpose, several times a wave, with a throttle.
+     *
+     * The literal old expression would now be `1 - y/Infinity`, which is a
+     * constant 1: dead in the other direction, and silently, which is why this
+     * is rewritten rather than left.
+     *
+     * The music side is unchanged. `nearestThreat` and `encirclement` are
+     * still what the director reads for the arena's danger; whether it wants
+     * this back as well is the audio side's call and not this file's.
      */
-    s.playerHeight = clamp01(1 - this.player.y / this.height);
+    s.playerHeight = clamp01(
+      (this.trackY + VIEW_H * TRACK_BEHIND - this.player.y) / Math.max(1, VIEW_H * (TRACK_BEHIND - TRACK_AHEAD)),
+    );
 
     /*
      * The crowd term. Was `s.bulletCount = this.enemyBullets.count`.

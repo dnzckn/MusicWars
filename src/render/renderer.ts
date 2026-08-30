@@ -22,7 +22,7 @@ import { INVULN_ON_HIT } from '../game/player';
 import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
 import { SHARD_HUES, Status } from '../game/world';
-import { PLAYFIELD_H, PLAYFIELD_W } from '../game/field';
+import { PLAYFIELD_W } from '../game/field';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
 import { playerBulletSprites, ROTATIONS, softDot } from './sprites';
@@ -215,7 +215,7 @@ export class Renderer {
     addEventListener('resize', () => {
       this.resized = true;
     });
-    this.grid = new WarpGrid(world.width, world.height);
+    this.grid = this.makeGrid();
     this.wireProgression(world);
     this.bloom = document.createElement('canvas');
     /*
@@ -270,9 +270,34 @@ export class Renderer {
    * `tools/gridview.mjs` exists to defend. Reallocating it here would be the
    * silent revert that check is watching for.
    */
+  /**
+   * Allocate the warp lattice: the whole field across the track, one view plus
+   * a cell of bleed along it.
+   *
+   * WAS `new WarpGrid(world.width, world.height)` and that line is now a
+   * `Float32Array(Infinity)`, because `world.height` is `Infinity`. The
+   * treadmill did not make a view-sized lattice a good idea, it made it the
+   * only possible one — see the constructor comment in `grid.ts`, which
+   * records that the same change was proposed, measured and rejected on a
+   * bounded field for reasons that no longer apply.
+   *
+   * `SPACING` is not exported, so the bleed is expressed as a round 128 px —
+   * two cells at the current 62 and at least one at anything up to 128. Over-
+   * allocating by a row is 49 points; under-allocating is a lattice that ends
+   * inside the frame.
+   *
+   * Rebuilt on every view change rather than resized, because the row count is
+   * a function of `viewH` and a resize is rare, one-off, and already
+   * reallocates the bloom bitmap two lines away.
+   */
+  private makeGrid(): WarpGrid {
+    return new WarpGrid(this.world.width, this.world.viewH + 128);
+  }
+
   viewChanged(): void {
     const w = this.world;
     this.resized = true;
+    this.grid = this.makeGrid();
     const bw = Math.max(1, Math.round(w.viewW / 4));
     const bh = Math.max(1, Math.round(w.viewH / 4));
     if (this.bloom.width !== bw || this.bloom.height !== bh) {
@@ -632,11 +657,23 @@ export class Renderer {
     const v = this.viewRect();
     const FADE = 260;
 
+    /*
+     * TWO WALLS, NOT FOUR. The arena is bounded across the track and unbounded
+     * along it, so there is a left edge and a right edge and there is nothing
+     * ahead or behind to draw.
+     *
+     * The north and south bands are DELETED rather than left to evaluate
+     * false. `PLAYFIELD_H` is `Infinity`, so `v.y + v.h > Infinity - FADE` is
+     * never true and the southern band would simply have been dead code; but
+     * `v.y < FADE` is true for the first two seconds of every run and false
+     * for the rest of it forever, which would have opened each run with a
+     * bright wall across the top of the screen announcing a boundary the ship
+     * is about to fly through. That is worse than dead — it is a lie about the
+     * geometry, on the frame the player is forming their first idea of it.
+     */
     const nearL = v.x < FADE;
     const nearR = v.x + v.w > PLAYFIELD_W - FADE;
-    const nearT = v.y < FADE;
-    const nearB = v.y + v.h > PLAYFIELD_H - FADE;
-    if (!nearL && !nearR && !nearT && !nearB) return;
+    if (!nearL && !nearR) return;
 
     // 0 at FADE away, 1 with the edge against the view edge. Squared so the
     // last stretch of the approach carries most of the change.
@@ -663,8 +700,6 @@ export class Renderer {
     const D = 150;
     if (nearL) band(0, v.y, 0, v.y + v.h, lit(v.x), D, 0);
     if (nearR) band(PLAYFIELD_W, v.y, PLAYFIELD_W, v.y + v.h, lit(PLAYFIELD_W - (v.x + v.w)), -D, 0);
-    if (nearT) band(v.x, 0, v.x + v.w, 0, lit(v.y), 0, D);
-    if (nearB) band(v.x, PLAYFIELD_H, v.x + v.w, PLAYFIELD_H, lit(PLAYFIELD_H - (v.y + v.h)), 0, -D);
   }
 
   private viewRect(): { x: number; y: number; w: number; h: number } {
@@ -685,6 +720,21 @@ export class Renderer {
    */
   private updateGrid(dt: number, tension: number): void {
     const w = this.world;
+    /*
+     * SCROLL THE SHEET UNDER THE CAMERA, before anything is written into it.
+     *
+     * Before the impulses, because `scrollTo` renumbers rows and re-seeds the
+     * ones that fall off the end: a shock applied first and scrolled second
+     * would be applied to a row that then became a different piece of ground.
+     * One cell of margin above the view so the row the clip draws as bleed
+     * exists.
+     *
+     * `camera.viewY` and not `world.trackY`, for the same reason the grid clip
+     * uses `viewRect()`: this has to agree with what is actually drawn,
+     * screenshake included, or the top row of the lattice pops in and out of
+     * frame every time something explodes.
+     */
+    this.grid.scrollTo(w.camera.viewY - 64);
     for (const s of w.shocks) this.grid.impulse(s.x, s.y, s.radius, s.strength);
     w.shocks.length = 0;
 

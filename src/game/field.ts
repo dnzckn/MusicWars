@@ -19,41 +19,111 @@
  */
 
 /*
- * The field: 720x960, then 900x1120, now 3000x3000.
+ * The field: 720x960, then 900x1120, then 3000x3000 — and now 3000 x INFINITE.
  *
- * "The arena is too small" was one of the four launch complaints, and until
- * this line the field WAS the screen — one static rectangle, no scrolling, no
- * camera. It is now eleven times the area and the camera shows one screen of
- * it, which is the change a player actually notices.
+ * THE STAGE IS A TREADMILL. The ship always moves forward; the track never
+ * ends. So the field is bounded ACROSS the direction of travel and unbounded
+ * ALONG it, and these two constants say exactly that. `PLAYFIELD_W` is a real
+ * wall the player can reach, see (`Renderer.drawBounds`) and be stopped by.
+ * `PLAYFIELD_H` is not a wall at all.
  *
- * SQUARE, AND NOT 3x OF 900x1120. The comment this replaces argued the case
- * against itself for two revisions: a survivor arena wants to be square or
- * landscape, 900x1120 is a shmup's portrait aspect, and it meant the ring the
- * enemies arrive on was 25% further away north and south than east and west.
- * Keeping 0.80 while multiplying by three would have preserved that asymmetry
- * at three times the scale. The spawn ring is the VIEW now, so the arrival
- * geometry is symmetric-or-not independently of this number — but the FIELD's
- * shape still decides which corners exist, how far a run can go in each
- * direction, and where the camera clamps. Square is the honest answer to all
- * three.
+ * FORWARD IS -Y. The art, the horizon gradient, the starfield's downward
+ * scroll and the boss's entry bearing all already assumed "up the screen is
+ * where you are going"; travelling toward -y is the only direction that costs
+ * none of them a change. A run therefore drives `player.y` steadily NEGATIVE
+ * and it never comes back.
  *
- * 3000, not the 1000x1000 the old comment recommended. 1000x1000 was written
- * when the field and the screen were the same rectangle, so it was a proposal
- * about the SCREEN. With a camera the two numbers are free of each other, and
- * 3000 is 3.3 screens wide by 2.7 tall — big enough to have somewhere to run
- * to, small enough that `CULL_MARGIN` and the wall-bounce rectangle still mean
- * something and a wave can still end.
+ * UNBOUNDED, NOT WRAPPED, and the reason is risk rather than elegance.
+ *
+ *   The alternative is a periodic rebase: keep a finite period, and whenever
+ *   the camera passes it add the period back to the y of everything alive.
+ *   That keeps every coordinate small — and it requires finding EVERY array
+ *   that holds a world y on the frame it happens. In this file's world that is
+ *   enemies (x, y AND prevX/prevY AND hopFrom/hopTo AND lungeVX targets), two
+ *   bullet pools, particles, drops, shards, wells, novas, summons, effects,
+ *   popups, shocks, the grid's lattice state and the camera. Missing one is a
+ *   body that teleports a whole period once every few minutes, in a build that
+ *   otherwise looks perfect, and there is no gate in this repository that
+ *   would catch it. Unbounded has no such failure: it either works everywhere
+ *   or nowhere.
+ *
+ *   The cost of unbounded is float precision, and it was worked out rather
+ *   than waved at. The simulation is float64 throughout: at cruise (300 px/s)
+ *   a twenty-minute run reaches 360,000 px, where a double's spacing is
+ *   6e-11 px. Even a ten-hour session reaches 1.1e7, spacing 2e-9. Nothing in
+ *   the simulation is float32.
+ *
+ *   Two places are NOT float64 and both were checked. `WarpGrid` stores its
+ *   lattice in `Float32Array`s — so its rows scroll with the camera and its
+ *   home positions are integer multiples of `SPACING` (62); float32 holds
+ *   every integer exactly to 16,777,216, i.e. 15.5 hours at cruise, and the
+ *   displaced positions sit within 44 px of home where the spacing at 1e6 is
+ *   0.0625 px. And Skia's path coordinates are 32-bit: the renderer hands it
+ *   world y plus a `translate` of -y, so the cancellation error is one ulp of
+ *   the magnitude — 0.03 px at 5e5, 0.5 px at 1e7. The picture degrades at
+ *   about eight hours of continuous play and is exact long before that.
+ *
+ * `Infinity` RATHER THAN A LARGE FINITE NUMBER, deliberately. A field height
+ * of 1e9 would let every `clamp(y, 60, height - 60)` and every
+ * `y > height + CULL_MARGIN` keep compiling and keep being wrong quietly —
+ * exactly the silent re-baseline `docs/research-camera.md` §7b describes.
+ * Infinity makes each one either obviously inert or obviously broken:
+ * `clamp(y, 60, Infinity)` on a negative y snaps to 60, which is thousands of
+ * pixels behind the ship and impossible to miss. Every site that read
+ * `this.height` was found this way and converted; `EnemyContext.width/height`
+ * were deleted outright because nothing read them.
  *
  * WHAT DOES NOT MOVE WITH IT. The two `<canvas>` elements in `index.html`
- * describe the VIEW. They stay. That file now says so in a comment, because
- * the previous version of this note warned that moving the field without
- * moving them makes the simulation and the viewport disagree — that warning
- * was correct about the coupling and wrong about the direction, and a reader
- * arriving from either file needs to be told which of the two pairs it
- * belongs to before they "fix" it.
+ * describe the VIEW. They stay.
  */
 export const PLAYFIELD_W = 3000;
-export const PLAYFIELD_H = 3000;
+export const PLAYFIELD_H = Infinity;
+
+/*
+ * THE WINDOW THE SHIP LIVES IN, as fractions of the view height.
+ *
+ * Star Fox's contract, and the owner's: "you can move forward and backwards
+ * too but not too far". The camera advances on its own; the ship may push
+ * ahead of it or fall back behind it, inside a band, and may never leave the
+ * frame or stop.
+ *
+ *   TRACK_ANCHOR   where the ship sits with the stick centred: 34% down the
+ *                  view. Not the middle, because the screen is not symmetric
+ *                  in what it is FOR — and the direction that matters is
+ *                  BEHIND. Everything arrives from the stern (`ARRIVAL_ANGLE`
+ *                  in `world.ts`), so the ship rides high in the frame and the
+ *                  pursuit fills the two thirds below it: 739 px of visible
+ *                  chase at the default view, which is where the player has to
+ *                  be looking.
+ *
+ *                  IT WAS 0.60 FOR ONE REVISION, with the ship low and the
+ *                  screen ahead of it, because arrivals were ahead. The owner
+ *                  reversed that — "enemies spawn infront of me, they should
+ *                  only spawn behind me" — and the anchor has to follow the
+ *                  threat or the game is played in the strip of screen nobody
+ *                  is looking at.
+ *   TRACK_AHEAD    the front of the window, 0.16.
+ *   TRACK_BEHIND   the back of the window, 0.56. Symmetric about the anchor,
+ *                  so the two halves of the stick cost the same to travel.
+ *
+ * The band is 0.40 of the view — 448 px at 1120 — and at `TRIM_SPEED` either
+ * end is 0.8 s away. Deliberately quick: with the crowd travelling WITH the
+ * stage, this axis is a dodge and not only a throttle, and a dodge that takes
+ * two seconds is not one. Sideways is still faster, at 430 px/s.
+ *
+ * FRACTIONS OF THE VIEW, not pixels, because the view is responsive: the same
+ * band has to mean the same thing on a phone in portrait and on a 1080p
+ * window, and `VIEW_SPAN_*` above already bounds how far those two can differ.
+ *
+ * JUDGED, NOT MEASURED — the same status as the camera's deadzone and
+ * lookahead, and for the same reason: no node-only gate can tell you whether a
+ * throttle feels like travel. What IS measured is everything downstream of
+ * them, because the spawn line, the population census and the cull are all
+ * derived from the view these fractions cut up.
+ */
+export const TRACK_ANCHOR = 0.34;
+export const TRACK_AHEAD = 0.16;
+export const TRACK_BEHIND = 0.56;
 
 /*
  * WHAT THE CANVAS SHOWS, as opposed to what the simulation contains.

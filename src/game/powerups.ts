@@ -188,9 +188,25 @@ export interface PowerupDrop {
   kind: PowerupKind;
   age: number;
   alive: boolean;
+  /**
+   * True once the drop has been close enough once and is now chasing.
+   *
+   * See the note in `updateDrop`, and `Shard.committed` in `world.ts` for the
+   * same mechanism on the XP side and the measurement that produced it.
+   */
+  committed: boolean;
 }
 
 export const PICKUP_RADIUS = 30;
+
+/**
+ * How close a drop has to be before it commits and starts homing, in pixels.
+ *
+ * 240 + the same 310 of pass allowance `PASS_REACH` gives a shard in
+ * `world.ts` — see that constant for the derivation. A powerup has no rig
+ * multiplier of its own, so this is written out flat rather than as a sum.
+ */
+const DROP_REACH = 550;
 /**
  * The vertical game's auto-collect line — EXPORTED, IMPORTED BY NOTHING.
  *
@@ -241,20 +257,49 @@ export function updateDrop(
       d.vy = (d.vy / sp) * 620;
     }
   } else {
-    // Float up briefly, then settle into a slow fall. Gives the player a beat
-    // to notice it before deciding whether the trip is worth the risk.
+    /*
+     * Float up briefly, then settle into a slow fall. Gives the player a beat
+     * to notice it before deciding whether the trip is worth the risk.
+     *
+     * "UP" AND "A SLOW FALL" ARE NOW RELATIVE TO A MOVING SHIP, and that is
+     * worth stating rather than leaving as an unexamined inheritance: the
+     * float is toward the line ahead (-y is forward) and the fall is toward
+     * the stern. So a drop leans into the ship's path for a third of a second
+     * and then lets the ship overtake it, which is a better read on a
+     * treadmill than it was in the round.
+     */
     d.vy = d.age < 0.35 ? -110 : Math.min(d.vy + 220 * dt, 96);
-    // A weak always-on attraction once it is close. Without this a drop that
-    // spawns two ship-widths away simply sails past while you are dodging, and
-    // the player never gets a loadout at all.
+    /*
+     * A weak always-on attraction once it is close. Without this a drop that
+     * spawns two ship-widths away simply sails past while you are dodging, and
+     * the player never gets a loadout at all.
+     *
+     * COMMITTED ON FIRST CONTACT, exactly as an XP shard is (`Shard.committed`
+     * in `world.ts` records why), and for a reason the treadmill made sharp.
+     * The pull used to re-test `d2 < 240^2` every step, so a drop only kept
+     * coming while the player stayed close. On a rail the player never stays
+     * close to anything: measured over three 6-minute runs of the dodge bot,
+     * drops collected fell from 47.5% before the treadmill to 29.1% after,
+     * with the number spawned unchanged. Nearly all of the loss is drops that
+     * had started moving toward the ship and then gave up as it went past.
+     *
+     * The range widens with it, 240 -> `DROP_REACH`, for the reason spelled
+     * out at `PASS_REACH` in `world.ts`: a pickup gets one pass, and the reach
+     * has to cover a pass rather than an approach.
+     */
     const dx = playerX - d.x;
     const dy = playerY - d.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 < 240 * 240 && d.age > 0.35 && pullScale > 0) {
-      const len = Math.sqrt(d2) || 1;
-      const pull = 520 * (1 - len / 240) * pullScale;
-      d.vx += (dx / len) * pull * dt;
-      d.vy += (dy / len) * pull * dt;
+    if (d.age > 0.35 && pullScale > 0) {
+      if (!d.committed && d2 < DROP_REACH * DROP_REACH) d.committed = true;
+      if (d.committed) {
+        const len = Math.sqrt(d2) || 1;
+        // Once committed the falloff is gone: a drop that has decided to come
+        // has to be able to cross ground the ship has already left, which is
+        // the same contract a committed shard has.
+        d.vx += (dx / len) * 520 * pullScale * dt;
+        d.vy += (dy / len) * 520 * pullScale * dt;
+      }
     }
     d.vx *= 1 - Math.min(1, dt * 1.2);
   }

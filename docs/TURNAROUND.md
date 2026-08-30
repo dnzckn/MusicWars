@@ -192,6 +192,182 @@ two canvas elements in `index.html`, and moving it once silently broke
 
 ## 9. Changelog
 
+### Track M: the harmony has chord symbols and the lanes have registers
+
+The complaint that opened this pass was "the music is still terrible ... even on
+level1 it's like terrible sounding likely need a large music refactor", after
+several point fixes. The point fixes were not wrong; they were the wrong SIZE.
+
+**The gap was of kind, not of degree.** Sixty published pieces from
+`eefano/strudel-songs-collection` were diffed against every function
+`src/audio/` calls. `voicing()` in 39 of 60, `anchor()` in 37, `chord()` in 29,
+`mode()` in 16 — and **zero** in this repo. They compose with chord symbols and
+let a dictionary spell them at a per-part anchor; this score hand-assembled note
+arrays and gave every lane the same three pitch classes at a different octave.
+
+**`dict('ireal')` resolves.** It is in fact `@strudel/tonal`'s DEFAULT
+dictionary (`voicings.mjs`, `setDefaultVoicings('ireal')`). `theory.ts` imports
+`renderVoicing` from `@strudel/tonal/tonleiter.mjs` — the exact function
+`Pattern.voicing()` calls once it has unwrapped a hap — and the `simple`
+dictionary from `ireal.mjs`, and uses them as plain arithmetic over MIDI.
+Cost, measured by building twice with and without: **+43.5 kB raw, +9.05 kB
+gzipped** (609.78 → 653.26 kB, 210.52 → 219.57 kB gzip).
+
+**Every chord now has a name.** All 61 (mode, degree) pairs across the nine
+modes resolve to seven iReal symbols — `^7 ×14, -7 ×20, 7 ×8, h7 ×8, o7 ×10,
+-^7 ×2, ^7#5 ×2` — and every one is a key of the dictionary. There is no
+fallback branch because nothing reaches one. Octatonic comes out `o7` on all
+eight degrees, which is what that mode IS.
+
+**The seventh is structural.** `Chord.notes` was `[0, 2, 4]` with the seventh
+kept in `colour`, whose own comment conceded it was "a gain the caller rides,
+not a note list". It is now a four-note chord partitioned as `core` (3) +
+`tensions` (1), re-derived by pitch class AFTER `voiceLead` re-octaves
+everything — because voicing destroys position, and a partition that does not
+survive it is a claim about the source rather than about the object.
+`tools/harmony.mjs` (written for this and **red at HEAD**) now passes all seven
+of its assertions, including that the stab's two tones agree with
+`@strudel/tonal`'s own `guidetones` dictionary in all 44 chords.
+
+**The ninth is reserved material.** `ACT_SHAPE.ninth` already gated a FADER on a
+tone an octave above the pad. It now selects `Extension` — the chord replaces
+its third with the ninth from the intensification on. Replaces, not adds:
+`buildChords` records a previous "add the ninth" being reverted for taking the
+stab from 46,464 haps to 69,696. Measured after: stab voices max 2 in both act
+families, so the reserved harmony costs zero onsets.
+
+#### The register map — the highest-value change, and the one measured hardest
+
+`theory.LANE_RANGE` is now a table of eight lane windows, imported by the
+builders **and** by `registermap` and `motorcheck`, which both used to hold
+their own copies. `tools/registermap.mjs` stopped being a readout and became a
+gate. Same tool, same 10,560-state sweep, same 761,376 haps:
+
+| | before | after |
+|---|---|---|
+| pitched groups with most notes in 200-800 Hz | **9 of 12** | **7 of 12** |
+| cross-lane pairs overlapping 9+ semitones (of 57) | **12** | **6** |
+| voice groups bone dry (`room 0`) | 8 of 15 | **3 of 15** |
+| widest single group's p5-p95 span | 34 semitones | 21 |
+| pad bars holding two tones within a whole tone | 38 of 88 | **0 of 176** |
+
+Where the six that went came from, in p5-p95 MIDI:
+
+```
+arp/triangle       69-83  ->  87-96   above the tune AND above the extensions
+chords/triangle    56-90  ->  68-89   the clav and the extension pair, pinned
+chords/pulse:pw0   51-62  ->  47-57   the pad is the bed, under the motor
+motor              58-69  ->  58-65   two escapes closed, see below
+chords/pulse:pw0.5 67-75  ->  68-79   the upper structure, guide tones
+```
+
+**The arp's first landing spot was wrong and `masking` said so.** At 84-96 it
+came down on the colour pair's new home and produced a lane pair that had not
+existed before — `arp+chords`, weight 3200, the largest single new collision in
+the pass. Four (colour, arp) configurations were then run through
+`tools/masking.mjs` on the identical 660 states, changing nothing else:
+
+| colour | arp | total weight | chords+lead | its share |
+|---|---|---|---|---|
+| 56-90 | 69-83 | 1565.5 | 6036.8 | 48% ← before |
+| 78-91 | 84-96 | 1768.8 | 5054.2 | 36% |
+| 74-86 | 84-96 | 1709.9 | 6300.6 | 46% |
+| 76-88 | 87-99 | **1549.7** | 6059.7 | 49% |
+| **78-90** | **87-99** | 1572.5 | **5054.2** | **40%** ← shipped |
+
+`chords+lead` is the loudest pair in the mix and the one this project has spent
+two years reducing. It is driven by the colour FLOOR — at 78 it clears the
+lead's p95 of 79 and the pair falls 16%; at 76 and 74 it does not and the pair
+goes back above where it started. The arp's floor drives `arp+chords` instead.
+The shipped pair takes the worst pair down 16% and its share from 48% to 40%
+with the total flat against baseline (+0.4%, inside the spread of the runs
+either side). `masking`'s own header says the total is a diagnostic and the pair
+ordering is what to act on.
+
+**And the arp's lowpass had to move with it, for the third time in this file.**
+`registermap` read `harm@lpf 2.7x` at the new register, and 2.7 on a TRIANGLE is
+nothing — a triangle's first partial above the fundamental is the third, so a
+cutoff under 3x leaves a sine. 1500-7000 → 1900-8000. The rule, stated once
+more: a lane's filter is defined relative to its fundamental, so a register
+change IS a filter change, and `harm@lpf` is the column to read after any
+transposition.
+
+The six that remain are printed by the gate every run and each is a
+relationship an arranger keeps: the bass line crossing the bed, the tune's
+octave doubling against the halftime growl, and the upper structure and the
+halftime clav sitting under the tune. The ceiling is set **at** six, so it is a
+ratchet.
+
+`arpDisplacement` was pointing backwards and is reversed. Undisplaced the arp
+sat on the tune (69-83 against 69-81); displaced by -12 it sat on the motor
+(57-71 against 58-69) — there was no value of that offset that separated
+anything. The arp's home is now above the tune and the displacement drops it
+into the tune's octave on the bars the tune is not using.
+
+**Two motor escapes closed**, both named in `research-music.md` §5 and both
+passing `motorcheck` because the sampled states never reached them: the `chase`
+run's `root + 2` and the fill turnaround's `target - step*3`. The first now
+descends onto the root from `min(root+3, MOTOR_TOP)`; the second approaches from
+whichever side fits. `motorcheck` was seen RED on 80 notes at MIDI 55-56 during
+this work, which is how `MIN_LANE_SPAN` was discovered — a fold cannot promise a
+window narrower than an octave.
+
+#### Fewer lines, and a clock longer than eighty seconds
+
+"Why are there multiple conflicting melodies and theyre all on different tempos
+too, very confusing" is a COUNT problem as well as a register one, and two
+things were letting the count through the voice budget:
+
+- `MAX_MOTIFS` was 3, so one lane winning one slot bought three independent
+  ostinatos on three different subdivisions. Now 2.
+- `SECTION_BUDGET` counts lanes and is blind to what they are for, so a drop
+  (budget 4, and 46-49% of a run) admitted BOTH countersubjects — the exact
+  pairing `STEM_ROLE`'s comment calls "the single most important pairing in the
+  file". `ROLE_CAP` now allows one melody, one harmony, **one counter**, one
+  colour. A lane refused takes the ordinary graded yield; nothing is muted.
+
+`LONG_REST` is the game's answer to `mask("<x ~ x ~ ~>/128")`. Four slots of
+three waves each, with the CONTENTS chosen by the act — two nested long clocks,
+both facts about the run rather than about the transport. Measured over 80 waves
+at `wavelength`'s recorded 18 s/wave: **27 state changes, median hold 54 s, max
+108 s**, against a previous longest unit of 80 s (the key). Only `arp`, `motifs`
+and `power` may rest; never the tune, the bed, or any of the six lanes exempt
+from the budget — `research-music.md` is explicit that the motor must stay
+exempt from any tacet rule. Suppressed during a boss and on a HUSHED wave.
+
+#### Timbre
+
+Five lanes measured `room 0.00`. `bass`, `motor`, `arp` and both wobble voices
+were given one, small and sized to the part (0.10-0.24, roomsize 2-4) — the
+point is not ambience, it is that a dry clock against a wet chord is two
+recordings played at once. The sub, the kick and the noise clap stay dry
+deliberately and the reason is written down where the change would be made.
+
+The sub's envelope was `attack(0.006) / release(0.08)` on a lane emitting 41 to
+110 Hz. One cycle of 50 Hz is twenty milliseconds, so that attack was a step
+discontinuity — broadband, on the loudest thing in the bottom of the mix, two to
+eight times a bar. A pure sine cannot ping; the switch turning it on can. Now
+24 ms in, 180 ms out, bounded by the densest lattice's 460 ms note spacing so
+two sub pitches never overlap. `attackfloor` reads the sub's attack failure
+gone and its tail 80 ms → 180 ms; the suite-wide figure moved 91% → 84% of
+pitched haps attacking faster than 20 ms.
+
+The halftime clav's `-12` was removed: it had been moved down to escape a
+five-voice pile-up in one octave, three of whose five members have since left,
+and `registermap` measured it landing at 56-66 against the motor's 58-65 — the
+move that was "out of the pile-up" had become "into the clock". Its lowpass moved
+with it, 700-1600 → 1300-3000, keeping the cutoff-to-fundamental ratio the
+comment's own numbers were derived at. That is the third time in this file a
+lane has been transposed and its filter left behind.
+
+#### What is NOT claimed
+
+**Nothing was heard.** No WAV was rendered in this pass and no browser played
+anything. Every figure above is off the haps, off a bundle size, or off
+arithmetic on the period of a waveform. The register separation, the seventh
+chords, the guide tones and the long rota are all real at the hap level and
+none of them has been in front of an ear.
+
 ### The suite runs on Windows
 
 17 tools converted from `.pathname` to `fileURLToPath`; `verify-node` made

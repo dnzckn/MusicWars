@@ -25,9 +25,14 @@
  * AND a voice count with its denominator: simultaneous pitched voices per bar,
  * mean and max, over the whole sweep.
  *
- * THIS IS NOT A GATE and deliberately has no thresholds. It is the instrument
- * the arrangement work is done with; `masking`, `motorcheck` and the capture
- * recorder are the gates.
+ * IT IS A GATE NOW, and it was not. The header used to say "THIS IS NOT A GATE
+ * and deliberately has no thresholds", which was the right call while the
+ * register map was a diagnosis in progress and the wrong one once the map
+ * became a table the builders read. `theory.LANE_RANGE` is that table; this
+ * file imports it rather than restating it, and asserts four things against it
+ * at the bottom — window span, per-hap containment, per-group sprawl, and the
+ * count of voice groups living in 200-800 Hz. Everything above the assertions
+ * is still the instrument.
  *
  *   node --experimental-transform-types tools/registermap.mjs
  *   node --experimental-transform-types tools/registermap.mjs --thin=0.5
@@ -36,7 +41,7 @@ import { makeSignals, notesIn } from './lib/headless-audio.mjs';
 
 const strudel = await import('@strudel/core');
 const layers = await import('../src/audio/layers.ts');
-const { buildChord, PROGRESSIONS } = await import('../src/audio/theory.ts');
+const { buildChord, PROGRESSIONS, LANE_RANGE, MIN_LANE_SPAN } = await import('../src/audio/theory.ts');
 
 const argv = process.argv.slice(2);
 const opt = (n, d) => {
@@ -333,6 +338,38 @@ for (const g of rows) {
 console.log(`pitched voice groups with MOST of their notes in 200-800 Hz: ${bandGroups} of ${allPitchedGroups}`);
 for (const n of bandNames) console.log(`   ${n}`);
 /*
+ * THE BAND CEILING, and why it is a gate now.
+ *
+ * This line used to be a readout. It measured 9 of 12 when
+ * `docs/research-music.md` §4 was written and the mix's own complaint —
+ * "muddy", "multiple conflicting melodies", 66.6% of all energy in the 250 and
+ * 500 Hz bands — is what that number is a picture of. A readout nobody fails on
+ * is the "unmeasured properties rot" case AGENTS.md §3 names: the register work
+ * that moved it can be undone one lane at a time with every gate green.
+ *
+ * SEVEN is the ceiling, and it is set from what the arrangement legitimately
+ * needs rather than from what it currently scores. The lanes that BELONG in
+ * 200-800 Hz are the motor (its window is 57-69 by contract), the stab (the
+ * upper structure), and the tune with its two doublings — which is five voice
+ * groups before anything is wrong. Seven leaves two of slack and fails the
+ * ninth, which is where this started.
+ *
+ * How it could be gamed: by moving a lane out of the band and leaving it
+ * inaudible, or by silencing one. Hence the denominator is printed, the
+ * per-group share and hap count are printed, and `bandGroups === 0` with
+ * `allPitchedGroups` under 10 would mean lanes have gone missing rather than
+ * moved — which the presence table immediately below makes visible.
+ */
+const BAND_MAX = 7;
+let bandFail = false;
+if (allPitchedGroups === 0) {
+  console.log('FAIL — zero pitched voice groups examined. A check with no denominator is not a pass.');
+  bandFail = true;
+} else if (bandGroups > BAND_MAX) {
+  console.log(`FAIL — ${bandGroups} of ${allPitchedGroups} groups live in 200-800 Hz; the ceiling is ${BAND_MAX}.`);
+  bandFail = true;
+}
+/*
  * A group is not "always on". Printed as a share of the sweep so a feel-only
  * voice (the chase 808, the shuffle clav) is not counted alongside the pad.
  */
@@ -569,6 +606,199 @@ for (const g of rows) {
 }
 console.log(`dead centre ${centred} of ${centred + placed} voice groups; bone dry (room 0) ${dry} of ${centred + placed}`);
 
+/* -------------------------------------------------------------------------
+ * THE REGISTER CONTRACT — three assertions, all against `theory.LANE_RANGE`.
+ *
+ * `docs/research-music.md` §4 asked for exactly this and it was never built:
+ * "Make the register map a constant table, `LANE_RANGE`, imported by the
+ * builders AND by the gate, per §3's 'a tool holding its own copy of a constant
+ * will lie the day it moves'. Add a `registermap` check that fails any hap
+ * outside its lane's declared `LANE_RANGE` — that one would already be red
+ * today on the motor."
+ *
+ * It WAS red on the motor. `motorcheck` reported 80 notes at MIDI 55-56 the
+ * first time the fill turnaround's fold was narrowed, and the chase run's
+ * `root + 2` had been able to leave the window since it was written.
+ * ---------------------------------------------------------------------- */
+
+console.log('');
+console.log('REGISTER CONTRACT — theory.LANE_RANGE, imported not restated');
+let contractFail = false;
+
+/*
+ * 1. EVERY WINDOW IS AT LEAST AN OCTAVE.
+ *
+ * `foldInto` moves a pitch by octaves until it fits, so a window narrower than
+ * twelve semitones has no legal answer for some pitch classes and the fold has
+ * to return something outside it. That makes assertion 2 below fail at random
+ * on one chord in twelve rather than on a real defect — which is exactly how it
+ * was found. This assertion is what stops a future narrowing reintroducing it.
+ */
+let spanFail = false;
+for (const [lane, w] of Object.entries(LANE_RANGE)) {
+  const span = w.hi - w.lo;
+  if (span < MIN_LANE_SPAN) {
+    console.log(`   FAIL  ${lane} window ${w.lo}-${w.hi} spans ${span}; a fold needs ${MIN_LANE_SPAN}.`);
+    spanFail = true;
+    contractFail = true;
+  }
+}
+// Only when nothing failed. An `ok` line printed underneath its own FAILs is
+// how a multi-assertion check gets read as passing — AGENTS.md §3.
+if (!spanFail) {
+  console.log(`   ok    ${Object.keys(LANE_RANGE).length} lane windows, all at least ${MIN_LANE_SPAN} semitones`);
+}
+
+/*
+ * 2. EVERY HAP OF A MAPPED VOICE GROUP IS INSIDE ITS LANE'S WINDOW.
+ *
+ * Only the groups whose mapping is UNAMBIGUOUS are asserted, and the list is
+ * short deliberately. `lead/*` is three octave doublings of one part and
+ * `chords/triangle` is two different parts sharing an oscillator (the halftime
+ * clav and the colour tones), so a per-hap window on either would be asserting
+ * something the code does not claim. Assertion 3 covers those.
+ *
+ * The arp's window moves with the displacement, so the offset is applied: this
+ * check is correct under `--arp-oct=0` and `--arp-oct=-12` alike, which matters
+ * because the displaced state is the one the game is in most of the time.
+ *
+ * How it could be gamed: by removing a lane, at which point its group vanishes
+ * and there is nothing to fail. Hence the count of groups actually checked is
+ * printed and zero is a failure.
+ */
+const GROUP_WINDOW = {
+  'chords/pulse:pw0': 'pad',
+  'chords/pulse:pw0.5': 'stab',
+  'motor/pulse:pw0.5': 'motor',
+  'arp/triangle': 'arp',
+};
+let windowsChecked = 0;
+let windowFail = false;
+for (const g of rows) {
+  const lane = GROUP_WINDOW[g.key];
+  if (!lane || !g.notes.length) continue;
+  const w = LANE_RANGE[lane];
+  const shift = lane === 'arp' ? ARP_OCT : 0;
+  const lo = w.lo + shift;
+  const hi = w.hi + shift;
+  const out = g.notes.filter((n) => n < lo || n > hi);
+  windowsChecked++;
+  if (out.length) {
+    const sorted = out.slice().sort((a, b) => a - b);
+    console.log(
+      `   FAIL  ${g.key} -> ${lane}: ${out.length} of ${g.notes.length} haps outside ${lo}-${hi}, ` +
+        `spanning ${sorted[0]}-${sorted[sorted.length - 1]}`,
+    );
+    windowFail = true;
+    contractFail = true;
+  }
+}
+if (windowsChecked === 0) {
+  console.log('   FAIL  no mapped voice group was found — the group keys have moved or a lane is silent.');
+  contractFail = true;
+} else if (!windowFail) {
+  console.log(`   ok    ${windowsChecked} mapped voice groups, every hap inside its declared window`);
+}
+
+/*
+ * 3. NO PITCHED VOICE GROUP SPRAWLS.
+ *
+ * The colour tones — the 7th and the 9th, TWO voices — measured MIDI 56-90 at
+ * p5-p95. Thirty-four semitones is wider than the pad, the motor and the stab
+ * put together, and a lane that can be anywhere collides with everything: it is
+ * the reason `chords` paired badly against every other lane at once in
+ * `masking`. This is the assertion that covers the groups assertion 2 cannot
+ * map, and it is the one that would have caught the sprawl on the day it
+ * appeared.
+ *
+ * 26 semitones — just over two octaves — because the lead legitimately spans
+ * its own window plus an octave doubling, and the halftime clav shares an
+ * oscillator with the colour tones a fifth above it. Below that is a real
+ * defect; above it is the writing.
+ */
+const SPRAWL_MAX = 26;
+let sprawlChecked = 0;
+let sprawlFail = false;
+for (const g of rows) {
+  if (!PITCHED.has(g.lane) || g.notes.length < 20) continue;
+  const ns = g.notes.slice().sort((a, b) => a - b);
+  const span = q(ns, 0.95) - q(ns, 0.05);
+  sprawlChecked++;
+  if (span > SPRAWL_MAX) {
+    console.log(`   FAIL  ${g.key} spans ${span} semitones p5-p95 (${q(ns, 0.05)}-${q(ns, 0.95)}); the ceiling is ${SPRAWL_MAX}`);
+    sprawlFail = true;
+    contractFail = true;
+  }
+}
+if (sprawlChecked === 0) {
+  console.log('   FAIL  no pitched group had enough haps to measure a span.');
+  contractFail = true;
+} else if (!sprawlFail) {
+  console.log(`   ok    ${sprawlChecked} pitched groups, none spanning more than ${SPRAWL_MAX} semitones`);
+}
+
+/*
+ * 4. THE CROSS-LANE OVERLAP TABLE, printed always.
+ *
+ * Two voice groups of DIFFERENT lanes sharing a p5-p95 window is the measurable
+ * form of "multiple conflicting melodies". Octave doublings inside one lane are
+ * not that — a lead triangle over a lead sawtooth is one part — so pairs within
+ * a lane are excluded and stated as excluded rather than quietly dropped.
+ *
+ * A count rather than a ban: five lanes cannot occupy five disjoint octaves and
+ * still be a mix. What is being asserted is that no cross-lane pair is in near
+ * UNISON, which is the case that reads as thickness instead of as harmony.
+ *
+ * MEASURED, same formula, same 57-pair denominator, before and after the
+ * register table landed: **12 heavy pairs -> 6**. The six that remain are named
+ * in the output every run and each of them is a relationship an arranger keeps:
+ *
+ *   bass line crossing the bed                 bass/sawtooth vs chords/pulse:pw0
+ *   the tune's octave doubling vs the growl    lead/sawtooth vs bass/supersaw
+ *   upper structure under the tune, twice      chords/pulse:pw0.5 vs lead/*
+ *   the halftime clav under the tune, twice    chords/triangle vs lead/*
+ *
+ * The six that went were the ones that were not: the colour tones' 34-semitone
+ * sprawl colliding with SIX other groups at once, and the arp sitting on the
+ * tune in both of its octaves.
+ *
+ * The ceiling is set AT the current figure rather than above it, so this is a
+ * ratchet. How it could be gamed: by silencing a lane, which removes its group
+ * and its pairs — hence the pair count is printed and a zero denominator fails.
+ */
+const HEAVY = 9;
+const HEAVY_MAX = 6;
+const pitchedRows = rows.filter((g) => PITCHED.has(g.lane) && g.notes.length >= 20);
+const winOf = (g) => {
+  const ns = g.notes.slice().sort((a, b) => a - b);
+  return [q(ns, 0.05), q(ns, 0.95)];
+};
+const heavy = [];
+let pairs = 0;
+for (let i = 0; i < pitchedRows.length; i++) {
+  for (let j = i + 1; j < pitchedRows.length; j++) {
+    const a = pitchedRows[i];
+    const b = pitchedRows[j];
+    if (a.lane === b.lane) continue;
+    pairs++;
+    const [al, ah] = winOf(a);
+    const [bl, bh] = winOf(b);
+    const ov = Math.min(ah, bh) - Math.max(al, bl);
+    if (ov >= HEAVY) heavy.push(`${a.key} ${al}-${ah} vs ${b.key} ${bl}-${bh} overlap ${ov}`);
+  }
+}
+console.log(`   cross-lane pairs compared: ${pairs}; overlapping by ${HEAVY}+ semitones: ${heavy.length}`);
+for (const h of heavy) console.log(`      ${h}`);
+if (pairs === 0) {
+  console.log('   FAIL  no cross-lane pair was compared. A check with no denominator is not a pass.');
+  contractFail = true;
+} else if (heavy.length > HEAVY_MAX) {
+  console.log(`   FAIL  ${heavy.length} cross-lane pairs share ${HEAVY}+ semitones; the ceiling is ${HEAVY_MAX} (was 12).`);
+  contractFail = true;
+} else {
+  console.log(`   ok    ${heavy.length} of ${pairs} cross-lane pairs overlap heavily; the ceiling is ${HEAVY_MAX}`);
+}
+
 /* ------------------------------------- the assertion; see `bothFilters` */
 
 console.log('');
@@ -583,3 +813,8 @@ if (bothFilters > 0) {
   process.exit(1);
 }
 console.log('ok — no hap carries a highpass and a filter model together');
+if (bandFail || contractFail) {
+  console.log('');
+  console.log('REGISTER IS OUT OF SPEC');
+  process.exit(1);
+}

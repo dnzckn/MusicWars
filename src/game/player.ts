@@ -26,6 +26,91 @@ export const PLAYER_SPEED = 430;
 export const PLAYER_FOCUS_SPEED = 190;
 
 /*
+ * AUTO-ADVANCE. The ship is always moving forward; the stick only trims it.
+ *
+ * `CRUISE_SPEED` is what the ship makes along -y with the stick centred, and
+ * `TRIM_SPEED` is how much the forward axis of the stick may add to or take
+ * off that. So the forward speed runs [170, 430] px/s and there is no input
+ * that stops it, which is the whole contract: "you cannot stop and you cannot
+ * leave the frame".
+ *
+ * THE FIRST PAIR WAS 300/130 AND THE REASONING BEHIND IT WAS BACKWARDS.
+ * It read: `enemies.ts` caps every mob at `SPEED_CEILING = 285`, so a cruise
+ * above that makes "things you have already passed leave" true by
+ * construction. That is true, and it is the wrong thing to want. A stage where
+ * no body can ever reach the ship is not a hard stage, it is an EMPTY one —
+ * measured in play at 16 enemies alive and ZERO on screen — and it is the same
+ * finding `docs/research-density.md` §6 records from the other direction, where
+ * bodies arriving behind a running ship read as scenery and hits taken fell
+ * 18.3 to 1.0.
+ *
+ * The crowd travels WITH the stage now (`World.updateEnemies` carries every
+ * body forward at `CRUISE_SPEED`), so the cruise no longer decides whether a
+ * mob can keep up — nothing has to keep up, because nothing is being left. See
+ * that block for why enemies and only enemies ride.
+ *
+ * SO THE TWO NUMBERS MEAN DIFFERENT THINGS NOW. `CRUISE_SPEED` is how fast the
+ * STAGE travels: it sets how quickly the ground goes past, and nothing else.
+ * 360 px/s is a screen every three seconds at the default view, which reads as
+ * travel rather than drift.
+ *
+ * `TRIM_SPEED` is the whole of the gameplay in this axis: it is the ship's top
+ * speed RELATIVE TO THE STAGE along the track, which is the frame every enemy,
+ * every standoff and every lunge is now measured in. 260 against a lateral 430
+ * is 60% — enough that moving up and down the frame is a real dodge rather
+ * than a nudge, and short of parity so that sideways remains the fastest
+ * escape, which is what the roster is tuned around.
+ *
+ * TRIM MUST STAY UNDER CRUISE, and that inequality is the owner's "always
+ * moving forward" written as arithmetic: the forward range is
+ * [CRUISE - TRIM, CRUISE + TRIM] = [100, 620], so there is no stick position
+ * that stops the ship or reverses it. 100 px/s at a full brake is slow enough
+ * to feel like being caught and fast enough that the ground is still visibly
+ * moving.
+ *
+ * NEITHER IS SCALED BY THE RIG OR BY FOCUS, and that is a decision rather than
+ * an oversight. `moveSpeed` and focus multiply the LATERAL speed and the trim;
+ * the cruise is the stage's speed, not the ship's, and letting a build change
+ * it would move the spawn line, the population census and the cull horizon
+ * with it — all three are derived from a view that travels at this rate.
+ * Focus in particular has to leave it alone: a focused ship that dropped to
+ * 190 px/s would slide backwards out of the frame every time the player
+ * planted, which is the opposite of what planting is for.
+ */
+export const CRUISE_SPEED = 360;
+export const TRIM_SPEED = 260;
+
+/*
+ * How hard the ship settles back to its station in the track window, and over
+ * what distance, when the throttle is released.
+ *
+ * WHY THE WINDOW NEEDS THIS AT ALL. Without it the window has no restoring
+ * force in either direction: the rail advances at `CRUISE_SPEED` and a coasting
+ * ship travels at `CRUISE_SPEED`, so wherever the player leaves the ship in the
+ * frame is where it stays, forever. Verified in the browser — boost to the
+ * front of the window, release, and the ship sits at 0.16 of the view for as
+ * long as you like. `TRACK_ANCHOR` would then be nothing but a starting
+ * position, and since the threat is all ASTERN there is never a reason to come
+ * back: every player would ride the front edge permanently, seeing the most
+ * pursuit, and the throttle would be a one-way ratchet rather than a choice.
+ *
+ * With it, boosting and braking are what they read as — transients. Let go and
+ * the ship drifts back to station.
+ *
+ * 160 px/s is under `TRIM_SPEED` by enough that holding the stick still pins
+ * the ship against either end of the window (260 - 160 = 100 px/s of net
+ * travel, so both edges are still reachable and still hold), and easing it in
+ * over 220 px means the last stretch of the return is not a lurch.
+ *
+ * JUDGED, NOT MEASURED, like the camera's deadzone and the window fractions
+ * themselves: no node-only gate can tell you whether a throttle springs back
+ * nicely. What IS verified is the failure it fixes, which was a position the
+ * ship could enter and never leave.
+ */
+const RECENTRE_SPEED = 160;
+const RECENTRE_SPAN = 220;
+
+/*
  * Halflives for the velocity approach, in seconds.
  *
  * Acceleration is quicker than deceleration on purpose. Answering the stick has
@@ -55,7 +140,24 @@ const FOCUS_HALFLIFE = 0.022;
 const TURN_RATE = 18;
 const TURN_RATE_FOCUSED = 9;
 
-/** Below this the stick is noise and the facing is left exactly where it was. */
+/**
+ * Below this the stick is noise and the facing is left exactly where it was.
+ *
+ * THIS WAS DELETED FOR ONE REVISION AND THE DELETION WAS A REGRESSION. The
+ * argument for removing it was that auto-advance means the ship can never
+ * stand still, so a "the stick is centred, hold your heading" rule has nothing
+ * to protect. That is wrong about what the rule protects. Reported from play:
+ * "i cant shoot backwards now". With the facing derived from the ship's total
+ * velocity — which always carries `CRUISE_SPEED` along -y — the nose could
+ * never leave a 136-degree forward arc, so `arc` and `beam` could not be aimed
+ * behind at all and the retained-facing rule three comments below was still in
+ * the source and unreachable.
+ *
+ * The facing is driven by the INPUT again, exactly as it was, and the
+ * treadmill's contribution is excluded. Pressing back turns the ship round to
+ * face the pursuit, which is also what brakes it — one stick, two readings of
+ * it, and they agree.
+ */
 const FACING_DEADZONE = 0.22;
 
 /**
@@ -442,7 +544,24 @@ export class Player {
   update(
     dt: number,
     input: { x: number; y: number; focus: boolean },
-    bounds: { w: number; h: number },
+    /**
+     * The rectangle the ship may occupy this step, in WORLD coordinates.
+     *
+     * Was `{ w, h }` — "the field is a rectangle at the origin" — which stopped
+     * being true when the field became unbounded along the travel axis. The
+     * caller now hands over a real rectangle because the two axes are no longer
+     * the same kind of thing: `x0/x1` are the arena's walls and never move,
+     * while `y0/y1` are the TRACK WINDOW and slide forward every step. `y0` is
+     * conventionally -Infinity: the front of the window is enforced by the
+     * camera dragging forward, not by stopping the ship, because a ship pinned
+     * against a moving front edge would have its forward velocity zeroed on
+     * every frame and would stutter.
+     *
+     * `yHome` is the station inside that window — `TRACK_ANCHOR` in world
+     * coordinates — which the ship settles back to when the throttle is
+     * released. See `RECENTRE_SPEED`.
+     */
+    bounds: { x0: number; y0: number; x1: number; y1: number; yHome: number },
     moveScale = 1,
   ): PowerupKind[] {
     this.prevX = this.x;
@@ -456,18 +575,57 @@ export class Player {
     // anything longer than one, so a half-pushed stick is a half-speed ship.
     const push = Math.hypot(input.x, input.y);
     const wantX = input.x * top;
-    const wantY = input.y * top;
+    /*
+     * THE FORWARD AXIS IS A THROTTLE, NOT A DIRECTION.
+     *
+     * `input.y` is -1 for "push ahead" and +1 for "pull back", and it trims the
+     * cruise instead of setting the velocity: the target is always negative, so
+     * there is no stick position that stops the ship or reverses it. That is
+     * the auto-advance, and it is one line because everything else about this
+     * function — the damping, the facing, the bank — already worked off a
+     * velocity rather than off the stick.
+     *
+     * The trim scales with `moveScale`/focus and the cruise does not; see the
+     * note on `CRUISE_SPEED`. `trimTop` is capped at the cruise so that a rig
+     * with a large move-speed bonus cannot trim the ship to a standstill by
+     * exceeding it.
+     */
+    const trimTop = Math.min(CRUISE_SPEED, TRIM_SPEED * (this.focused ? PLAYER_FOCUS_SPEED / PLAYER_SPEED : 1) * boost * moveScale);
+    // Plus the settle back to station. Added to the TARGET rather than applied
+    // as a separate impulse, so it goes through the same damping the stick does
+    // and cannot fight the acceleration curve. See `RECENTRE_SPEED`.
+    const settle = clamp((bounds.yHome - this.y) / RECENTRE_SPAN, -1, 1) * RECENTRE_SPEED;
+    const wantY = -CRUISE_SPEED + input.y * trimTop + settle;
     const halflife = this.focused ? FOCUS_HALFLIFE : push > 0.01 ? ACCEL_HALFLIFE : BRAKE_HALFLIFE;
     this.vx = damp(this.vx, wantX, halflife, dt);
     this.vy = damp(this.vy, wantY, halflife, dt);
 
-    const nx = clamp(this.x + this.vx * dt, 12, bounds.w - 12);
-    const ny = clamp(this.y + this.vy * dt, 12, bounds.h - 12);
-    // Kill the velocity component that the wall just ate, so the ship does not
-    // sit there pressing into a wall with 430px/s of stored energy and then
-    // launch when it turns away.
+    const nx = clamp(this.x + this.vx * dt, bounds.x0, bounds.x1);
+    const ny = clamp(this.y + this.vy * dt, bounds.y0, bounds.y1);
+    /*
+     * Kill the velocity component the WALL just ate, so the ship does not sit
+     * there pressing into it with 430px/s of stored energy and then launch when
+     * it turns away.
+     *
+     * ACROSS THE TRACK ONLY, and the asymmetry is a bug that shipped for a
+     * revision before anyone drove into it. `bounds.y1` is the back of the
+     * TRACK WINDOW and it is MOVING — it advances by `CRUISE_SPEED * dt` every
+     * step. So a ship resting against it is overtaken by its own bound every
+     * frame, the clamp fires every frame, and zeroing `vy` every frame meant
+     * the velocity could never build past the ~3px a step the window had just
+     * gained. Measured in the browser: the ship pinned at 0.556 of the view
+     * with `vy` exactly 0, holding forward for two and a half seconds, going
+     * nowhere. The back of the frame was a trap you could enter and not leave.
+     *
+     * Not zeroing it is also the physically right answer rather than a
+     * workaround. A static wall takes the ship's momentum; a moving floor
+     * CARRIES it, and the ship's velocity against the world is still whatever
+     * the stick is asking for. Leaving `vy` alone lets it damp toward its
+     * target as normal, so the ship peels off the back edge the instant its own
+     * speed exceeds the window's — about a frame after the stick moves — and is
+     * carried at exactly the window's rate until then.
+     */
     if (nx !== this.x + this.vx * dt) this.vx = 0;
-    if (ny !== this.y + this.vy * dt) this.vy = 0;
     this.x = nx;
     this.y = ny;
 
@@ -479,6 +637,21 @@ export class Player {
      * the acceleration time on top of the turn rate, and reversing direction
      * would swing the nose through the old heading first. What the player means
      * is what they are pressing.
+     *
+     * AND ON A TREADMILL IT MUST BE THE INPUT, not merely should be. For one
+     * revision this read `atan2(wantY, wantX)` — the velocity TARGET, which
+     * carries `CRUISE_SPEED` on the y axis whatever the player is doing. The
+     * worst case of that expression is `atan2(-(CRUISE - TRIM), ±PLAYER_SPEED)`,
+     * so the nose was confined to a forward arc and the ship could not be
+     * pointed at anything behind it. `arc` and `beam` take a strict cone off
+     * the facing (`World.computeAim`), and the whole pursuit is behind, so two
+     * of the six weapon shapes could not be aimed at the fight. Reported from
+     * play in four words: "i cant shoot backwards now".
+     *
+     * `input.y` is a throttle for MOVEMENT and a heading for AIM at the same
+     * time, and that is the design rather than a compromise: pressing back
+     * turns the ship to face the pursuit and drops it back through the frame
+     * toward them, which is one gesture meaning one thing.
      */
     if (push > FACING_DEADZONE) {
       const want = Math.atan2(input.y, input.x);

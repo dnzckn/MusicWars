@@ -87,19 +87,25 @@ export interface EnemyContext {
   /** Where the ship is going, px/s. Movers lead it; see `toPlayer`. */
   playerVX: number;
   playerVY: number;
-  /**
-   * The FIELD, not the view, and nothing reads them.
-   *
-   * `bossMove` was the last consumer and now orbits an anchor captured at
-   * spawn instead. They are kept because `EnemyContext` is the published shape
-   * a mover receives and a mover that wants the arena bounds has nowhere else
-   * to get them — but per AGENTS.md §3 an unread field is exactly the kind of
-   * thing that rots, so: if you are reading this and still nothing consumes
-   * them, delete them. Anything wanting "how big is the screen" should import
+  /*
+   * `width` and `height` STOOD HERE AND ARE DELETED. Their own comment invited
+   * it — "if you are reading this and still nothing consumes them, delete
+   * them" — and the treadmill is what forced the reading: `PLAYFIELD_H` is
+   * `Infinity` now, so this struct would have been publishing an infinite
+   * arena height to every mover in the game on the off chance one of them
+   * wanted it. Anything wanting "how big is the screen" should import
    * `VIEW_W`/`VIEW_H` directly, as `bossMove` does.
    */
-  width: number;
-  height: number;
+  /**
+   * Centre of the rectangle the player is looking at, in world space.
+   *
+   * REPLACES THE PAIR ABOVE AND IS READ, which is the difference. `bossMove`
+   * is the one mover that needs a frame of reference bigger than "where the
+   * player is", and on a treadmill it cannot be a fixed point — see the note
+   * on `bossMove`.
+   */
+  viewCX: number;
+  viewCY: number;
   /** Transport position in beats, so movement can step in time. */
   beat: number;
   /*
@@ -191,6 +197,17 @@ export interface Enemy {
   leaveAt: number;
   /** True once it has turned to leave; stops it lunging on the way out. */
   leaving: boolean;
+  /**
+   * How many times the treadmill has moved this body back to the line ahead.
+   *
+   * Per body rather than per wave, because the quantity being bounded is "how
+   * long has this particular shape been declining to be dealt with". See
+   * `RECYCLE_LIMIT` in `world.ts`; at the cap the body is retired instead of
+   * re-dealt, which is what makes "everything you pass eventually leaves" hold
+   * even while the stage is starved and the population gate would otherwise
+   * keep re-dealing forever.
+   */
+  recycles: number;
 
   /* ---------------------------------------------------------------------- *
    * THE LUNGE — what replaced this shape's guns.
@@ -625,33 +642,47 @@ const echoDrift: MoveFn = (e, dt, ctx) => {
 };
 
 /**
- * Boss: takes the middle of the arena and circles there, faster each phase.
+ * Boss: takes the middle of the SCREEN and circles there, faster each phase.
  *
- * The centre rather than a station near the top, because in the round the
- * middle is the only position that is equally a problem from everywhere. A boss
- * parked at one edge would let the player fight it from the opposite side of
- * the field with three quarters of the arena behind them as a retreat, which is
- * the opposite of what a boss is for.
+ * The centre rather than a station near one edge, because the middle is the
+ * only position that is equally a problem from everywhere. A boss parked at an
+ * edge would let the player fight it with three quarters of the frame behind
+ * them as a retreat, which is the opposite of what a boss is for.
  *
- * "THE MIDDLE" IS AN ANCHOR CAPTURED AT SPAWN, NOT THE MIDDLE OF THE FIELD.
- * This read `ctx.width/2, ctx.height/2` with a radius of
- * `min(ctx.width, ctx.height) * 0.17`, both of which were the screen because
- * the field was the screen. On a 3000px field that is a 510px orbit — one and a
- * half screens across — around a point the player may never go near, so the
- * boss would spend the fight off camera and the set piece would be a health bar
- * with nothing under it. `homeX`/`homeY` hold the arena centre the boss was
- * summoned around (`spawnBoss`), and the radius comes from `VIEW_*`, so the
- * orbit is the same fraction of the SCREEN it has always been.
+ * THE ANCHOR TRACKS THE VIEW. It has been three things now and the history is
+ * the argument. It was `ctx.width/2, ctx.height/2` — the middle of the field,
+ * which was also the middle of the screen while those were the same rectangle.
+ * When the field grew to 3000x3000 that became a 510px orbit around a point
+ * the player might never go near, so it became an anchor CAPTURED AT SPAWN,
+ * with this note against tracking the view: "an orbit that followed the view
+ * would let the player drag the boss around the arena by walking ... the boss
+ * would never be anywhere the player was not."
  *
- * The anchor is fixed for the boss's life rather than tracking the camera:
- * an orbit that followed the view would let the player drag the boss around
- * the arena by walking, which is the "fight it from the far side" failure this
- * comment already argues against, only worse — the boss would never be
- * anywhere the player was not.
+ * THE TREADMILL INVERTS THAT OBJECTION, and it inverts it into a measurement.
+ * A fixed anchor assumes a player who can choose to stay near it. This player
+ * cannot: the ship's slowest forward speed is 170 px/s and the rail never
+ * stops, so a fixed point is a point the ship is leaving, always. Measured
+ * before this line was written — three 20-minute runs, every one of them
+ * reaching the wave-4 boss and then STUCK on it for the remaining seventeen
+ * minutes, wave 4 of an expected 18, kills/min 573 -> 130. The boss was
+ * summoned, the ship flew past it, and the fight simply never happened. That
+ * is not a boss that can be dragged; it is a boss that has been left.
+ *
+ * So the anchor is the centre of the view, and the old objection is answered
+ * rather than ignored: the player still cannot drag it, because there is
+ * nowhere to drag it TO. Across the track the view follows the ship through a
+ * deadzone and a lookahead, so sprinting sideways buys the camera's own lag
+ * and no more; along it the view IS the rail. What the player controls is the
+ * DISTANCE — push to `TRACK_AHEAD` and the boss is close, drop back to
+ * `TRACK_BEHIND` and it is most of a screen away — which is a better version
+ * of the positional game the fixed anchor was protecting.
+ *
+ * The radius still comes from `VIEW_*`, so the orbit is the same fraction of
+ * the screen it has always been.
  */
-const bossMove: MoveFn = (e, dt) => {
-  const cx = e.homeX;
-  const cy = e.homeY;
+const bossMove: MoveFn = (e, dt, ctx) => {
+  const cx = ctx.viewCX;
+  const cy = ctx.viewCY;
   const speed = 0.5 + e.phase * 0.28;
   const r = Math.min(VIEW_W, VIEW_H) * 0.17;
   const tx = cx + Math.cos(e.age * speed) * r;
@@ -959,6 +990,7 @@ function blank(): Enemy {
     escaped: false,
     leaveAt: Infinity,
     leaving: false,
+    recycles: 0,
     lunge: null,
     lungeBeat: -1,
     lungeOffset: 0,
@@ -1202,34 +1234,27 @@ function bossLunge(difficulty: number, variant: number, phase: number): LungeSpe
 }
 
 /**
- * `x, y` is where it enters from — off the ring. `anchorX, anchorY` is the
- * point it will orbit, which is the centre of the arena AT THE MOMENT IT IS
- * SUMMONED and is stored in `homeX`/`homeY` for `bossMove` to read.
+ * `x, y` is where it enters from — off the line ahead.
  *
- * The fourth argument used to be the field width, from which this derived
- * `homeX = width / 2` and `bossMove` separately derived the same centre and its
- * own radius. Two places computing "the middle" from the field is one place too
- * many the day the field stops being the screen; the caller decides now, and
- * `world.ts` passes the camera's centre.
+ * `anchorX, anchorY` ARE GONE. They were the point the boss would orbit, the
+ * centre of the arena at the moment it was summoned, and `bossMove` now reads
+ * the view centre off `EnemyContext` instead — see the note there for the
+ * measurement that forced it. Removing the parameters rather than leaving them
+ * assigned-and-unread is the point: an argument the caller still computes and
+ * nothing consumes is exactly the rot AGENTS.md §3 describes, and it would
+ * have left `world.ts` deriving a spawn-time centre for nobody.
  *
- * `homeY` was `y` — the off-field entry height — and was read by nothing, which
- * is why it could be wrong for the whole life of the boss without showing.
+ * `homeX`/`homeY` are the ENTRY POINT now. `homeY` was previously the anchor
+ * and before that the entry height, read by nothing either time.
  */
-export function spawnBoss(
-  x: number,
-  y: number,
-  difficulty: number,
-  anchorX: number,
-  anchorY: number,
-  variant = 0,
-): Enemy {
+export function spawnBoss(x: number, y: number, difficulty: number, variant = 0): Enemy {
   const e = blank();
   e.id = nextId++;
   e.archetype = 'conductor';
   e.x = e.prevX = x;
   e.y = e.prevY = y;
-  e.homeX = anchorX;
-  e.homeY = anchorY;
+  e.homeX = x;
+  e.homeY = y;
   e.standoff = 0;
   /*
    * Was 900 * (1 + d*1.1), then 620 * (1 + d*0.7). A boss should be a set

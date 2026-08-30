@@ -68,7 +68,11 @@ const rows = await p.evaluate(async (TYPES) => {
    * the radius it was spawned at instead of closing on the ship.
    */
   const SEPARATION = 448;                 // px between ship and target
-  const SHIP_Y = w.height / 2 + 336;      // px below the field centre
+  // Anchored to the middle of the VIEW, not of the field: `w.height` is
+  // `Infinity` on an unbounded travel axis and `Infinity/2 + 336` is not a
+  // position. The view centre is the same point the old expression named at
+  // one screen, and it is where the game is actually played.
+  const SHIP_Y = w.camera.viewY + w.viewH / 2 + 336;
   const TARGET_Y = SHIP_Y - SEPARATION;
   const LANE_X = w.width / 2;             // both on one vertical line
   for (const t of TYPES) {

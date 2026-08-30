@@ -11,10 +11,10 @@ await p.waitForTimeout(9000);
 const at = async (frac, label) => {
   const notes = await p.evaluate(async (f) => {
     const mw = window.__musicwars;
-    mw.world.player.y = mw.world.height * f;
+    mw.world.player.y = mw.world.trackBack - (mw.world.trackBack - mw.world.trackFront) * f;
     mw.world.player.x = mw.world.width * 0.5;
     // Hold position while the director rebuilds on the next bar.
-    const hold = setInterval(() => { mw.world.player.y = mw.world.height * f; }, 16);
+    const hold = setInterval(() => { mw.world.player.y = mw.world.trackBack - (mw.world.trackBack - mw.world.trackFront) * f; }, 16);
     await new Promise((r) => setTimeout(r, 5200));
     clearInterval(hold);
     const bar = mw.director.sampleBar(mw.world.transport);

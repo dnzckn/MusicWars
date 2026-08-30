@@ -120,14 +120,22 @@ export async function installDriver(page, mode = 'dodge') {
       mx += Math.cos(out) * enc * 1.8;
       my += Math.sin(out) * enc * 1.8;
     }
-    // Stay off all four walls, not just the two vertical ones: being pinned
-    // against any edge in the round means half the escape directions are gone.
-    // The margin is a FRACTION of the field, not a fixed 110px — see
-    // tools/lib/bot-brain.mjs, which this is the verbatim page-side copy of.
-    // Math.min(900, 1120) * (110/900) is exactly 110: no-op at today's size.
-    const wall = Math.min(w.width, w.height) * (110 / 900);
+    /*
+     * Stay off the walls; the margin is a FRACTION of the field, not a fixed
+     * 110px. See tools/lib/bot-brain.mjs, which this is the verbatim
+     * page-side copy of.
+     *
+     * TWO WALLS AND A WINDOW. `w.height` is `Infinity` — the arena is bounded
+     * across the track and unbounded along it — so the two y terms this
+     * replaces were `py < 366`, which is true for every step after the first
+     * second of a run: the bot would have held the brake for the whole run. The
+     * travel axis is bounded by the TRACK WINDOW instead, read off `World` so
+     * this file does not hold its own copy of it. See tools/lib/bot-brain.mjs.
+     */
+    const wall = w.width * (110 / 900);
     if (px < wall) mx += 1; if (px > w.width - wall) mx -= 1;
-    if (py < wall) my += 1; if (py > w.height - wall) my -= 1;
+    const room = (w.trackBack - w.trackFront) * 0.22;
+    if (py < w.trackFront + room) my += 1; if (py > w.trackBack - room) my -= 1;
 
     const len = Math.hypot(mx, my);
     inp.x = len > 0.05 ? mx / len : 0;
