@@ -33,6 +33,23 @@ const { buildChord, PROGRESSIONS } = await import('../src/audio/theory.ts');
 
 const DEPTH_MIN = 0.05;
 const DEPTH_MAX = 0.4;
+/*
+ * A BOSS IS ALLOWED — REQUIRED — TO BE OUT OF TUNE.
+ *
+ * DEPTH_MAX encodes "the melody stays in tune with the harmony under it", and
+ * that is right for the ordinary lead. The boss lead deliberately breaks it:
+ * it is built on Lavender Town, whose whole character is a slow half-semitone
+ * wobble that stops the pitch reading as one note. Bounding both states by one
+ * number would mean either letting the boss off (relaxing a real rule for every
+ * other state) or forbidding the effect outright.
+ *
+ * So the assertion SPLITS rather than widens, and gains a third clause it did
+ * not have: the boss must actually be deeper than the ordinary lead. That is
+ * strictly more than this check asserted before — it can now fail because the
+ * boss stopped being unsettling, which was previously unmeasurable.
+ */
+const BOSS_DEPTH_MIN = 0.4;
+const BOSS_DEPTH_MAX = 1.1;
 
 function state(over = {}) {
   const mode = over.mode ?? 'aeolian';
@@ -88,6 +105,8 @@ for (const mode of Object.keys(PROGRESSIONS)) {
 let notes = 0;
 const noVib = [];
 const badDepth = [];
+const bossDepths = [];
+const plainDepths = [];
 const pairs = []; // [sustain, depth] for the coupling check
 
 for (const c of cases) {
@@ -95,8 +114,16 @@ for (const c of cases) {
   notes += evs.length;
   for (const e of evs) {
     if (!(e.vib > 0) || !(e.vibmod > 0)) noVib.push({ ...c, vib: e.vib, vibmod: e.vibmod });
-    else if (e.vibmod < DEPTH_MIN || e.vibmod > DEPTH_MAX) badDepth.push({ ...c, vibmod: e.vibmod });
-    if (typeof e.sustain === 'number' && typeof e.vibmod === 'number') pairs.push([e.sustain, e.vibmod]);
+    else if (c.boss) {
+      if (e.vibmod < BOSS_DEPTH_MIN || e.vibmod > BOSS_DEPTH_MAX) badDepth.push({ ...c, vibmod: e.vibmod });
+      bossDepths.push(e.vibmod);
+    } else if (e.vibmod < DEPTH_MIN || e.vibmod > DEPTH_MAX) badDepth.push({ ...c, vibmod: e.vibmod });
+    // Coupling is a property of ONE state's sustain curve. Mixing the boss in
+    // compares two different curves and reports their difference as a failure.
+    if (!c.boss && typeof e.sustain === 'number' && typeof e.vibmod === 'number') {
+      pairs.push([e.sustain, e.vibmod]);
+      plainDepths.push(e.vibmod);
+    }
   }
 }
 
@@ -128,7 +155,25 @@ if (badDepth.length) {
   const hi = Math.max(...badDepth.map((v) => v.vibmod));
   console.log(`\n  DEPTH — ${badDepth.length} note(s) outside ${DEPTH_MIN}-${DEPTH_MAX} (${lo}-${hi})`);
 } else {
-  console.log(`  ok   depth — every note inside ${DEPTH_MIN}-${DEPTH_MAX} semitones`);
+  console.log(`  ok   depth — every ordinary note inside ${DEPTH_MIN}-${DEPTH_MAX} semitones`);
+  /*
+   * The new clause. Denominators printed, and a zero on either side is a
+   * failure rather than a pass: if no boss note was sampled this proved
+   * nothing.
+   */
+  const bMax = bossDepths.length ? Math.max(...bossDepths) : 0;
+  const pMax = plainDepths.length ? Math.max(...plainDepths) : 0;
+  if (!bossDepths.length || !plainDepths.length) {
+    console.log(`
+  BOSS — sampled ${bossDepths.length} boss and ${plainDepths.length} ordinary notes; need both`);
+    fail = true;
+  } else if (bMax <= pMax) {
+    console.log(`
+  BOSS — the boss lead is not more out of tune than the ordinary one (${bMax.toFixed(2)} vs ${pMax.toFixed(2)})`);
+    fail = true;
+  } else {
+    console.log(`  ok   boss — deeper than the ordinary lead (${bMax.toFixed(2)} vs ${pMax.toFixed(2)}), ${bossDepths.length}/${plainDepths.length} notes`);
+  }
 }
 
 /*

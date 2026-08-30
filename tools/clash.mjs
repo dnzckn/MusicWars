@@ -185,6 +185,26 @@ function degreeToSemitone(mode, degree) {
 
 /** The triad on a scale degree, as pitch classes. Mirrors `theory.buildChord`. */
 function triadClasses(mode, degree) {
+  /*
+   * DELIBERATELY THE TRIAD, now that the chord is a tetrad.
+   *
+   * `theory.ts` makes the seventh a structural member of every chord, so this
+   * `[0, 2, 4]` is no longer "the chord" — it is the chord's CORE. Left as it
+   * is on purpose, and the reason matters: adding step 6 here would make more
+   * of the melody's on-beat notes count as chord tones, the unresolved count
+   * would fall, and the tool would report an improvement it had granted
+   * itself. That is a gate being relaxed by the change it is supposed to
+   * judge.
+   *
+   * Scored against the triad, this number means the same thing it always meant
+   * and is strictly the harder question: does the tune work over the chord's
+   * own three defining tones, without help from an extension the
+   * accompaniment supplies? It should therefore be UNCHANGED by the extension
+   * work, and that invariance is itself the evidence that the melodic
+   * relationship was not disturbed.
+   *
+   * `tools/harmony.mjs` is where the extension is measured.
+   */
   return [0, 2, 4].map((d) => ((degreeToSemitone(mode, degree + d) % 12) + 12) % 12);
 }
 

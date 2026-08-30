@@ -97,6 +97,22 @@ declare module '@strudel/core' {
      * Useful range is 4.5-6.5Hz. Below 4 it is a wobble, above 8 a trill.
      */
     vib(v: Patternable): Pattern;
+    /*
+     * Tremolo — amplitude modulation, distinct from `vib` which is pitch.
+     *
+     * `tremsync` is the rate as a subdivision of the cycle and `tremdepth` the
+     * amount. superdough registers them as `tremolosync`/`tremolodepth`
+     * (superdough.mjs:199, :598, :796) and Strudel exposes the short aliases;
+     * both were checked in node_modules before this declaration was written,
+     * because a control that does not exist fails SILENTLY here — which is how
+     * `.vibmod()` sat inert in this codebase for its whole life.
+     *
+     * Depth 0 is no modulation, NOT silence. That is worth stating because
+     * `distort(0)` in this same API DOES silence the lane, and assuming the two
+     * behave alike would be a plausible and wrong guess.
+     */
+    tremsync(v: Patternable): Pattern;
+    tremdepth(v: Patternable): Pattern;
     /**
      * Vibrato depth in SEMITONES, not cents — 1.0 is a whole semitone of
      * sweep either way, which is far more than any instrument does.
