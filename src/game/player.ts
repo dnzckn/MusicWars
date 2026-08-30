@@ -77,8 +77,39 @@ export const PLAYER_FOCUS_SPEED = 190;
  * 190 px/s would slide backwards out of the frame every time the player
  * planted, which is the opposite of what planting is for.
  */
-export const CRUISE_SPEED = 360;
-export const TRIM_SPEED = 260;
+/*
+ * 430, RAISED FROM 360, AND IT IS THE SAME NUMBER AS PLAYER_SPEED ON PURPOSE.
+ *
+ * Reported from play: "currently always moving forward yet moving backward
+ * feels sluggish, i want that same level of snappy control i had in the
+ * original arena, but now it feels more fast because i'm always moving forward
+ * running from enemies."
+ *
+ * The sluggishness was one asymmetry. Lateral movement is `input.x * 430`.
+ * Fore-and-aft was `-360 + input.y * min(360, 260)`, so the ship repositioned
+ * along the track at 260 px/s against 430 across it — 60% of the authority in
+ * one axis and full authority in the other. A stick that answers at two
+ * different speeds depending on which way you push it does not read as a
+ * design, it reads as lag.
+ *
+ * With cruise and trim both at PLAYER_SPEED the ship has EXACTLY 430 in every
+ * direction relative to the stage, which is the original arena's feel restored.
+ * And the forward bias survives untouched, because the arithmetic still cannot
+ * produce a positive velocity: full back is `-430 + 430 = 0`, so the worst the
+ * stick can do is hold the ship still in world space while the stage keeps
+ * flowing past it. There is no stick position that reverses the ship, which was
+ * the whole point of a throttle rather than a direction.
+ *
+ * It also does what the owner describes wanting — everything is faster, because
+ * `carryStage` advances the world at this same constant.
+ */
+export const CRUISE_SPEED = 430;
+/*
+ * Equal to the cruise, so `trimTop`'s `Math.min(CRUISE_SPEED, ...)` cap is not
+ * what is limiting it — the two numbers agree rather than one clipping the
+ * other. See the note above.
+ */
+export const TRIM_SPEED = 430;
 
 /*
  * How hard the ship settles back to its station in the track window, and over
