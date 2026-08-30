@@ -348,6 +348,24 @@ export interface Enemy {
 export const ARCHETYPE_INFO: Record<EnemyArchetype, { label: string; motif: string }> = {
   pluck: { label: 'PLUCK', motif: 'offbeat plucked stab' },
   stutter: { label: 'STUTTER', motif: 'sixteenth-note cluster' },
+  /*
+   * ARP's hp came down 32 -> 18. Reported from play: "the shield icon looking
+   * enemies are very tanky".
+   *
+   * It was the outlier by a long way — 32 against pluck's 12, glissando's and
+   * echo's 10, and stutter's 4. Nearly THREE TIMES the next toughest ordinary
+   * body and eight times the most numerous one, on a shape whose amber ring is
+   * also one of the most visible things on the field, so the player meets it
+   * often and it always takes noticeably longer to kill than it looks like it
+   * should.
+   *
+   * That was survivable when it was one of six archetypes on a sparse screen.
+   * It is not now: `scaleForEnsemble` multiplies on top of this, the density
+   * pass put 19 bodies on screen at p50 against a former 7, and the treadmill
+   * means a body you fail to kill rides along with you rather than being left
+   * behind. 18 keeps it the toughest ordinary shape — still 1.5x pluck — while
+   * putting it inside the range the rest of the roster occupies.
+   */
   arpeggiator: { label: 'ARP', motif: 'alternating fifths' },
   glissando: { label: 'GLISS', motif: 'delayed sliding line' },
   subdrop: { label: 'SUBDROP', motif: 'distorted low brass hit' },
@@ -887,7 +905,7 @@ const SPECS: Record<Exclude<EnemyArchetype, 'conductor'>, Spec> = {
     lunge: null,
   },
   arpeggiator: {
-    hp: 32,
+    hp: 18,
     radius: 20,
     score: 350,
     dropChance: 0.32,

@@ -6617,7 +6617,14 @@ export class World {
        * The bottom of the screen is where it visibly leaves, which is what the
        * rule has always meant.
        */
-      updateDrop(d, dt, this.camera.viewY + this.viewH, this.player.x, this.player.y, magnetY, pullScale);
+      /*
+       * The drop's reach is built the same way the shard's is, a few hundred
+       * lines up: base plus the rig's pickup multiplier. Written as the same
+       * arithmetic rather than a second constant, so MAGNET cannot widen one
+       * kind of pickup and not the other again.
+       */
+      const dropReach = 210 * this.mods.pickupRadius + PASS_REACH;
+      updateDrop(d, dt, this.camera.viewY + this.viewH, this.player.x, this.player.y, magnetY, pullScale, dropReach);
       const r = PICKUP_RADIUS * this.mods.pickupRadius + 8;
       if (dist2(d.x, d.y, this.player.x, this.player.y) < r * r) {
         const def = powerupDef(d.kind);

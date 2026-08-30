@@ -206,6 +206,18 @@ export const PICKUP_RADIUS = 30;
  * `world.ts` — see that constant for the derivation. A powerup has no rig
  * multiplier of its own, so this is written out flat rather than as a sum.
  */
+/*
+ * The BASE reach. It is now a floor rather than the whole story — see the
+ * `reach` parameter on `updateDrop`.
+ *
+ * Reported from play: "the square items like shield and bomb etc should get
+ * attracted just like xp too". They already committed on contact exactly as a
+ * shard does, but the range was this CONSTANT while a shard's is
+ * `210 * mods.pickupRadius + PASS_REACH` — so MAGNET widened the reach for XP
+ * and did nothing at all for the drops. Holding the item that exists to pull
+ * things in left half the pickups untouched, which is not a balance decision,
+ * it is two code paths that drifted.
+ */
 const DROP_REACH = 550;
 /**
  * The vertical game's auto-collect line — EXPORTED, IMPORTED BY NOTHING.
@@ -232,6 +244,12 @@ export function updateDrop(
   playerX: number,
   playerY: number,
   magnet: boolean,
+  /**
+   * How far this drop will notice the ship, in px. Scales with the rig's
+   * pickup radius exactly as a shard's does, so MAGNET pulls squares and
+   * diamonds alike. Defaults to the base so existing callers are unchanged.
+   */
+  reach = DROP_REACH,
   /**
    * Scales the passive close-range pull below, 1 normally. `World` drives
    * this down toward 0 the longer the ship has been camping — see its
@@ -291,7 +309,7 @@ export function updateDrop(
     const dy = playerY - d.y;
     const d2 = dx * dx + dy * dy;
     if (d.age > 0.35 && pullScale > 0) {
-      if (!d.committed && d2 < DROP_REACH * DROP_REACH) d.committed = true;
+      if (!d.committed && d2 < reach * reach) d.committed = true;
       if (d.committed) {
         const len = Math.sqrt(d2) || 1;
         // Once committed the falloff is gone: a drop that has decided to come
