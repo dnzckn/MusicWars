@@ -312,6 +312,26 @@ whichever side fits. `motorcheck` was seen RED on 80 notes at MIDI 55-56 during
 this work, which is how `MIN_LANE_SPAN` was discovered — a fold cannot promise a
 window narrower than an octave.
 
+**The pad became a DYAD, and that is arithmetic rather than taste.** A window of
+N semitones can only hold a chord whose span is under N. A root-position shell
+spans eleven and its root can be any of twelve pitch classes, so holding it
+upright needs 23 semitones; fold the overflow down an octave instead and the
+seventh lands a WHOLE TONE UNDER THE ROOT. Measured the day the chord grew its
+seventh: **38 of 88 pad bars held two tones a second apart** — `[49,50,54,57]`,
+held for a whole bar, at 110-220 Hz, on the one lane that never stops
+sustaining, with every register gate green. All 38 were below the lead's entry
+point, which is to say in the intro and in calm play — exactly where the
+complaint "even on level1 it's like terrible sounding" lands.
+
+Two tones a fifth apart fold to a FOURTH. There is no arrangement of
+{root, fifth} in any window that produces a second, which is why the pad is now
+that shape unconditionally (root and third on a pivot, which folds to a minor
+sixth). Nothing is lost from the harmony: the motor states the third
+continuously under every bar, the stab states the third and the seventh as
+guide tones, and the colour pair states the ninth and the thirteenth.
+`tools/harmony.mjs` gained a SPACING assertion and it has been seen red at
+164 of 176 bars with the tetrad restored.
+
 #### Fewer lines, and a clock longer than eighty seconds
 
 "Why are there multiple conflicting melodies and theyre all on different tempos
@@ -326,14 +346,39 @@ things were letting the count through the voice budget:
   file". `ROLE_CAP` now allows one melody, one harmony, **one counter**, one
   colour. A lane refused takes the ordinary graded yield; nothing is muted.
 
-`LONG_REST` is the game's answer to `mask("<x ~ x ~ ~>/128")`. Four slots of
+`COUNTER_ROTA` is the game's answer to `mask("<x ~ x ~ ~>/128")`. Four slots of
 three waves each, with the CONTENTS chosen by the act — two nested long clocks,
 both facts about the run rather than about the transport. Measured over 80 waves
 at `wavelength`'s recorded 18 s/wave: **27 state changes, median hold 54 s, max
 108 s**, against a previous longest unit of 80 s (the key). Only `arp`, `motifs`
-and `power` may rest; never the tune, the bed, or any of the six lanes exempt
-from the budget — `research-music.md` is explicit that the motor must stay
-exempt from any tacet rule. Suppressed during a boss and on a HUSHED wave.
+and `power` are affected; never the tune, the bed, or any of the six lanes
+exempt from the budget — `research-music.md` is explicit that the motor must
+stay exempt from any tacet rule. Suppressed during a boss and on a HUSHED wave.
+
+**The first version of that table was a measured regression and the gate caught
+it.** It rested `arp` and `power` and never `motifs` — which, with `motifs`
+outranking `arp` and a counter cap of one, meant the motif lane held the chair
+in every bar of the run and the arp could never win one. `tools/faders.mjs`
+went from green to red in that commit: over a 900 s run the arp's fader RANGE
+collapsed **0.46 → 0.13** and it sat within 0.02 of zero **100%** of the time.
+That is the dead-lane defect `session`'s "alive" check exists to find, produced
+by a rule that was individually correct.
+
+The fix is the better design rather than a retreat: the rota now says who PLAYS
+rather than who rests, so the counter chair always has somebody in it and which
+of the two it is changes every 54 seconds. Measured after, same tool, same run
+length:
+
+| | before this pass | first version | shipped |
+|---|---|---|---|
+| arp fader range | 0.46 | 0.13 | **0.66** |
+| arp within 0.02 of zero | 98% | 100% | **86%** |
+| motifs within 0.02 of zero | 50% | 29% | 55% |
+
+The arp is audible for 14% of a run where it was audible for 2%, and the two
+countersubjects genuinely alternate instead of one of them winning permanently.
+Two parts taking turns over a long form is counterpoint; one part winning every
+bar is a fader that never moves.
 
 #### Timbre
 
@@ -359,6 +404,40 @@ move that was "out of the pile-up" had become "into the clock". Its lowpass move
 with it, 700-1600 → 1300-3000, keeping the cutoff-to-fundamental ratio the
 comment's own numbers were derived at. That is the third time in this file a
 lane has been transposed and its filter left behind.
+
+Both were measured at the unit level rather than argued. With eight archetypes
+on screen `buildMotifs` emitted **10 haps in 3 voice groups at 3, and 6 haps in
+2 groups at 2**. In a `drop`, `allocate` admitted `[lead, chords, motifs, arp]`
+without the role cap and `[lead, chords, motifs, power]` with it — one
+countersubject, and the colour lane promoted into the freed slot rather than the
+mix getting thinner.
+
+#### One number that went the wrong way, and one that did not move
+
+`session`'s headroom check reads **2.594 of full scale with no limiter**, which
+fails, against a tool whose own recorded failing example is 1.329. It is not
+from this pass and the controlled test says so rather than the argument:
+neutralising EVERY level-affecting change in this pass at once — the role cap,
+the counter rota, `MAX_MOTIFS`, and the pad dyad — and re-running gives
+**2.596**. Two thousandths on a figure of 2.6. The clipping is pre-existing and
+this work neither causes nor cures it.
+
+(An earlier, uncontrolled reading of the same pair said the pad dyad improved it
+by 10%. That was a one-variable test taken before the rota changed which lanes
+are on duty at the probe's wave, and the four-variable control above supersedes
+it. The lesson is the one this repo keeps recording: an A/B across two
+uncontrolled configurations is not a measurement.)
+
+The absolute figure is a gain-staging problem and it is deliberately not
+touched, for the reason `buildBass` already records about its own gain:
+re-staging wants the whole mix, the stem faders and the master volume in one
+measurement, and nobody has heard any of it.
+
+`clash` is **byte-identical before and after** — 58 unresolved on-beat clashes,
+boss leitmotif 2 of 14. That is the result its own comment predicted: it scores
+the melody against the chord's TRIAD core on purpose, so that adding a seventh
+cannot grant the tool an improvement it invented. The invariance is the evidence
+that the melodic relationship was not disturbed.
 
 #### What is NOT claimed
 

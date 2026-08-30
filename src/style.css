@@ -359,6 +359,40 @@ body::before {
 }
 
 /*
+ * The geometry, said once, on the only screen with nothing under it.
+ *
+ * Louder than the music copy around it on purpose — this is the sentence that
+ * decides whether the first thirty seconds make sense, and everything else on
+ * this panel is context. Gold is reserved for payoff everywhere else in the
+ * game, so this takes the cool accent instead; a rule the player must obey is
+ * not a reward.
+ */
+.opener-rule {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin: 2px 0 0;
+  padding: 7px 16px;
+  border: 1px solid rgba(53, 230, 255, .3);
+  border-radius: 8px;
+  background: rgba(6, 12, 24, .82);
+}
+.opener-rule b {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--cool);
+}
+.opener-rule span {
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--ink-2);
+}
+.opener-rule kbd { margin: 0 1px; }
+
+/*
  * A cue sheet, not a caption.
  *
  * The first version floated four rows of dim text straight on the grid and read
@@ -617,6 +651,45 @@ body::before {
   align-items: center;
 }
 .controls div { display: contents; }
+/*
+ * TWO CONTROLS PER ROW WHEN THE WINDOW IS SHORT.
+ *
+ * Measured with `_fits`: at 1280x720 the title screen's content is 867px in a
+ * 700px box, so the last five items — Black hole, Pause, Volume, the touch
+ * hint and the headphones line — were below the fold. `.screen` is
+ * `overflow-y: auto`, so `panelshot`'s "the page does not scroll" assertion is
+ * satisfied while the screen quietly clips its own tail, and nobody scrolls a
+ * title screen. 1100x700 and 800x600 clip a row further.
+ *
+ * That is not a cosmetic loss: under the list this replaced, the row that was
+ * always first over the edge was LEVEL UP — the keys that spend the thing the
+ * whole game is about. A control list a player cannot see is the same defect
+ * as a control that is not listed.
+ *
+ * `display: contents` on the wrapper divs means `dt`/`dd` flow straight into
+ * the grid, so four columns is two controls per line for free, with no change
+ * to the markup and no reordering. The order still puts the four a new player
+ * needs first, so a window short enough to clip even this loses the least.
+ */
+@media (max-height: 900px) {
+  .controls { grid-template-columns: auto auto auto auto; gap: 6px 14px; }
+}
+/*
+ * And the last 65px, at the sizes that still need it.
+ *
+ * Four columns takes 1280x720 from 867px of content to 765px in a 700px box.
+ * The remainder comes out of the air between blocks rather than out of any
+ * content: `.screen`'s gap and the hero's, and the tagline's line height,
+ * which is set for reading a paragraph at leisure and can afford to tighten on
+ * a laptop. Nothing is hidden and no type goes under the `typescale` floor of
+ * 9px — the smallest thing touched here is the 13px tagline.
+ */
+@media (max-height: 780px) {
+  #title-screen { gap: 8px; padding: 14px 24px; }
+  #title-screen .hero { gap: 6px; }
+  #title-screen .tagline { font-size: 12px; line-height: 1.5; }
+  #title-screen .warning { line-height: 1.4; }
+}
 .controls dt { text-align: right; color: var(--ink-2); letter-spacing: .06em; }
 .controls dd { margin: 0; text-align: left; display: flex; align-items: center; gap: 4px; }
 .controls dd em { font-style: normal; color: var(--dim); font-size: 10px; letter-spacing: .04em; margin-left: 2px; }
@@ -971,19 +1044,55 @@ kbd {
   box-shadow: none;
   background: rgba(8, 10, 20, .72);
 }
-.hud-foot .xpline {
-  margin: 0 0 4px;
+/*
+ * Level and progress, now under the wave line in the top-right.
+ *
+ * Right-aligned to match its neighbours, and tabular so the count does not
+ * shuffle the line every time it ticks — the same argument `.hud-score` makes
+ * one block up.
+ */
+.hud-tr .xpline {
+  margin: 3px 0 0;
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 8px;
   font-size: 9px;
   color: var(--dim);
   text-shadow: 0 1px 5px rgba(0,0,0,.9);
   font-variant-numeric: tabular-nums;
 }
-.hud-foot .xpline b { color: var(--green); font-weight: 700; letter-spacing: .16em; }
-.hud-foot .xpline em { font-style: normal; opacity: .8; }
-.hud-foot .fusion-ready { margin: 0 0 2px; text-shadow: 0 1px 6px rgba(0,0,0,.95); }
+.hud-tr .xpline b { color: var(--green); font-weight: 700; letter-spacing: .16em; }
+.hud-tr .xpline em { font-style: normal; opacity: .8; }
+
+/*
+ * The fusion telegraph, now under the slot tiles it is talking about.
+ *
+ * IT HAS TO BREAK TIDILY, AND THAT IS ALL — the first version of this comment
+ * claimed it was preventing an overrun and was wrong.
+ *
+ * The worry was real: `.hud-tl` caps at `min(46%, 420px)` and this element's
+ * longest line runs past that, so a flex row that could not break would paint
+ * out of the group. Fail-tested by removing all three declarations below and
+ * re-running `panelshot` with a 90-character line forced into the element —
+ * the box still came out 420x21 (two lines) with ink reaching 444px, against a
+ * playfield edge at 990-3069 depending on the window. The cap plus ordinary
+ * text wrapping inside the flex items already holds it; nothing here is what
+ * stops the overflow.
+ *
+ * They are kept because they decide WHERE the break lands. With `flex-wrap`
+ * the whole "needs ..." clause moves to the second line; without it the `em`
+ * shrinks and breaks mid-clause instead. Same height, tidier sentence. Said
+ * plainly so the next person does not read a defence against a failure that
+ * this rule was measured not to prevent.
+ */
+.hud-tl .fusion-ready {
+  margin: 1px 0 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  text-shadow: 0 1px 6px rgba(0,0,0,.95);
+}
+.hud-tl .fusion-ready em { min-width: 0; }
 
 /* "tap to resume the music" — the one line in the HUD that is an instruction
    rather than a readout, so unlike everything else here it gets a plate and a

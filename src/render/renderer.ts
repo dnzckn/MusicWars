@@ -18,11 +18,11 @@ import { clamp01, lerp, TAU } from '../core/math';
 import type { Transport } from '../core/transport';
 import type { Effect, World } from '../game/world';
 import { beatsUntilLunge } from '../game/enemies';
-import { INVULN_ON_HIT } from '../game/player';
+import { CRUISE_SPEED, INVULN_ON_HIT } from '../game/player';
 import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
 import { SHARD_HUES, Status } from '../game/world';
-import { PLAYFIELD_W } from '../game/field';
+import { PLAYFIELD_W, TRACK_ANCHOR } from '../game/field';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
 import { playerBulletSprites, ROTATIONS, softDot } from './sprites';
@@ -84,6 +84,15 @@ export class Renderer {
   /** Vignettes are quantised to 5% tension steps and cached; building a radial
    *  gradient every frame showed up in profiles for no visible benefit. */
   private vignettes = new Map<number, CanvasGradient>();
+  /** Ground speed along the track, px/s. Set once a frame; see `render`. */
+  private groundSpeed = CRUISE_SPEED;
+  /** Stick position on the throttle axis: 0 stopped, 0.5 cruise, 1 flat out. */
+  private trim = 0.5;
+  /** Smoothed `trim`, so the gauge and the plume do not twitch on a tap. */
+  private trimShown = 0.5;
+  /** The level the last frame saw, and the countdown of the pop it fired. */
+  private lastLevel = 0;
+  private levelPop = 0;
   private grid: WarpGrid;
   /** Quarter-resolution buffer for the bloom pass. */
   private bloom: HTMLCanvasElement;
@@ -360,6 +369,23 @@ export class Renderer {
       offer: (payload: Parameters<LevelUpOverlay['forceOffer']>[0]) =>
         this.levelUp.forceOffer(payload, world.snapshot),
       close: () => this.levelUp.clearForced(),
+      /*
+       * WHETHER THE SCREEN IS STILL PAINTING, because "I closed it and waited"
+       * is not the same question and `levelshot` was getting it wrong.
+       *
+       * That check takes a CONTROL — the overlay's alpha over the card region
+       * with nothing open — by calling `close()` and sleeping 700ms. The exit
+       * animation is at least 12 frames plus a page fade, so on a loaded
+       * machine the control was measured over a screen still at full backdrop:
+       * observed swinging between 5.8 and 214.7 across runs of identical code,
+       * with everything failing on the high readings because the OPEN state
+       * could not clear a control that was already nearly opaque. A gate whose
+       * baseline is sometimes the thing it is comparing against is not a gate.
+       *
+       * One boolean off the overlay's own `isOpen`, so a tool can wait for the
+       * state instead of guessing at a duration.
+       */
+      isOpen: () => this.levelUp.isOpen,
       select: (i: number) => this.levelUp.select(i),
       resolve: (i: number) => this.levelUp.resolve(i),
       // Layout and hit-test, side by side, so a check can assert they agree.
@@ -499,6 +525,43 @@ export class Renderer {
     // dies after the background has been cleared — i.e. a black screen.
     const tension = Number.isFinite(rawTension) ? clamp01(rawTension) : 0;
     this.updateQuality(fps);
+
+    /*
+     * HOW FAST THE SHIP IS ACTUALLY GOING, computed once and read by three
+     * draw passes: the starfield, the engine plume and the gauge.
+     *
+     * SPEED IS THE VERB NOW and until this pass almost nothing said so. The
+     * forward axis of the stick is a throttle — `player.ts` sets
+     * `wantY = -CRUISE_SPEED + input.y * trimTop` with CRUISE === TRIM === 430
+     * — so ground speed spans roughly [120, 765] px/s in play (the floor is
+     * above zero because the station-keeping `settle` term is still pushing).
+     * Measured on this build with `_speedcue`, differencing the upper third of
+     * the frame across 250ms at three stick positions over 307,200 pixels:
+     *
+     *   full back      ground 122 px/s   1.09% of pixels changed
+     *   cruise         ground 478 px/s   3.22%
+     *   full forward   ground 765 px/s   3.05%
+     *
+     * The top HALF of the throttle range — a 60% speed increase — moved the
+     * same number of pixels as cruise did. The background was carrying speed
+     * only through star parallax, and the one visual that looked like speed
+     * (star elongation) was wired to MUSICAL TENSION, which is a different
+     * signal that happens to rise at the same time often enough to be
+     * mistaken for it.
+     *
+     * `trim` is 0 stopped, 0.5 at cruise, 1 flat out — the stick position, not
+     * the speed, which is what the player is actually controlling.
+     */
+    // Guarded the same way `tension` is one line up, and for the same reason:
+    // a NaN here reaches a star's height and a gauge's fill, and a NaN in a
+    // colour string throws inside `addColorStop` and kills the frame after the
+    // background has been cleared — a black screen with no error.
+    const vy = w.player.vy;
+    this.groundSpeed = Number.isFinite(vy) ? Math.max(0, -vy) : CRUISE_SPEED;
+    this.trim = clamp01(this.groundSpeed / (CRUISE_SPEED * 2));
+    // Smoothed for the things that would otherwise twitch on a tap. `trim`
+    // itself stays raw for anything that wants the instantaneous value.
+    this.trimShown += (this.trim - this.trimShown) * Math.min(1, dt * 7);
     // Shortest way round the colour wheel, so 8 -> 282 goes down through 0
     // rather than sweeping through every hue in between.
     let d = ((this.targetHue - this.hue + 540) % 360) - 180;
@@ -601,6 +664,7 @@ export class Renderer {
     this.drawPlayer(g, alpha);
     this.drawDrones(g);
     this.drawGuard(g);
+    this.drawShipPrompt(g, alpha, dt);
 
     g.restore();
 
@@ -839,7 +903,24 @@ export class Renderer {
      * DRAWN — the field behind the cards stays a picture of the fight rather
      * than losing its background.
      */
-    const speed = w.choosing ? 0 : 40 + tension * 220;
+    /*
+     * THE STARS ANSWER THE STICK, NOT THE ARRANGEMENT.
+     *
+     * This was `40 + tension * 220`. Tension is the DIRECTOR's signal — danger
+     * or progress, whichever is higher — and driving the one layer that looks
+     * like speed from it meant the background sped up when the music did and
+     * ignored the throttle entirely. On a treadmill where the forward axis of
+     * the stick is the only thing the player controls in that axis, that is
+     * the wrong dial wired to the wrong readout.
+     *
+     * `groundSpeed * 0.42` puts the drift roughly on the same scale as the
+     * parallax term below (`CRUISE * 0.55 * z`), so the two agree instead of
+     * fighting: at full back the field crawls, at full throttle it pours. A
+     * small tension term survives because "the world accelerates as the track
+     * does" is still true and still worth seeing — it is now a garnish on the
+     * ship's own speed rather than the whole of it.
+     */
+    const speed = w.choosing ? 0 : this.groundSpeed * 0.42 + tension * 40;
     const parX = w.camera.viewX * STAR_PARALLAX;
     const parY = w.camera.viewY * STAR_PARALLAX;
     g.fillStyle = `hsl(${this.hue + 12}, 32%, 72%)`;
@@ -853,9 +934,26 @@ export class Renderer {
       let py = s.y - parY * s.z;
       if (px < 0 || px >= w.viewW) px = ((px % w.viewW) + w.viewW) % w.viewW;
       if (py < 0 || py > w.viewH) py = ((py % w.viewH) + w.viewH) % w.viewH;
-      g.globalAlpha = 0.16 + s.z * 0.4;
+      /*
+       * THE STREAK IS THE SPEEDOMETER.
+       *
+       * `size * (1 + tension * 2.5)` elongated every star when the MUSIC got
+       * intense. A streak is the most literal speed cue a starfield has and it
+       * was reporting somebody else's number. It is the throttle now, squared
+       * so the change lands in the top half of the range where it was
+       * previously invisible: at cruise (trim 0.5) a star is 1.4x its width,
+       * at full throttle 6.5x, at full back 1.1x. Tension keeps a small share
+       * so an intense wave still reads as faster than a quiet one at the same
+       * speed.
+       *
+       * Alpha rises with the streak as well, because a longer star spread over
+       * more pixels at the same alpha is a DIMMER star, which would have
+       * cancelled half of what the length is trying to say.
+       */
+      const streak = this.trimShown * this.trimShown * 5.5 + tension * 0.6;
+      g.globalAlpha = (0.16 + s.z * 0.4) * (1 + Math.min(0.55, streak * 0.12));
       const size = s.z * 1.9;
-      g.fillRect(px, py, size, size * (1 + tension * 2.5));
+      g.fillRect(px, py, size, size * (1 + streak));
     }
     g.globalAlpha = 1;
 
@@ -935,7 +1033,27 @@ export class Renderer {
        * unresponsiveness if you can see the thing wearing down: the body drains
        * toward black, the outline heats up, and the line thins as it goes.
        */
-      g.fillStyle = flash ? '#ffffff' : `hsla(${e.hue}, 72%, ${6 + hpFrac * 26}%, 0.95)`;
+      /*
+       * A HIT FLASHES THE OUTLINE. IT USED TO FILL THE BODY PURE WHITE.
+       *
+       * `flash ? '#ffffff'` on the FILL is the single largest legibility cost
+       * in the frame at the densities this game now runs. `arena` measures
+       * on-screen p50 19 and p90 56; photographed at wave 23 with 76 bodies on
+       * screen and a multi-hit weapon, a third of the field is solid white
+       * discs at any instant, drawn under a renderer that composites
+       * everything else with `lighter`. The ship, the shards and the incoming
+       * bodies all vanish into it. Finding one's own ship in that frame took
+       * seconds; it is supposed to take none.
+       *
+       * The flash is worth keeping — knowing what you are hitting is why it
+       * exists — so it moves to where it costs nothing: the OUTLINE goes white
+       * and the fill lifts to a bright version of the body's OWN hue rather
+       * than losing it. That is strictly more information, not less: a flashing
+       * body still says which archetype it is, which a white disc did not.
+       */
+      g.fillStyle = flash
+        ? `hsla(${e.hue}, 92%, ${40 + hpFrac * 20}%, 0.95)`
+        : `hsla(${e.hue}, 72%, ${6 + hpFrac * 26}%, 0.95)`;
       g.strokeStyle = flash
         ? '#ffffff'
         : `hsla(${e.hue - (1 - hpFrac) * 18}, 100%, ${52 + (1 - hpFrac) * 34}%, 0.95)`;
@@ -1161,15 +1279,46 @@ export class Renderer {
     g.closePath();
     g.fillStyle = '#0b1728';
     g.fill();
+    /*
+     * A DARK KEYLINE UNDER THE CYAN, and this is a density fix rather than a
+     * style one.
+     *
+     * Every explosion, particle and effect in this renderer composites with
+     * `lighter`. Photographed at 76 on-screen bodies, the pile of overlapping
+     * particle dots around a kill saturates to PURE WHITE over an area several
+     * times the ship — and a 2px #6ff0ff stroke on white is very nearly
+     * nothing. The ship is drawn after all of it and was still the hardest
+     * thing on the screen to find.
+     *
+     * Stroking near-black at 5px first gives the cyan an edge to sit on that
+     * is dark against the blown-out case and invisible against the ordinary
+     * one, because the field behind it is #04050a anyway. One extra stroke of
+     * one four-point path per frame.
+     */
+    g.strokeStyle = 'rgba(2,5,12,0.92)';
+    g.lineWidth = 5;
+    g.lineJoin = 'round';
+    g.stroke();
     g.strokeStyle = '#6ff0ff';
     g.lineWidth = 2;
     g.stroke();
 
-    // Engine trail.
+    /*
+     * THE PLUME IS A THROTTLE READOUT.
+     *
+     * It was `9 + sin(t) * 2` — a fixed flicker that said the same thing at
+     * 120 px/s and at 765. The engine is the one part of the ship a player is
+     * already watching (it is directly under the hull, in the direction the
+     * threat comes from), so it is the cheapest honest place to put the stick
+     * position: a stub when trimmed back, a torch when pushed. The idle
+     * flicker survives on top so a ship at cruise still breathes.
+     */
     g.globalCompositeOperation = 'lighter';
     const flame = this.dot(200);
-    const fs = 9 + Math.sin(performance.now() * 0.03) * 2;
+    const fs = (5 + this.trimShown * 11) + Math.sin(performance.now() * 0.03) * 1.6;
+    g.globalAlpha = 0.6 + this.trimShown * 0.4;
     g.drawImage(flame, -fs, 6 - fs * 0.4, fs * 2, fs * 2);
+    g.globalAlpha = 1;
 
     /*
      * The contact body. Always drawn, bright when focused.
@@ -1218,6 +1367,169 @@ export class Renderer {
       g.stroke();
     }
 
+    g.restore();
+  }
+
+  /**
+   * LEVELLING UP HAD NO PICTURE, and the key that spends it was a whisper.
+   *
+   * Two defects, one place, because they are the same event seen twice.
+   *
+   * FIRST: crossing a level threshold is silent. `world.ts`'s shard pickup
+   * calls `prog.grantShard` and DISCARDS the `{ gained }` it returns; nothing
+   * anywhere reacts to the level rising. Every other reward in this game got
+   * an acknowledgement in some earlier pass — shards got a sound, wells got a
+   * renderer, beams got drawn — and the biggest one in the progression, the
+   * thing the whole XP economy exists to produce, produced nothing at all. The
+   * ring below is that receipt. It is drawn from the SNAPSHOT rather than from
+   * an event because `src/game/` is another workstream's file and a renderer
+   * watching a number it is already handed needs nothing from it.
+   *
+   * SECOND: offers BANK now (`world.ts`: "level up screen pops up too often,
+   * space bar to pull up level ups"), and the only thing telling the player so
+   * was 9px of text at the bottom edge of the screen. Photographed at wave 23:
+   * EIGHT banked level-ups, the notice reading exactly as loud as it does at
+   * one, printed across the band the enemies arrive through. A bot ran a whole
+   * wave eight levels under-spent. A reward the player cannot see is a reward
+   * they do not take.
+   *
+   * IT GOES ON THE SHIP because that is where the eyes are — the same argument
+   * `drawPlayer`'s shield arc already makes ("a side-panel readout is useless
+   * when your eyes are locked to your hitbox") — and it goes ABOVE the ship
+   * because that is the safest real estate on the screen: `spawnring` measures
+   * 96.4% of arrivals astern, so the forward quarter is the one place a plate
+   * can sit without covering something that can kill you. It is gone the frame
+   * the queue empties, so it costs nothing in the ordinary case.
+   */
+  private drawShipPrompt(g: CanvasRenderingContext2D, alpha: number, dt: number): void {
+    const w = this.world;
+    const p = w.player;
+    const snap = w.snapshot;
+
+    // The pop. Latched on the level rising, and re-armed downward so a retry
+    // (which resets the level to 1) does not fire one on the next level-up's
+    // behalf or, worse, on every frame of the new run.
+    if (snap.level > this.lastLevel && this.lastLevel > 0) this.levelPop = 1;
+    this.lastLevel = snap.level;
+    if (this.levelPop > 0) this.levelPop = Math.max(0, this.levelPop - dt * 1.7);
+
+    if (p.dead) return;
+    const x = lerp(p.prevX, p.x, alpha);
+    const y = lerp(p.prevY, p.y, alpha);
+
+    /*
+     * CUTTING IT FINE HAD ALMOST NO PICTURE.
+     *
+     * A graze is worth 60 points, it feeds `sfxGraze`, it drives the lead's
+     * shimmer through the director's graze signal and it moves `tension.flow`
+     * — and on screen it was two 2px dots for 0.22s, emitted at the ENEMY
+     * rather than at the ship. At the densities `arena` measures (p50 19, p90
+     * 56) that is invisible. On a treadmill the whole skill is letting bodies
+     * stream past close, so the one thing the player is being scored on had
+     * the faintest mark on the field.
+     *
+     * IT IS DRIVEN BY THE RATE, NOT BY THE EVENT, so that it cannot strobe if
+     * grazes ever arrive in a burst. `player.grazeRate` is the already-smoothed
+     * per-second rate the ARRANGEMENT reads (`layers.ts` opens the shimmer
+     * above 1.2), so the picture and the music say the same thing at the same
+     * moment, off the same number.
+     *
+     * WHAT IT ACTUALLY LOOKS LIKE, measured rather than assumed, because the
+     * first version of this note asserted grazes come "several times a second"
+     * in a crowd and that was wrong. Sampled at 20Hz for 30s at wave 20 under
+     * the dodging bot: 3 grazes, rate p50 0.00, p90 0.20, p99 2.64, max 2.92.
+     * So this is dark 83% of the time and reaches 0.91 of full at its peak —
+     * a soft flare per graze that decays over about a third of a second, not a
+     * standing halo. A human threading traffic deliberately will see it far
+     * more often than a bot that kites at 430 px/s; that is NOT measured.
+     *
+     * An earlier 30s sample read the rate at 0.00 throughout and would have
+     * shipped a claim that the halo never fires. Small samples lie.
+     */
+    const graze = clamp01(p.grazeRate / 3.2);
+    if (graze > 0.02) {
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.strokeStyle = `hsla(186, 100%, 72%, ${graze * 0.5})`;
+      g.lineWidth = 1 + graze * 2.4;
+      g.beginPath();
+      g.arc(x, y, 30 + graze * 5, 0, TAU);
+      g.stroke();
+      g.restore();
+    }
+
+    if (this.levelPop > 0) {
+      // Expanding gold ring, thinning as it goes. Two of them, a beat apart in
+      // radius, so it reads as a pulse rather than as a bubble.
+      const t = 1 - this.levelPop;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (let k = 0; k < 2; k++) {
+        const tt = clamp01(t - k * 0.18);
+        if (tt <= 0 || tt >= 1) continue;
+        g.strokeStyle = `hsla(45, 100%, ${72 - k * 8}%, ${(1 - tt) * (0.75 - k * 0.25)})`;
+        g.lineWidth = 3 - tt * 2;
+        g.beginPath();
+        g.arc(x, y, 22 + tt * 130, 0, TAU);
+        g.stroke();
+      }
+      g.restore();
+    }
+
+    const n = snap.pendingOffers;
+    if (n <= 0) return;
+
+    /*
+     * The plate grows with the queue rather than merely repeating itself.
+     *
+     * One waiting level is a nudge; eight is the player leaving the whole
+     * back half of their build on the floor, and the interface said the same
+     * sentence at the same size for both. `lift` is the escalation and it is
+     * capped at four so a long run does not end up with a billboard.
+     */
+    const lift = Math.min(1, (n - 1) / 3);
+    const scale = 1 + lift * 0.28;
+    const label = n > 1 ? `SPACE  ×${n}` : 'SPACE';
+    const beat = this.pulse * (0.35 + lift * 0.4);
+
+    g.save();
+    g.translate(x, y - 44 - lift * 6);
+    g.scale(scale, scale);
+    g.font = '800 11px ui-monospace, monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const tw = Math.max(64, g.measureText(label).width + 22);
+
+    // Plate: opaque, because a translucent one over a bullet hell is the
+    // failure `style.css` records at the top of the HUD block — you half-see
+    // the thing that is about to hit you.
+    g.fillStyle = 'rgba(6,8,15,0.92)';
+    g.strokeStyle = `hsla(45, 95%, ${64 + beat * 25}%, ${0.7 + lift * 0.3})`;
+    g.lineWidth = 1.4;
+    const h = 17;
+    const r = h / 2;
+    g.beginPath();
+    g.moveTo(-tw / 2 + r, -h / 2);
+    g.arcTo(tw / 2, -h / 2, tw / 2, h / 2, r);
+    g.arcTo(tw / 2, h / 2, -tw / 2, h / 2, r);
+    g.arcTo(-tw / 2, h / 2, -tw / 2, -h / 2, r);
+    g.arcTo(-tw / 2, -h / 2, tw / 2, -h / 2, r);
+    g.closePath();
+    g.fill();
+    g.stroke();
+
+    g.fillStyle = `hsla(45, 100%, ${80 + beat * 20}%, 1)`;
+    g.fillText(label, 0, 0.5);
+
+    // A caret pointing down at the ship, so the plate is attached to the thing
+    // it is about rather than floating over the field.
+    g.beginPath();
+    g.moveTo(-4, h / 2);
+    g.lineTo(0, h / 2 + 5);
+    g.lineTo(4, h / 2);
+    g.closePath();
+    g.fillStyle = `hsla(45, 95%, ${64 + beat * 25}%, ${0.7 + lift * 0.3})`;
+    g.fill();
     g.restore();
   }
 
@@ -1835,6 +2147,97 @@ export class Renderer {
    * `main.ts` uses to convert a tap, which is the only thing keeping the cards
    * and their hit test in agreement.
    */
+  /**
+   * The throttle, as a gauge. Screen space, right edge, on the ship's station.
+   *
+   * WHY THERE IS ONE AT ALL. The stick's forward axis is the ship's only
+   * control in the axis it travels along and the whole of the moment-to-moment
+   * decision on a treadmill — and nothing on the screen was a function of it.
+   * The starfield and the plume now carry the FEEL of speed; this carries the
+   * fact, because "am I above or below cruise" is a question feel cannot
+   * answer and the answer decides whether the wave astern catches up.
+   *
+   * WHY THE RIGHT EDGE AND NOT NEXT TO THE SHIP. Anchored to the ship it would
+   * be one more object in the exact spot that is already unreadable at 76
+   * bodies, and it would swim about. Pinned to `TRACK_ANCHOR` it sits at the
+   * height the ship keeps station at — inside the same glance, never moving —
+   * and the right edge is chosen over the left because `.hud-tl` runs to about
+   * 200px deep with a full band and eight slot tiles, which reaches the anchor
+   * line at a 720-tall window. `.hud-tr` is four short rows and does not.
+   *
+   * WHY NOT A NUMBER. px/s means nothing to a player. What they need is
+   * position against cruise, so the gauge is a track with a notch at the
+   * centre and a bar that grows up (faster) or down (slower) from it. Colour
+   * moves with it — cool below, hot above — so the direction reads before the
+   * length does.
+   */
+  private drawThrottle(g: CanvasRenderingContext2D): void {
+    const w = this.world;
+    // Shown from the first frame of the run rather than from `snapshot.running`
+    // — the phase stays 'idle' until `beginWave`, which is the far end of the
+    // four bars the TUNING UP screen fills, and the ship is under throttle for
+    // every one of them. That runway is the best chance the game gets to teach
+    // the stick before anything is shooting at the player.
+    if (w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
+    const H = 96;
+    const cx = w.viewW - 26;
+    const cy = w.viewH * TRACK_ANCHOR;
+    const top = cy - H / 2;
+    // Signed distance from cruise: -1 dead slow, 0 cruise, +1 flat out.
+    const off = clamp01(this.trimShown) * 2 - 1;
+    const notch = cy;
+
+    g.save();
+    // Track. Dark enough to read against the blown-out white of a dense kill,
+    // which is the case `drawPlayer`'s keyline exists for.
+    g.fillStyle = 'rgba(6,8,15,0.82)';
+    g.fillRect(cx - 4, top - 3, 8, H + 6);
+    g.strokeStyle = 'rgba(150,175,215,0.42)';
+    g.lineWidth = 1;
+    g.strokeRect(cx - 3.5, top - 2.5, 7, H + 5);
+
+    // The bar, from the cruise notch to where the stick is.
+    const y = notch - off * (H / 2);
+    const hot = off > 0;
+    g.fillStyle = hot ? 'hsla(30, 100%, 64%, 0.95)' : 'hsla(190, 95%, 64%, 0.92)';
+    g.fillRect(cx - 3, Math.min(y, notch), 6, Math.abs(y - notch));
+
+    /*
+     * Cruise, and the two ends of the range.
+     *
+     * The datum tick is longer and brighter than the end ones, because the
+     * only question the gauge has to answer at a glance is "which side of
+     * cruise am I on" — the ends are there to say the track is finite and to
+     * stop a bar pinned at the top reading as a bar that has broken. Drawn on
+     * a half-pixel so a 1px line lands on one row rather than two grey ones.
+     */
+    g.strokeStyle = 'rgba(226,234,250,0.78)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(cx - 11, notch + 0.5);
+    g.lineTo(cx + 7, notch + 0.5);
+    g.stroke();
+    g.strokeStyle = 'rgba(226,234,250,0.3)';
+    g.beginPath();
+    g.moveTo(cx - 8, top + 0.5);
+    g.lineTo(cx + 6, top + 0.5);
+    g.moveTo(cx - 8, top + H + 0.5);
+    g.lineTo(cx + 6, top + H + 0.5);
+    g.stroke();
+
+    // The head. A wedge rather than a line so the direction of travel is in
+    // the shape as well as in the colour.
+    g.fillStyle = hot ? 'hsl(38, 100%, 76%)' : 'hsl(190, 100%, 80%)';
+    g.beginPath();
+    g.moveTo(cx - 8, y);
+    g.lineTo(cx - 14, y - 4);
+    g.lineTo(cx - 14, y + 4);
+    g.closePath();
+    g.fill();
+
+    g.restore();
+  }
+
   private drawOverlay(tension: number, dt: number, beat: number): void {
     const w = this.world;
     const g = this.og;
@@ -1885,6 +2288,19 @@ export class Renderer {
     }
     g.fillStyle = v;
     g.fillRect(0, 0, w.viewW, w.viewH);
+
+    /*
+     * AFTER THE VIGNETTE, and this was found by photographing it rather than
+     * by reasoning about it.
+     *
+     * The gauge lives at the right EDGE, which is exactly where the vignette
+     * is darkest — up to 0.75 alpha of near-black at high tension. Drawn
+     * before it, a 0.92-alpha cyan bar came out grey and the track was
+     * invisible against the room's colour. The boss bar above gets away with
+     * being under the vignette because it sits across the top middle, where
+     * the gradient has barely started.
+     */
+    this.drawThrottle(g);
 
     /*
      * THE XP BAR MOVED OUT OF THE CANVAS.

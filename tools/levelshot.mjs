@@ -192,16 +192,63 @@ const STATES = [
 
 console.log('\nOFFER SCREEN');
 
-// The control: the same region with nothing open, measured in this session
-// rather than assumed. Taken first so it cannot include a fading exit.
-await p.evaluate(() => {
-  // Undo the pinned accessor from `show()` before closing, or the world can
-  // never turn `choosing` off again and the next state opens against a lie.
-  const s = window.__musicwars.world.snapshot;
-  Object.defineProperty(s, 'choosing', { configurable: true, writable: true, value: false });
-  window.__musicwars.ui.close();
-});
-await p.waitForTimeout(700);
+/*
+ * The control: the same region with nothing open, measured in this session
+ * rather than assumed. Taken first so it cannot include a fading exit.
+ *
+ * AND IT WAITS FOR THE SCREEN, RATHER THAN FOR A DURATION.
+ *
+ * This was `close()` then `waitForTimeout(700)`. The exit animation is at
+ * least twelve frames plus a page fade (`levelupdraw` documents the clamp), so
+ * on a loaded machine 700ms is not enough and the CONTROL was measured over a
+ * screen still painting its full `rgba(3,4,9,0.74)` backdrop. Measured across
+ * six runs of identical code on this box the control read 5.8, 7.8, 41.7,
+ * 120.9, 208.4 and 214.7 — and on the high readings every state failed, with
+ * messages saying "the screen did not paint" about a screen that had painted
+ * perfectly. The failure looked exactly like a real defect in the thing under
+ * test.
+ *
+ * `closeOffer` polls the overlay's own `isOpen` instead. If the screen genuinely
+ * never closes, that is a real defect and this now says so in those words
+ * rather than poisoning every later comparison with a baseline that is brighter
+ * than the thing being measured.
+ */
+const closeOffer = async (where) => {
+  await p.evaluate(() => {
+    // Undo the pinned accessor from `show()` before closing, or the world can
+    // never turn `choosing` off again and the next state opens against a lie.
+    const s = window.__musicwars.world.snapshot;
+    Object.defineProperty(s, 'choosing', { configurable: true, writable: true, value: false });
+    window.__musicwars.ui.close();
+  });
+  for (let i = 0; i < 60; i++) {
+    if (!(await p.evaluate(() => window.__musicwars.ui.isOpen()))) {
+      /*
+       * Frames after the latch drops, not one, and the number is load-bearing.
+       *
+       * `clearForced()` nulls the cards immediately, so `isOpen` goes false at
+       * once — but a `forceOffer` issued within about a tenth of a second of
+       * it reliably draws NOTHING, which surfaced here as "4 options offered,
+       * 0 cards drawn" against whichever state happened to follow a close.
+       * That is the mechanism behind this file's long-standing intermittent
+       * failures; it became deterministic once the control stopped being
+       * measured over a half-faded screen and the noise cleared. 700ms is
+       * comfortably past it (a direct probe found it settled well before
+       * 1500ms and not at 120ms).
+       *
+       * The re-open path itself is worth fixing in `levelup.ts` and is NOT
+       * fixed here — nothing in the game closes an offer and immediately
+       * re-offers, so this is a harness-only exposure of it. Written down
+       * rather than left as a magic sleep.
+       */
+      await p.waitForTimeout(700);
+      return;
+    }
+    await p.waitForTimeout(100);
+  }
+  fail(`${where}: the offer screen was still open six seconds after close()`);
+};
+await closeOffer('control');
 
 /*
  * The view size, read off the running game rather than written down.
@@ -237,12 +284,10 @@ console.log(`  view ${VIEW_W}x${VIEW_H} (field ${await p.evaluate(() => `${windo
 await show(STATES[0].abilities, STATES[0].offer, STATES[0].slots);
 await p.waitForTimeout(900);
 const probe = await p.evaluate(() => window.__musicwars.ui.rects());
-await p.evaluate(() => {
-  const s = window.__musicwars.world.snapshot;
-  Object.defineProperty(s, 'choosing', { configurable: true, writable: true, value: false });
-  window.__musicwars.ui.close();
-});
-await p.waitForTimeout(700);
+// Same wait-for-the-state as above: this close is the one the control is
+// measured immediately after, so a fixed sleep here reintroduces the whole
+// defect one line later.
+await closeOffer('region probe');
 if (!probe.length) {
   fail('the offer drew no cards at all, so there is no region to measure');
 }
@@ -256,22 +301,99 @@ console.log(
   `  card region, read off the overlay: ${Math.round(CARD_REGION.w)}x${Math.round(CARD_REGION.h)}` +
     ` at ${Math.round(CARD_REGION.x)},${Math.round(CARD_REGION.y)} of a ${VIEW_W}x${VIEW_H} view`,
 );
-const closedAlpha = await alphaOver(CARD_REGION);
+/*
+ * THE CONTROL IS TAKEN PER STATE, NOT ONCE FOR THE RUN.
+ *
+ * One control for the whole file was the last and worst of this check's timing
+ * traps, and it is not a timing trap at all — it is a CONFOUND. The overlay
+ * canvas carries the vignette, whose alpha is a function of TENSION: at rest
+ * it averages about 26 over the card region, and at full tension the inner
+ * stop pulls in from 0.34 to 0.22 of the height and the same region averages
+ * over 210. The game is running throughout, so a control taken during a quiet
+ * moment and compared against a measurement taken during a loud one is
+ * comparing two different backgrounds.
+ *
+ * Observed on this box across nine runs of identical code: controls of 5.8,
+ * 7.8, 24.6, 26.2, 29.4, 41.4, 42.9, 212.5 and 217.1, with every state failing
+ * on the high ones — "the screen did not paint" about a screen whose own
+ * reading was 247. That is a gate that fails on the weather.
+ *
+ * Closing and re-measuring immediately before each state costs about a second
+ * each and makes the two halves of every comparison contemporaneous. It also
+ * costs nothing in strictness: the assertion is still "open must exceed closed
+ * by 40", against a closed reading taken a second earlier rather than a minute.
+ */
+let closedAlpha = await alphaOver(CARD_REGION);
 console.log(`  control: overlay alpha over the card region with nothing open = ${closedAlpha.toFixed(1)}`);
 
 for (const st of STATES) {
+  await closeOffer(st.name);
+  closedAlpha = await alphaOver(CARD_REGION);
   await show(st.abilities, st.offer, st.slots);
-  // Past the staggered entry (4 cards x 0.07s stagger + 0.26s) and the
-  // ensemble/controls fades, so nothing is measured mid-animation.
+  /*
+   * Wait for the screen to be OPEN, then for its entry to settle.
+   *
+   * The settle is a duration and has to be — it is past the staggered entry
+   * (4 cards x 0.07s stagger + 0.26s) and the ensemble and lever fades, so
+   * that nothing below is measured mid-animation. But the OPENING is a state,
+   * and treating it as a duration is the same defect the control above had
+   * from the other side: on a loaded machine `hitTest` was asked about a
+   * screen that had not opened yet and returned -1 for all four cards, which
+   * reads as "the layout and the hit test disagree" — a serious-sounding
+   * failure about a screen that was simply not there yet.
+   */
+  for (let i = 0; i < 60; i++) {
+    if (await p.evaluate(() => window.__musicwars.ui.isOpen())) break;
+    await p.waitForTimeout(100);
+  }
   await p.waitForTimeout(900);
 
-  const got = await p.evaluate(() => ({
-    rects: window.__musicwars.ui.rects(),
-    cards: window.__musicwars.ui.summary(),
-    hits: window.__musicwars.ui
-      .rects()
-      .map((r) => window.__musicwars.ui.hitTest(r.x + r.w / 2, r.y + r.h / 2)),
-  }));
+  const read = () =>
+    p.evaluate(() => ({
+      rects: window.__musicwars.ui.rects(),
+      cards: window.__musicwars.ui.summary(),
+      hits: window.__musicwars.ui
+        .rects()
+        .map((r) => window.__musicwars.ui.hitTest(r.x + r.w / 2, r.y + r.h / 2)),
+    }));
+  /*
+   * SETTLED, not merely open. The last of the three timing traps in this file.
+   *
+   * `hitTest` returns -1 for every card while `exiting` is true — a deliberate
+   * behaviour, since a card sliding off the screen should not be clickable —
+   * and `rects()` keeps reporting the layout throughout. So catching the screen
+   * mid-exit produces "hitTest disagrees with layout at 0->-1, 1->-1, 2->-1,
+   * 3->-1", which is indistinguishable from the real defect this assertion
+   * exists to catch: cards drawn somewhere other than where they are clicked.
+   *
+   * Polling is NOT a relaxation. A genuine disagreement — a layout and a hit
+   * test that have drifted apart — never agrees however long it is given, so it
+   * still fails, with the same message. Only the animation window is waited
+   * out. Bounded at three seconds, after which whatever was read is asserted.
+   */
+  let got = await read();
+  for (let i = 0; i < 30 && got.hits.some((h) => h < 0); i++) {
+    await p.waitForTimeout(100);
+    got = await read();
+  }
+  /*
+   * One re-offer if the screen came up empty, and this is NOT a relaxation.
+   *
+   * `forceOffer` issued soon after `clearForced()` intermittently draws
+   * nothing — documented at `closeOffer` above, reproduced deterministically
+   * at a 120ms gap and still seen occasionally at 700ms. It is a harness-only
+   * path: nothing in the game closes an offer and immediately re-offers, so
+   * this file is the only caller that can reach it. A screen that is genuinely
+   * broken stays empty on the second attempt too and fails below with the same
+   * message; only the race is absorbed, and the retry is printed so it can
+   * never be silent.
+   */
+  if (got.cards.length === 0) {
+    console.log(`    (${st.name}: the offer came up empty — re-offering once; see closeOffer)`);
+    await show(st.abilities, st.offer, st.slots);
+    await p.waitForTimeout(1100);
+    got = await read();
+  }
 
   console.log(`\n  ${st.name} — ${st.why}`);
   console.log(`    cards: ${got.cards.map((c) => `${c.label}${c.isNew ? '(new)' : ` ${c.from}->${c.level}`}`).join('  ')}`);
@@ -324,6 +446,55 @@ for (const st of STATES) {
     fail(`${st.name}: card region alpha ${a.toFixed(1)} vs ${closedAlpha.toFixed(1)} closed — the screen did not paint`);
   } else {
     pass(`${st.name}: card region alpha ${a.toFixed(1)} against ${closedAlpha.toFixed(1)} closed`);
+  }
+
+  /*
+   * 4b. AND THE CARDS THEMSELVES PAINTED, not merely the page they sit on.
+   *
+   * A NEW ASSERTION, added because assertion 4 was fail-tested and survived:
+   * stubbing `drawCard` out entirely — four cards, none of them drawn — left
+   * this file reporting "all checks passed". The card region is under the
+   * offer's full-screen backdrop at `rgba(3,4,9,0.74)`, so the region reads
+   * ~247 whether or not a single card is on it, and the message "the screen
+   * did not paint" was true of a screen and blind to the cards.
+   *
+   * A card's plate is `rgba(7,9,17,0.9)` over that backdrop; the 13px gutter
+   * between two cards is backdrop alone. Differencing the two therefore
+   * measures exactly the card and nothing else, and it needs no absolute
+   * threshold that could drift with the vignette.
+   */
+  if (got.rects.length >= 2) {
+    const r0 = got.rects[0];
+    const gutter = { x: r0.x, y: r0.y + r0.h + 2, w: r0.w, h: Math.max(1, got.rects[1].y - (r0.y + r0.h) - 4) };
+    const plate = { x: r0.x + 6, y: r0.y + 6, w: r0.w - 12, h: r0.h - 12 };
+    /*
+     * Polled to a settled frame, for the same reason as everything else here.
+     *
+     * A card fades in over ENTRY 0.26s plus its stagger, and `step` clamps dt
+     * to 0.05 — so the entry takes at least six FRAMES however slow the box
+     * is, and on a loaded machine 900ms of wall clock is not six frames. Caught
+     * once at 208.5 against a settled 250.2, i.e. a card 83% faded in, reported
+     * as "the cards are not being drawn". Bounded at three seconds, after which
+     * whatever was read is asserted; a card that is genuinely absent never
+     * arrives and still fails below.
+     */
+    let onCard = await alphaOver(plate);
+    let offCard = await alphaOver(gutter);
+    for (let i = 0; i < 30 && onCard < offCard + 20; i++) {
+      await p.waitForTimeout(100);
+      onCard = await alphaOver(plate);
+      offCard = await alphaOver(gutter);
+    }
+    if (onCard < offCard + 20) {
+      fail(
+        `${st.name}: a card's own plate reads ${onCard.toFixed(1)} against ${offCard.toFixed(1)} in the ` +
+          `${Math.round(gutter.h)}px gutter beside it — the cards are not being drawn, only the page under them`,
+      );
+    } else {
+      pass(`${st.name}: card plate ${onCard.toFixed(1)} against ${offCard.toFixed(1)} in the gutter`);
+    }
+  } else {
+    fail(`${st.name}: fewer than two card rectangles, so the plate-versus-gutter check could not run`);
   }
 
   await p.screenshot({ path: `${OUT}/levelup-${st.name}.png` });

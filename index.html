@@ -83,6 +83,21 @@
             <!-- The wave's standing rule, for as long as it holds. The banner
                  that announces one is gone in 2.4 seconds. -->
             <p class="movement hidden" id="ui-movement"></p>
+            <!--
+              A combination already assembled, or one step away.
+
+              MOVED HERE FROM THE FOOT, and the reason is the treadmill. The
+              foot is the bottom edge of the screen, which under the old arena
+              was "the emptiest part of a survivor screen"; `spawnring` now
+              measures 96.4% of arrivals ASTERN, so the bottom band is the one
+              the enemies come through and this line was being printed across
+              them. Photographed at wave 23 with a body drawn through the word
+              STEP.
+
+              It belongs beside the slot tiles anyway: it names two of them and
+              tells you which to feed. Same glance, no travel.
+            -->
+            <p class="fusion-ready hidden" id="ui-fusion"></p>
           </div>
 
           <div class="hud-tr">
@@ -90,6 +105,20 @@
             <p class="hud-score"><b id="ui-score">0</b></p>
             <p class="hud-mult" id="ui-combo">x1</p>
             <p class="hud-run"><span>WAVE <b id="ui-wave">1</b></span><span id="ui-timer">0:00</span></p>
+            <!--
+              Level and progress toward the next one. It was bottom-centre with
+              the bar; see the fusion line's note for why the bottom band is no
+              longer empty ground.
+
+              The BAR stays on the bottom edge — five pixels flush to an edge
+              is not a widget and covers nothing — but the TEXT is a readout
+              and readouts belong with the other three (score, multiplier,
+              wave), which is the corner a player already glances at to ask how
+              the run is going. The banked-level-up prompt that shares this
+              element is now also drawn on the ship itself, where it cannot be
+              missed; this remains the precise count.
+            -->
+            <p class="xpline"><b id="ui-level">LV 1</b><span id="ui-xpnum">0 / 6</span></p>
           </div>
 
           <div class="hud-foot">
@@ -105,18 +134,15 @@
               audio is fine, so it costs nothing the rest of the time.
             -->
             <p class="resume hidden" id="ui-resume"></p>
-            <!-- A combination already assembled, or one step away. The offer
-                 screen is open for a few seconds a minute and knowing a
-                 combination is waiting changes what you do with the minute in
-                 between. -->
-            <p class="fusion-ready hidden" id="ui-fusion"></p>
-            <p class="xpline"><b id="ui-level">LV 1</b><span id="ui-xpnum">0 / 6</span></p>
             <!--
-              The bar is LAST so it lands flush on the bottom edge of the
-              field. It used to be four canvas pixels along the TOP edge
-              (`renderer.drawXp`, now gone) and `docs/progression.md`'s spec for
-              it still holds — "thin, along an edge, not a widget" — it is just
-              the other edge, which is the one a survivor screen keeps empty.
+              The bar, and NOW THE ONLY THING DOWN HERE.
+
+              `docs/progression.md`'s spec still holds — "thin, along an edge,
+              not a widget" — and five flush pixels is the one form of readout
+              that survives the geometry change: the enemies arrive through
+              this band and everything with a bounding box has left it. The
+              level number and the fusion telegraph that used to sit above it
+              are in the two top corners now; see their notes.
             -->
             <div class="xp"><i id="ui-xp"></i></div>
           </div>
@@ -199,6 +225,22 @@
         <div id="opening" class="opener hidden" aria-hidden="true">
           <p class="opener-title">TUNING UP</p>
           <p class="opener-sub">the band takes the stage before the fight does</p>
+          <!--
+            THE ONE THING ABOUT THIS GAME NOBODY CAN GUESS.
+
+            The ship flies on its own and the enemies arrive from ASTERN —
+            `spawnring` measures 96.4% of arrivals inside a cone centred on the
+            stern — so a new player's first instinct, which is to fly toward
+            the trouble, is the one move the controls will not perform. The
+            title screen's key list now says the forward axis is a throttle;
+            this says WHY it matters, and it says it in the one window where
+            the field is provably empty and there is nothing else to read.
+
+            Four bars of empty playfield were being spent entirely on the
+            premise of the soundtrack. That premise is worth the first line;
+            it is not worth all four bars.
+          -->
+          <p class="opener-rule"><b>they come from behind you</b><span>the ship never stops &mdash; <kbd>W</kbd><kbd>S</kbd> only choose how fast</span></p>
           <ul id="opening-list" class="opener-list"></ul>
           <p class="opener-foot">nothing you are about to hear was recorded in advance</p>
         </div>
@@ -231,15 +273,34 @@
             <summary class="discovered" id="title-discovered"></summary>
             <ul class="codex-grid" id="codex-grid"></ul>
           </details>
+          <!--
+            THE CONTROL LIST DESCRIBED A GAME THAT NO LONGER EXISTS.
+
+            Two things were wrong and both cost a first-time player their first
+            run. "Move / WASD" is not what the stick does any more: commit
+            7f867d7 made the ship auto-advance and turned the forward axis into
+            a THROTTLE — `wantY = -CRUISE_SPEED + input.y * trimTop`, with the
+            trim capped at the cruise so no stick position stops or reverses
+            it. A player told "move" and handed a ship that will not stop
+            concludes the controls are broken.
+
+            And SPACE — the key that spends banked level-ups, and therefore the
+            only way to get stronger at all — was in NEITHER control list, on
+            this screen or the pause screen. `input.ts` has had
+            `OPEN_OFFER_KEYS = new Set(['Space'])` since offers stopped
+            interrupting; nothing on any screen said so. A run photographed at
+            wave 23 was sitting on eight unspent levels.
+          -->
           <dl class="controls">
-            <div><dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Throttle</dt><dd><kbd>W</kbd><kbd>S</kbd><em>you never stop &mdash; only faster or slower</em></dd></div>
+            <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
             <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
+            <div><dt>Level up</dt><dd><kbd>Space</kbd><em>spend the levels you have banked</em></dd></div>
             <div><dt>Focus</dt><dd><kbd>Shift</kbd></dd></div>
             <div><dt>Bomb</dt><dd><kbd>X</kbd></dd></div>
             <div><dt>Black hole</dt><dd><kbd>C</kbd></dd></div>
             <div><dt>Pause</dt><dd><kbd>P</kbd><kbd>Esc</kbd></dd></div>
             <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
-            <div><dt>Level up</dt><dd><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><em>recruit a musician</em></dd></div>
           </dl>
           <p class="touch-hint">On a touchscreen: drag anywhere to fly and fire.</p>
           <p class="warning">Headphones recommended. Nothing is pre-recorded &mdash; the track is generated live from the fight.</p>
@@ -265,14 +326,17 @@
             <p class="sub" id="pause-combos-none">nothing in reach yet — take an instrument to its ceiling</p>
           </section>
 
+          <!-- Same two corrections as the title screen's list: the forward
+               axis is a throttle, and SPACE is what spends a banked level. -->
           <dl class="controls">
-            <div><dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Throttle</dt><dd><kbd>W</kbd><kbd>S</kbd><em>faster or slower &mdash; the ship never stops</em></dd></div>
+            <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
             <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
             <div><dt>Focus</dt><dd><kbd>Shift</kbd><em>tighter, harder</em></dd></div>
             <div><dt>Bomb</dt><dd><kbd>X</kbd><em>clears the screen</em></dd></div>
             <div><dt>Black hole</dt><dd><kbd>C</kbd><em>drags the crowd in and crushes it</em></dd></div>
             <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
-            <div><dt>Level up</dt><dd><kbd>1</kbd>&ndash;<kbd>4</kbd><em>pick</em> <kbd>R</kbd><em>reroll</em> <kbd>Shift</kbd>+<kbd>1</kbd>&ndash;<kbd>4</kbd><em>banish</em> <kbd>Q</kbd><em>skip</em></dd></div>
+            <div><dt>Level up</dt><dd><kbd>Space</kbd><em>open</em> <kbd>1</kbd>&ndash;<kbd>4</kbd><em>pick</em> <kbd>R</kbd><em>reroll</em> <kbd>Shift</kbd>+<kbd>1</kbd>&ndash;<kbd>4</kbd><em>banish</em> <kbd>Q</kbd><em>skip</em></dd></div>
           </dl>
           <p class="sub">press <kbd>P</kbd> to resume</p>
         </div>

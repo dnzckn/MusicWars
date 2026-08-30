@@ -40,6 +40,14 @@ import './lib/ts.mjs';
  * duck-typed world below stays duck-typed — none of the simulation is loaded.
  */
 const { VIEW_W, VIEW_H, PLAYFIELD_W, PLAYFIELD_H } = await import('../src/game/field.ts');
+/*
+ * The cruise speed, likewise imported. This costs nothing extra: `renderer.ts`
+ * already imports `INVULN_ON_HIT` and now `CRUISE_SPEED` from the same module,
+ * so `player.ts` is in the graph the moment the renderer is loaded below. The
+ * stub player's `vy` has to be a real speed or the throttle it drives is
+ * fiction — see the note on that field.
+ */
+const { CRUISE_SPEED } = await import('../src/game/player.ts');
 
 let Renderer;
 try {
@@ -226,12 +234,49 @@ function makeWorld(effects, novas = [], wells = []) {
       x: 450, y: 800, prevX: 450, prevY: 800, dead: false,
       hp: 3, maxHp: 3, invuln: 0, focused: false, bank: 0, ringPhase: 0,
       droneAngle: [], droneCooldown: [], radius: 8,
+      /*
+       * `vy` IS READ NOW and an absent one is the exact failure this object's
+       * own comment describes one line up. `Renderer.render` derives the
+       * throttle from it — the starfield's streak length, the engine plume and
+       * the throttle gauge are all functions of ground speed since speed
+       * became the verb — and `-undefined` is NaN, which reaches a star's
+       * height and a gauge's fill.
+       *
+       * `-CRUISE_SPEED` is the ship at cruise with the stick centred, which is
+       * the same "a legal state of the real game rather than the only one"
+       * choice the camera block above makes.
+       */
+      vy: -CRUISE_SPEED,
+      /*
+       * `grazeRate` drives the ship's graze halo. Zero here on purpose: this
+       * file counts the ops an EFFECT adds against a baseline frame, and a
+       * halo present in both would only add a stroke and a hue to every
+       * comparison. An absent field would have been silently safe as well —
+       * `clamp01(NaN)` is NaN and the `> 0.02` guard rejects it — which is
+       * exactly why it is written down rather than left out: silently safe
+       * today is silently wrong the day the guard changes.
+       */
+      grazeRate: 0,
     },
     enemies: [], shocks: [], notes: [], particles: { count: 0 }, drops: [], popups: [],
     playerBullets: { count: 0 },
     novas, effects, wells,
     banner: '', bannerSub: '', bannerAge: 9, bannerKind: 'wave',
-    snapshot: { running: true, level: 3, xp: 2, xpToNext: 9, choosing: false, abilities: {}, instrumentSlots: 3, rigSlots: 3 },
+    /*
+     * `time` and `pendingOffers` join the shape for the same reason as `vy`:
+     * the throttle gauge is gated on the run having started, and the
+     * banked-level-up plate over the ship is drawn from `pendingOffers`. Both
+     * are read every frame. `isOver` likewise.
+     *
+     * `pendingOffers: 0` keeps the plate OFF, which is the state this file
+     * wants: it measures whether an EFFECT drew, and a gold plate over the
+     * ship in every frame would add ops to every comparison.
+     */
+    snapshot: {
+      running: true, level: 3, xp: 2, xpToNext: 9, choosing: false, abilities: {},
+      instrumentSlots: 3, rigSlots: 3, time: 12, pendingOffers: 0,
+    },
+    isOver: false,
     bus: { on() {} },
   };
 }

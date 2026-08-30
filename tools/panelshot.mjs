@@ -140,6 +140,27 @@ for (const [w, h] of VIEWPORTS) {
         'top-right': box('.hud-tr'),
         'bottom': box('.hud-foot'),
       },
+      /*
+       * THE FUSION TELEGRAPH, WHICH IS NOW PART OF THE TOP-LEFT GROUP.
+       *
+       * It used to be centred in the foot, where its width could only ever run
+       * into empty screen. It moved next to the slot tiles it names — the foot
+       * is the band the enemies now arrive through — and that makes it the
+       * WIDEST thing in a group with a `max-width` and a `flex` row inside it.
+       * The longest string it produces is about 400px against a cap of
+       * `min(46%, 420px)`, so on a narrow window it either wraps or it pushes
+       * the group off the field, and only one of those is a HUD.
+       *
+       * Reported rather than merely included in the group box, because a
+       * hidden element contributes nothing and the group check would keep
+       * passing while measuring a case that never happens. `visible` is
+       * asserted below.
+       */
+      fusion: (() => {
+        const el = document.getElementById('ui-fusion');
+        const r = el.getBoundingClientRect();
+        return { visible: !el.classList.contains('hidden'), w: r.width, h: r.height, text: el.textContent ?? '' };
+      })(),
       tiles: document.querySelectorAll('#ui-players li').length + document.querySelectorAll('#ui-rig li').length,
       /*
        * FILLED tiles, counted separately from the total.
@@ -160,7 +181,8 @@ for (const [w, h] of VIEWPORTS) {
   console.log(
     `${String(w).padStart(4)}x${String(h).padEnd(4)} stage ${Math.round(m.stage.w)}x${Math.round(m.stage.h)}` +
       ` (${(share * 100).toFixed(1)}% of the window)  view ${m.view[0]}x${m.view[1]}` +
-      `  ${m.held}/${m.tiles} tiles held, ${m.chips} surges`,
+      `  ${m.held}/${m.tiles} tiles held, ${m.chips} surges` +
+      `  fusion line ${m.fusion.visible ? `${Math.round(m.fusion.w)}x${Math.round(m.fusion.h)}` : 'HIDDEN'}`,
   );
 
   checked++;
@@ -228,6 +250,127 @@ for (const [w, h] of VIEWPORTS) {
   if (m.held !== 8) bad.push(`${w}x${h}: only ${m.held} of 8 tiles are filled — the crowded state did not take, so nothing above was measured under load`);
   checked++;
   if (m.chips < 4) bad.push(`${w}x${h}: ${m.chips} surge chips — the powerups did not take`);
+
+  /*
+   * 4. AND THE FUSION LINE IS ACTUALLY ON SCREEN WHILE ALL THAT IS MEASURED.
+   *
+   * The forced band above (ember 3, chime 2, tremolo 3, nocturne 1, capo 3,
+   * resonance 2, laser 2, spread 1) is one pick from several combinations, so
+   * `#ui-fusion` should be showing. If a future edit to that band, or to the
+   * fusion rules, makes it hide, the top-left group loses its widest child and
+   * every geometry assertion above quietly starts measuring an easier case —
+   * the same trap the `held !== 8` line one block up exists to catch.
+   */
+  checked++;
+  if (!m.fusion.visible) {
+    bad.push(`${w}x${h}: the fusion telegraph is hidden — the widest child of the top-left group was not measured`);
+  } else if (m.fusion.w <= 0 || m.fusion.h <= 0) {
+    bad.push(`${w}x${h}: the fusion telegraph is shown but has no size`);
+  }
+
+  /*
+   * 5. AND THE SAME GROUP WITH THE LONGEST LINE THE TELEGRAPH CAN PRODUCE.
+   *
+   * The forced band above happens to yield a 330px line at every viewport,
+   * which never reaches `.hud-tl`'s `min(46%, 420px)` cap — so the run above
+   * proves the group fits, and proves nothing at all about the case that
+   * actually threatens it. The element is a flex row; without `flex-wrap` a
+   * line wider than the cap does not wrap, it overruns, and assertion 2 above
+   * would have caught it only on a build where the offer happened to produce a
+   * long enough pair.
+   *
+   * The string is a deliberate UPPER BOUND rather than the game's exact worst
+   * case, which would need the label tables in here and a second copy of the
+   * sentence `hud.ts` builds — the thing AGENTS.md §3 says a tool must not
+   * hold. 90 characters is longer than any pair of 14-character instrument
+   * names can make, so a layout that survives it survives every real one.
+   * Written straight into the element and read back, then restored.
+   *
+   * WHAT THIS IS AND IS NOT. Fail-tested by deleting all three of the CSS
+   * declarations the moved element carries: it stayed green, because the
+   * group's own `max-width` plus ordinary text wrapping already keeps the ink
+   * at 444px against a field edge of 990 at the narrowest viewport here. So
+   * this is a GUARD, not a demonstration of a live risk — it goes red the day
+   * someone reaches for `white-space: nowrap`, widens the cap, or moves this
+   * line somewhere with less room. The numbers are printed so that stays
+   * visible rather than being taken on trust.
+   */
+  const stress = await p.evaluate(() => {
+    const el = document.getElementById('ui-fusion');
+    const before = el.innerHTML;
+    const b = document.createElement('b');
+    b.textContent = 'HEARTSWALLOWER × STRING SECTION';
+    const em = document.createElement('em');
+    em.textContent = 'needs HEARTSWALLOWER +2 · STRING SECTION +2';
+    el.replaceChildren(document.createTextNode('◇ ONE STEP AWAY '), b, em);
+    /*
+     * THE ELEMENT, NOT ITS PARENT — and the first draft of this check got that
+     * wrong and passed its own fail-test.
+     *
+     * `.hud-tl` carries `max-width: min(46%, 420px)`. A flex row that will not
+     * wrap does not GROW its capped parent; it paints outside it, and
+     * `getBoundingClientRect` on the parent goes on reporting 420px while the
+     * text runs off the screen. Deleting the `flex-wrap: wrap` that makes this
+     * layout legal left the parent measurement green — the assertion existed,
+     * ran on every viewport, and could not see the only defect it was written
+     * for. Both boxes are reported now: the group for the corner rules above,
+     * the element for its own overrun.
+     */
+    const g = document.querySelector('.hud-tl').getBoundingClientRect();
+    const e = el.getBoundingClientRect();
+    const f = document.querySelector('#playfield').getBoundingClientRect();
+    const len = (el.textContent ?? '').length;
+    // The INK, which is the only box that tells the truth here. Two rounds of
+    // this check measured a container instead and passed their own fail-test:
+    // `.hud-tl` is capped at `min(46%, 420px)` and `.fusion-ready` is its flex
+    // item, so BOTH stay at the cap while a non-wrapping row paints its
+    // children straight out of them. `scrollWidth` and the children's own
+    // rects are what actually move when the wrap is taken away.
+    const kids = [...el.children].map((c) => c.getBoundingClientRect());
+    const inkR = kids.length ? Math.max(...kids.map((r) => r.right)) : e.right;
+    // Read BEFORE the content is put back. The first version restored first and
+    // then read `scrollWidth`, so it printed the unstressed 330-in-330 every
+    // time and would have reported a clean overflow as no overflow at all.
+    const scrollW = el.scrollWidth;
+    const clientW = el.clientWidth;
+    el.innerHTML = before;
+    return {
+      len,
+      gr: g.right, gb: g.bottom,
+      er: e.right, eb: e.bottom, ew: e.width, eh: e.height,
+      inkR, scrollW, clientW,
+      fr: f.right, fb: f.bottom,
+    };
+  });
+  // Printed, not merely asserted: a stress case that silently failed to apply
+  // would leave both assertions below green while testing nothing, which is
+  // exactly what the first two drafts of this check did.
+  console.log(
+    `           stressed with a ${stress.len}-char line: ink to ${Math.round(stress.inkR)}` +
+      ` (field ends ${Math.round(stress.fr)}), box ${Math.round(stress.ew)}x${Math.round(stress.eh)},` +
+      ` scroll ${Math.round(stress.scrollW)} in ${Math.round(stress.clientW)}`,
+  );
+  checked++;
+  if (stress.gr > stress.fr + 1 || stress.gb > stress.fb + 1) {
+    bad.push(
+      `${w}x${h}: with a ${stress.len}-character fusion line the top-left group runs to ` +
+        `${Math.round(stress.gr)},${Math.round(stress.gb)} past the field's ${Math.round(stress.fr)},${Math.round(stress.fb)}`,
+    );
+  }
+  checked++;
+  if (stress.inkR > stress.fr + 1 || stress.eb > stress.fb + 1) {
+    bad.push(
+      `${w}x${h}: a ${stress.len}-character fusion line paints out to ${Math.round(stress.inkR)}, ` +
+        `past the field's ${Math.round(stress.fr)} — it is not wrapping`,
+    );
+  }
+  checked++;
+  if (stress.scrollW > stress.clientW + 1) {
+    bad.push(
+      `${w}x${h}: a ${stress.len}-character fusion line needs ${Math.round(stress.scrollW)}px ` +
+        `inside a ${Math.round(stress.clientW)}px box — it is overflowing its own group`,
+    );
+  }
 
   if (w === 1440) await p.screenshot({ path: `${process.env.OUT ?? '/tmp'}/hud-1440.png` });
   reloads += pageReloads();

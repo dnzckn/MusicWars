@@ -1052,14 +1052,39 @@ export class LevelUpOverlay {
     const t = clamp01(this.age / 0.3);
     const a = page * t;
     const cx = W / 2;
-    const y = H * 0.062;
+
+    /*
+     * THE HEADER IS LAID OUT AGAINST THE CARDS, NOT AGAINST THE WINDOW.
+     *
+     * It was `y = H * 0.062` and three lines at fixed offsets below it, while
+     * `layout` starts card 0 at `H * 0.175`. Those two run at different rates,
+     * so on a short window the header simply grew through the first card:
+     * `levelupdraw`'s new straddle check found the SUBTITLE — the oldest line
+     * on this screen — drawn across the card's top edge at 440x620, text
+     * 96-113 against a card top of 109. Nothing had ever measured it, because
+     * every other check on this screen reads `ui.rects()` and none of them
+     * read the text.
+     *
+     * `DEEP` is how far below the origin the block reaches: the subtitle
+     * baseline, half its line box, and eight pixels of air. `y` is the design
+     * position UNLESS that would put the block into the cards, in which case
+     * the block moves up; and if the band is too shallow to hold it even at
+     * the top of the screen, `k` shrinks the whole header instead of letting
+     * it overrun. At 720 and above nothing moves — the origin lands at 43.9
+     * where it used to land at 44.6 — which is deliberate: this is a fix for
+     * short windows and must not redesign the ordinary one.
+     */
+    const band = H * 0.175;
+    const DEEP = 66 + 13 * 0.62 + 8;
+    const k = Math.min(1, band / (DEEP + 14));
+    const y = Math.min(H * 0.062, band - DEEP * k);
 
     g.textAlign = 'center';
     g.textBaseline = 'middle';
 
     // The fermata swells across the bar and settles on the downbeat: a held
     // note, which is exactly what the world is doing at 0.12x.
-    const swell = 1 + Math.sin(barPhase * Math.PI) * 0.09 + downbeat * 0.05;
+    const swell = (1 + Math.sin(barPhase * Math.PI) * 0.09 + downbeat * 0.05) * k;
     g.save();
     g.translate(cx, y);
     g.scale(swell, swell);
@@ -1075,21 +1100,65 @@ export class LevelUpOverlay {
     g.fill();
     g.restore();
 
-    g.font = '800 30px ui-monospace, monospace';
+    /*
+     * THE QUEUE RIDES THE HEADING INSTEAD OF SITTING UNDER IT.
+     *
+     * It was a third centred line at `y + 88`. `layout` puts the first card at
+     * `H * 0.175`, so on any window shorter than about 800 the two collide:
+     * at 1280x720 the line lands at 132.6 and the card top at 126, and the
+     * screenshot shows "+1 MORE WAITING" struck through by the card's border
+     * with its lower half behind the plate. A count that says how much reward
+     * is still owed, rendered illegibly, on the screen whose whole job is
+     * spending it.
+     *
+     * A chip beside the heading needs no vertical room at all, which makes the
+     * collision impossible rather than merely unlikely — and it is louder
+     * there than it was as a third line of small type, which it should be:
+     * offers BANK now, so arriving at this screen with a queue is the normal
+     * case and not an edge one. Measured off `measureText` rather than off a
+     * guessed advance width so it stays put in whatever font resolves.
+     */
+    const heading = `LEVEL ${this.offerLevel}`;
+    g.font = `800 ${(30 * k).toFixed(1)}px ui-monospace, monospace`;
+    const headW = g.measureText(heading).width;
     g.fillStyle = `rgba(240,246,255,${a})`;
-    g.fillText(`LEVEL ${this.offerLevel}`, cx, y + 42);
-
-    g.font = '600 13px ui-monospace, monospace';
-    g.fillStyle = `hsla(200, 60%, 78%, ${a * 0.72})`;
-    g.fillText('the band is waiting — who joins?', cx, y + 66);
+    g.fillText(heading, cx, y + 42 * k);
 
     if (this.queued > 0) {
-      // A queued level is a promise the player has already earned. Saying so
-      // stops the next offer opening two seconds later reading as a glitch.
-      g.font = '700 11px ui-monospace, monospace';
-      g.fillStyle = `hsla(${GOLD}, 90%, 70%, ${a * 0.9})`;
-      g.fillText(`+${this.queued} MORE WAITING`, cx, y + 88);
+      const label = `+${this.queued}`;
+      g.font = `800 ${(13 * k).toFixed(1)}px ui-monospace, monospace`;
+      const w = g.measureText(label).width + 14 * k;
+      const bx = cx + headW / 2 + 10 * k + w / 2;
+      g.fillStyle = `hsla(${GOLD}, 85%, 52%, ${a * 0.22})`;
+      g.strokeStyle = `hsla(${GOLD}, 90%, 66%, ${a * 0.8})`;
+      g.lineWidth = 1;
+      const bh = 19 * k;
+      g.beginPath();
+      g.roundRect(bx - w / 2, y + 42 * k - bh / 2, w, bh, bh / 2);
+      g.fill();
+      g.stroke();
+      g.fillStyle = `hsla(${GOLD}, 95%, 76%, ${a})`;
+      g.fillText(label, bx, y + 43 * k);
     }
+
+    /*
+     * The subtitle counts the queue when there is one.
+     *
+     * "the band is waiting — who joins?" is right for a single level and
+     * misleading for five: offers BANK now, so the common case at this screen
+     * is a stack, and the player's real question is how many picks this visit
+     * is worth. The chip beside the heading says the number; this says what
+     * the number means.
+     */
+    g.font = `600 ${(13 * k).toFixed(1)}px ui-monospace, monospace`;
+    g.fillStyle = `hsla(200, 60%, 78%, ${a * 0.72})`;
+    g.fillText(
+      this.queued > 0
+        ? `${this.queued + 1} levels to spend — who joins first?`
+        : 'the band is waiting — who joins?',
+      cx,
+      y + 66 * k,
+    );
   }
 
   /**
@@ -1383,9 +1452,24 @@ export class LevelUpOverlay {
          * names a price the player is about to pay and a completed fusion is
          * news, while this is only a direction.
          */
+        /*
+         * "· 3 more" WAS AMBIGUOUS AND THE UNIT IS THE WHOLE POINT.
+         *
+         * `away` is levels — `pendingFusions` sums the shortfall on both
+         * inputs — but the card said "3 more" with no noun, which reads just as
+         * easily as three more picks, three more of this instrument, or three
+         * more fusions. The HUD's version of the same fact spells it out
+         * ("needs EMBER +2 · GLASS +2") and there is no room for that here, so
+         * the noun is the minimum that makes the number mean something.
+         *
+         * Phrased to rhyme with the gold line above it — "ONE PICK FROM X"
+         * and "3 LEVELS FROM Y" — so the two tiers read as one scale rather
+         * than as two unrelated annotations.
+         */
         g.fillStyle = `hsla(${hue}, 60%, 74%, 0.5)`;
         const away = c.toward.away;
-        g.fillText(`↗ ${labelOf(c.toward.to as AbilityId)} · ${away} more`, sx, by);
+        const unit = away === 1 ? 'LEVEL' : 'LEVELS';
+        g.fillText(`↗ ${away} ${unit} FROM ${labelOf(c.toward.to as AbilityId)}`, sx, by);
       }
     }
 

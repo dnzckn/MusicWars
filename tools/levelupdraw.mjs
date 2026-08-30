@@ -274,6 +274,10 @@ console.log(`  sizes: ${SIZES.map(([w, h]) => `${w}x${h}`).join('  ')}   (the fi
 
 let drew = 0;
 let checked = 0;
+/* Frames on which the header-vs-card-0 straddle test actually ran. Printed
+   because "checked === 0 is a failure" — a loop that examined nothing reports
+   a pass, and this one is skipped whenever `rects()` is empty. */
+let straddleChecked = 0;
 let settled = 0;
 let totalCalls = 0;
 let totalTexts = 0;
@@ -331,6 +335,43 @@ for (const st of STATES) {
             fail(`${where}: cards ${i} and ${j} overlap`);
           }
         }
+      }
+
+      /*
+       * NOTHING MAY STRADDLE THE TOP EDGE OF THE FIRST CARD.
+       *
+       * A NEW ASSERTION, and it exists because the screen shipped with a
+       * collision this file could not see. `drawHeader` printed
+       * "+N MORE WAITING" at `H * 0.062 + 88` while `layout` puts card 0 at
+       * `H * 0.175`: those cross below about 800px of height, so at 1280x720 —
+       * a very ordinary window — the line telling the player how much reward
+       * they still had banked was drawn half behind the first card's plate,
+       * struck through by its border. Every check here passed, because they
+       * all read `ui.rects()` and none of them read the TEXT.
+       *
+       * It is deliberately general rather than a rule about that one string:
+       * any header line growing, any card top moving up, or any new element in
+       * the gap will trip it. Header text sits wholly above the card; card text
+       * sits wholly below its own top edge; only a collision crosses.
+       *
+       * The box is the recorder's own width estimate with a 1.24em line box,
+       * and `textAlign` decides the origin — the same monospace approximation
+       * this file's header note already documents, which is plenty to answer
+       * "does this overlap by tens of pixels".
+       */
+      const card0 = rects[0];
+      if (card0) {
+        for (const tx of texts) {
+          if (!tx.t) continue;
+          const bx = tx.align === 'center' ? tx.x - tx.w / 2 : tx.align === 'right' ? tx.x - tx.w : tx.x;
+          const top = tx.y - tx.px * 0.62;
+          const bot = tx.y + tx.px * 0.62;
+          const overX = bx < card0.x + card0.w && bx + tx.w > card0.x;
+          if (overX && top < card0.y && bot > card0.y) {
+            fail(`${where} t=${t}: "${tx.t}" straddles the top edge of card 0 (text ${top.toFixed(0)}-${bot.toFixed(0)}, card top ${card0.y})`);
+          }
+        }
+        straddleChecked++;
       }
 
       /*
@@ -422,6 +463,8 @@ pass(
 );
 pass('hitTest agreed with the drawn layout at every size and every frame');
 pass('no card overlapped another or escaped the field');
+if (straddleChecked === 0) fail('the header/card straddle test ran on zero frames');
+else pass(`no drawn string straddles the top edge of card 0 (${straddleChecked} frames)`);
 pass('the choosing latch closes the screen when no event arrives');
 
 /* --------------------------------------------------------- the celebration */
