@@ -314,6 +314,14 @@ declare module '@strudel/core' {
   export function setTime(fn: () => number): void;
   export function evalScope(...args: unknown[]): Promise<void>;
   export function repl(options: Record<string, unknown>): Repl;
+
+  /**
+   * Note name to MIDI number. `'Bb3'` -> 58, `'c'` -> 48 at the default octave.
+   *
+   * Declared because `renderVoicing` returns note NAMES and everything in
+   * `theory.ts` is MIDI integers; this is the one conversion between them.
+   */
+  export function noteToMidi(name: string, defaultOctave?: number): number;
 }
 
 declare module '@strudel/mini' {
@@ -329,6 +337,52 @@ declare module '@strudel/tonal' {
   export function scale(name: Patternable, pat?: Pattern): Pattern;
   export function voicing(pat: Pattern): Pattern;
   export function transpose(v: Patternable, pat?: Pattern): Pattern;
+}
+
+/**
+ * The iReal chord dictionary, as pure data.
+ *
+ * `voicings.mjs` does `registerVoicings('ireal', simple)` and
+ * `setDefaultVoicings('ireal')`, so this object IS what `dict('ireal')` names
+ * and what a bare `.voicing()` uses. Each key is a chord symbol suffix
+ * (`'^7'`, `'-7'`, `'h7'`, ...) and each value is a list of alternative
+ * voicings written as interval strings (`'1P 5P 7M 10M 12P'`).
+ */
+declare module '@strudel/tonal/ireal.mjs' {
+  /** The default ("simple") iReal dictionary. */
+  export const simple: Record<string, readonly string[]>;
+  /** The extended iReal dictionary, `dict('ireal-ext')`. */
+  export const complex: Record<string, readonly string[]>;
+}
+
+/**
+ * The pure-function half of Strudel's voicing machinery.
+ *
+ * `Pattern.voicing()` unwraps a hap and then calls exactly this
+ * (`voicings.mjs`). Calling it directly is how `theory.ts` gets a voicing as
+ * MIDI numbers without going through a pattern.
+ */
+declare module '@strudel/tonal/tonleiter.mjs' {
+  export function renderVoicing(opts: {
+    /** A chord symbol: root plus suffix, e.g. `'A-7'`, `'C#^7'`. */
+    chord: string;
+    /** Symbol suffix -> alternative voicings, as interval strings. */
+    dictionary: Record<string, readonly string[]>;
+    /** Shifts the choice up or down the dictionary's list. */
+    offset?: number;
+    /** If set, returns a single note: the voicing played as a scale. */
+    n?: number;
+    /**
+     * How the voicing is aligned to the anchor.
+     * `'below'`/`'duck'` put the TOP note at or under it; `'above'` and
+     * `'root'` put the BOTTOM note at or under it, and `'root'` always takes
+     * the dictionary's first voicing rather than searching.
+     */
+    mode?: 'below' | 'duck' | 'above' | 'root';
+    /** Note name or MIDI number the voicing is aligned to. */
+    anchor?: string | number;
+    octaves?: number;
+  }): string[];
 }
 
 declare module '@strudel/webaudio' {

@@ -65,6 +65,7 @@
 import { duetParents } from '../core/duet';
 import type { StemId } from './layers';
 import type { SectionName } from '../core/events';
+import type { Act } from './arrangement';
 
 /**
  * What a stem is FOR, musically, as opposed to what it sounds like.
@@ -150,6 +151,45 @@ const YIELD_NEAR = 0.18;
 const YIELD_FAR = 0.06;
 
 /**
+ * How many lanes of each ROLE may hold a slot at once.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A SECOND CAP, when there is already a budget
+ * ---------------------------------------------------------------------------
+ *
+ * `STEM_ROLE`'s own comment says it: `arp` and `motifs` "are alternatives to
+ * one another and this is the single most important pairing in the file — `arp`
+ * and `motifs` running together is the texture the user is hearing as clutter."
+ * Nothing enforced it. `SECTION_BUDGET` counts LANES and is blind to what they
+ * are for, so in a `drop` — a budget of 4, and 46-49% of a run by
+ * `sections`' own recorded share — the ranking `lead, chords, motifs, arp`
+ * admits BOTH countersubjects, which is precisely the case the comment names.
+ *
+ * The complaint this answers is the owner's, verbatim: "why are there multiple
+ * conflicting melodies and theyre all on different tempos too, very confusing
+ * ... dont make ear rape". Three independent melodic lines is not a level
+ * problem and no fader reaches it. The textbook alternatives are
+ * melody-plus-accompaniment (one line, everything else supporting) and real
+ * counterpoint (two lines that answer each other). Four lines competing is
+ * neither, and it is what the budget was admitting.
+ *
+ * So: one tune, one harmony, ONE countersubject, one colour. The budget still
+ * decides how many of those four are heard; this decides that they cannot all
+ * be the same kind of thing.
+ *
+ * NOT A ZERO. A lane refused by this cap takes the ordinary graded yield, the
+ * same as a lane refused by the budget — see `YIELD_NEAR`/`YIELD_FAR` for why
+ * a hard mute would reintroduce the choppiness this project has spent its life
+ * removing.
+ */
+const ROLE_CAP: Partial<Record<Role, number>> = {
+  melody: 1,
+  harmony: 1,
+  counter: 1,
+  colour: 1,
+};
+
+/**
  * How much of a head start a lane gets for already holding its slot.
  *
  * Without this the ranking flips whenever two lanes' wants cross, and a lane
@@ -158,6 +198,136 @@ const YIELD_FAR = 0.06;
  * real change in the game, not a rounding error.
  */
 const INCUMBENCY = 0.22;
+
+/* -------------------------------------------------------------------------
+ * THE LONG CLOCK — parts that come and go on a unit longer than a phrase.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * How many waves one slot of the long rota lasts.
+ *
+ * `wavelength` records an ordinary wave at **18 seconds**, so three waves is
+ * about 54 s and a four-slot rota is about 3 minutes 36. That is deliberately
+ * longer than every existing unit in the score. Measured, longest first:
+ *
+ *     key (tonic)   ~80 s   theme  ~36 s   groove  ~18 s
+ *     section     8-15 s    phrase ~14 s   chord    ~3 s
+ *
+ * — nothing above 80 seconds, which `research-music.md` §3 identifies as the
+ * reason "a run has no arc: wave 30 is structurally identical to wave 4".
+ */
+export const REST_WAVES_PER_SLOT = 3;
+
+/*
+ * ---------------------------------------------------------------------------
+ * This is `mask("<x ~ x ~ ~>/128")`, and the divisor is the run.
+ * ---------------------------------------------------------------------------
+ *
+ * Every published Strudel piece in the reference corpus that has any long-form
+ * shape at all gets it the same way — a `mask` or a `pickRestart` whose
+ * denominator is far larger than a phrase, so parts enter and leave on a clock
+ * the listener cannot hear repeating:
+ *
+ *     x => chord(x).anchor('f4').s("supersaw").voicing()
+ *            .struct("<[~ x] [~ x _ ~]>/2").mask("<x ~ x ~ ~>/128")
+ *
+ * The one place this score should deliberately diverge from those songs is the
+ * DENOMINATOR. A livecoding patch has to pick a number; a game has a run. So
+ * the rota is indexed by the wave, and WHICH ROTA is indexed by the act — two
+ * nested long clocks, both of them facts about how far the player has got
+ * rather than about the transport.
+ *
+ * WHAT MAY REST, and the list is short on purpose. Only `counter` and `colour`
+ * roles: `arp`, `motifs`, `power`. Never `lead` (it is the tune), never
+ * `chords` (it is the bed, and "percussion with decoration" is a recorded
+ * failure of this project), and never any of the six lanes exempt from the
+ * budget — `research-music.md` is explicit that the motor "must stay exempt
+ * from any new section-tacet rule", because the pulse inversion the whole
+ * arrangement rests on is that lane.
+ */
+/**
+ * WHICH COUNTERSUBJECT IS ON DUTY, per act, per slot of the rota.
+ *
+ * ---------------------------------------------------------------------------
+ * A MEASURED REGRESSION, and the fix is the better design rather than a retreat
+ * ---------------------------------------------------------------------------
+ *
+ * The first version of this table rested `arp` and `power` and never `motifs`.
+ * It looked balanced and was not: `rankTonal` puts `motifs` above `arp` in the
+ * default ordering and `ROLE_CAP.counter` is 1, so with enemies on screen —
+ * which is always — the motif lane took the counter chair in every bar of the
+ * run and the arp could never win one. `tools/faders.mjs` went from green to
+ * red in that commit: over a 900 s run the arp's fader RANGE collapsed
+ * **0.46 -> 0.13** and it sat within 0.02 of zero **100%** of the time. That is
+ * the dead-lane defect `session`'s "alive" check exists to find, arriving out
+ * of a rule that was individually correct.
+ *
+ * "One countersubject at a time" was the right rule; "the arp is never it" was
+ * not the intent. So the rota does not say who RESTS, it says who PLAYS: the
+ * counter chair always has somebody in it, the other one rests, and which is
+ * which changes every three waves. The cap becomes a ROTATION rather than a
+ * ranking — and two parts alternating over a long form is counterpoint, where
+ * one part winning permanently is a fader that never moves.
+ *
+ * READ DOWN A COLUMN and it is an arc. The exposition is mostly the stage
+ * talking (`motifs` 3 slots of 4), because the premise of the game is that what
+ * is on screen is the score and a listener has to learn that first. The middle
+ * acts alternate evenly. The recapitulation opens on the arp, which is the one
+ * part that was NOT there at the beginning.
+ *
+ * A BOSS TAKES `motifs` UNCONDITIONALLY, in `counterOnDuty` — the conductor's
+ * tritone pedal IS the boss's voice, and a rota that silenced it because of the
+ * wave number would be the schedule overruling the event.
+ */
+export const COUNTER_ROTA: Record<Act, readonly StemId[]> = {
+  exposition: ['motifs', 'motifs', 'arp', 'motifs'],
+  development: ['motifs', 'arp', 'motifs', 'arp'],
+  intensification: ['motifs', 'arp', 'motifs', 'arp'],
+  recapitulation: ['arp', 'motifs', 'motifs', 'arp'],
+};
+
+/**
+ * Which slots of the rota also rest the COLOUR lane.
+ *
+ * Separate from the counter rotation because it answers a different question:
+ * the counters alternate (one is always playing), while `power` simply stops
+ * for a stretch. Both run on the same slot clock, so a run has one long pulse
+ * rather than two beating against each other.
+ */
+const COLOUR_REST: Record<Act, readonly boolean[]> = {
+  exposition: [false, false, false, true],
+  development: [true, false, false, true],
+  intensification: [false, false, true, false],
+  recapitulation: [true, false, true, false],
+};
+
+/** Which slot of the four-slot rota a wave falls in. */
+function rotaSlot(wave: number): number {
+  return Math.floor(Math.max(0, wave) / REST_WAVES_PER_SLOT) % 4;
+}
+
+/** The countersubject holding the chair for this wave. */
+export function counterOnDuty(act: Act, wave: number, boss: boolean): StemId {
+  if (boss) return 'motifs';
+  const rota = COUNTER_ROTA[act] ?? COUNTER_ROTA.exposition;
+  return rota[rotaSlot(wave)];
+}
+
+/**
+ * The lanes resting for this wave of this act: the off-duty countersubject,
+ * plus the colour lane on the slots that schedule it.
+ *
+ * NEVER DURING A BOSS. A fight is the one passage whose forces are decided by
+ * the event rather than by the schedule, and a rota that took the motif lane
+ * away mid-fight would silence the conductor's tritone pedal — the boss's own
+ * voice — because it happened to be wave 21.
+ */
+export function longRest(act: Act, wave: number, boss: boolean): readonly StemId[] {
+  if (boss) return [];
+  const off: StemId = counterOnDuty(act, wave, boss) === 'arp' ? 'motifs' : 'arp';
+  const colour = (COLOUR_REST[act] ?? COLOUR_REST.exposition)[rotaSlot(wave)];
+  return colour ? [off, 'power'] : [off];
+}
 
 export interface ScoreContext {
   section: SectionName;
@@ -195,6 +365,15 @@ export interface ScoreContext {
    * `arrangement.ts` for the values and the argument.
    */
   budgetDelta?: number;
+  /**
+   * Lanes the LONG ROTA has resting for this stretch of the run.
+   *
+   * Optional for the same reason `ensemble` and `budgetDelta` are: `undefined`
+   * means "no opinion", which keeps every tool that builds a context by hand
+   * working unchanged rather than silently getting a thinner mix. See
+   * `longRest`.
+   */
+  resting?: readonly StemId[];
 }
 
 /**
@@ -331,41 +510,121 @@ export function allocate(
     }))
     .sort((a, b) => b.score - a.score);
 
-  held.clear();
-  for (const s of scored.slice(0, budget)) held.add(s.id);
+  /*
+   * ADMIT IN RANK ORDER, subject to BOTH caps.
+   *
+   * This used to be `scored.slice(0, budget)` — take the top N and stop. That
+   * is a count and nothing else, so a passage with a budget of four admitted
+   * both countersubjects whenever both wanted a slot, which is the one
+   * combination `STEM_ROLE` singles out as the source of the clutter.
+   *
+   * Walking the ranking and skipping a lane whose ROLE is already full keeps
+   * the ordering's musical argument intact — the tune first, then harmony, then
+   * whichever countersubject the moment is about — while making "two of these
+   * are alternatives" a fact rather than a comment. A lane skipped here falls
+   * to the same graded yield as one that missed the budget, and the lane BELOW
+   * it is promoted into the slot, so the budget is still spent.
+   */
+  const admitted: StemId[] = [];
+  const usedByRole = new Map<Role, number>();
+  const resting = new Set(ctx.resting ?? []);
+  for (const sc of scored) {
+    if (admitted.length >= budget) break;
+    // The long rota. A resting lane does not hold a slot and does not consume
+    // one, so the part below it is promoted — resting a colour lane makes the
+    // countersubject louder rather than the mix thinner. See `longRest`.
+    if (resting.has(sc.id)) continue;
+    const role = STEM_ROLE[sc.id];
+    const cap = ROLE_CAP[role] ?? Infinity;
+    if ((usedByRole.get(role) ?? 0) >= cap) continue;
+    usedByRole.set(role, (usedByRole.get(role) ?? 0) + 1);
+    admitted.push(sc.id);
+  }
 
-  // Rank position decides the depth of the yield: in the budget plays, the
-  // next one out accompanies, everything after that rests.
-  const place = new Map(scored.map((s, i) => [s.id, i]));
+  held.clear();
+  for (const id of admitted) held.add(id);
+
+  /*
+   * Rank position decides the depth of the yield: in the budget plays, the
+   * next one out accompanies, everything after that rests.
+   *
+   * "The next one out" is now the first lane of the ORIGINAL ranking that was
+   * not admitted, rather than `scored[budget]`. Those differ exactly when a
+   * role cap fired, and taking the ranking's answer is the right one: the
+   * displaced countersubject is the part an arranger would have double or pad,
+   * which is what `YIELD_NEAR` is for.
+   */
+  const notAdmitted = scored.filter((sc) => !held.has(sc.id) && !resting.has(sc.id));
+  const nearId = notAdmitted.length ? notAdmitted[0].id : undefined;
   const mult = {} as Record<StemId, number>;
   for (const id of TONAL_LANES) {
-    const i = place.get(id);
+    const i = place(id);
     // A lane with nothing to say was never in the running; leave it alone
     // rather than attenuating a level that is already ~0.
     if (i === undefined) mult[id] = 1;
-    else if (i < budget) mult[id] = 1;
-    else if (i === budget) mult[id] = YIELD_NEAR;
+    else if (held.has(id)) mult[id] = 1;
+    /*
+     * A RESTING LANE TAKES THE DEEP YIELD, never the near one.
+     *
+     * Otherwise the rota's whole effect could be a lane at 0.18 — audible,
+     * supporting, exactly the thing it is supposed to have stopped doing —
+     * which is the "gates optimised against" failure in a new costume: a
+     * scheduled rest that leaves the part playing.
+     *
+     * `YIELD_FAR` and not zero, for the reason it is not zero anywhere else in
+     * this file: a lane at exactly zero trips the `active` latch and gets
+     * replaced with `silence` at the next rebuild, so it cannot come back until
+     * a bar or phrase boundary. -24 dB is inaudible and instantly recallable.
+     */
+    else if (resting.has(id)) mult[id] = YIELD_FAR;
+    else if (id === nearId) mult[id] = YIELD_NEAR;
     else mult[id] = YIELD_FAR;
   }
   return mult;
+
+  function place(id: StemId): number | undefined {
+    const i = scored.findIndex((sc) => sc.id === id);
+    return i < 0 ? undefined : i;
+  }
 }
 
 /**
  * Register separation for the two lanes most likely to collide.
  *
- * Winning a slot is not the same as being heard. `arp` and `lead` both live
- * around the octave above the tonic, and when both survive the budget the arp
- * is directly on top of the tune — the classic mistake of doubling your melody
- * with your accompaniment and wondering why neither reads.
+ * Winning a slot is not the same as being heard. When both survive the budget
+ * the arp risks being directly on top of the tune — the classic mistake of
+ * doubling your melody with your accompaniment and wondering why neither reads.
  *
- * The oldest fix in orchestration is to move one of them, so when both sound
- * the arp yields the octave and plays under the tune instead of through it.
+ * ---------------------------------------------------------------------------
+ * THE SIGN IS THE OPPOSITE OF WHAT IT WAS, AND THE OLD ONE WAS BACKWARDS.
+ * ---------------------------------------------------------------------------
+ *
+ * This used to read `leadLevel > 0.18 && arpLevel > 0.18 ? -12 : 0`, with the
+ * arp based on `chord.notes + 12`. Measured off the haps
+ * (`tools/registermap.mjs`, 761,376 of them):
+ *
+ *     arp/triangle         69-83      lead/triangle:pw0.5  69-80
+ *     arp DISPLACED        57-71      motor/pulse:pw0.5    58-69
+ *                                     lead/sawtooth:pw0.5  57-68
+ *
+ * Undisplaced the arp sat on the tune. Displaced it sat on the motor and on the
+ * lead's own octave doubling. There was no value of that offset that separated
+ * anything — it moved a collision from one lane to another, which is what
+ * `research-music.md` §2.4 means when it says relocating a voice relocates
+ * collisions. `docs/MASTER_PLAN.md` §1 S-c named the fix — displace UPWARD,
+ * with a highpass — and S3 was never started.
+ *
+ * So the arp's HOME is now above the tune (`LANE_RANGE.arp`, 87-99) and this
+ * function answers the opposite question: when the tune is NOT sounding, the
+ * arp drops twelve semitones into the octave the tune has vacated, because an
+ * empty register in the middle of a mix is worse than a busy one.
+ *
  * Returned as a semitone offset the arp builder applies, rather than as a gain
  * cut, because the arp is supposed to be *there* — it just is not supposed to
- * be there.
+ * be *there*.
  */
 export function arpDisplacement(leadLevel: number, arpLevel: number): number {
-  return leadLevel > 0.18 && arpLevel > 0.18 ? -12 : 0;
+  return leadLevel > 0.18 && arpLevel > 0.18 ? 0 : -12;
 }
 
 /* -------------------------------------------------------------------------

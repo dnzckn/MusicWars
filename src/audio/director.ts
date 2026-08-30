@@ -57,7 +57,7 @@ import {
   type Signals,
   type StemId,
 } from './layers';
-import { allocate, arpDisplacement, ensembleLift, ensembleSize, ensembleTrim } from './orchestration';
+import { allocate, arpDisplacement, ensembleLift, ensembleSize, ensembleTrim, longRest } from './orchestration';
 import { TensionModel, TERM_LABELS } from './tension';
 import {
   keyLabel,
@@ -220,6 +220,41 @@ const TEMPO_DEADBAND = 8;
 const OVERDRIVE_DROP_COOLDOWN = 45;
 /** How long one OVERDRIVE burst holds the arrangement at its top rung. */
 const OVERDRIVE_PEAK_SECONDS = 10;
+
+/**
+ * Halflife, in seconds, of the smoothing on the lead register's input.
+ *
+ * SWEPT, NOT PICKED, and the first value tried was four times too long and
+ * would have shipped a dead feature. See `Director.encSlow` for why any
+ * smoothing is needed at all.
+ *
+ * The measurement replays the exact chain the director runs — damp, then
+ * `Latch(0.58, 0.42)`, then applied on the bar line — against two 8-minute
+ * headless runs of the dodge bot, and reports both halves of the trade: how
+ * often the octave changes, and whether it ever gets there.
+ *
+ *     halflife    octave changes / 18s     high octave, share of run   reached
+ *     0 (raw)              1.37                      8.9%               2/2
+ *     0.25                 1.23                      8.1%               2/2
+ *     0.50 (this)          0.72                      5.9%               2/2
+ *     0.75                 0.27                      2.6%               2/2
+ *     1.0                  0.11                      1.0%               2/2
+ *     1.5                  0.04                      0.4%               1/2
+ *     4.0                  0.00                      0.0%               0/2
+ *
+ * And the same table on the pre-treadmill tree, which is what 0.5 is chosen
+ * against: raw gave 0.82 changes per 18s and 5.5% of the run in the high
+ * octave. So 0.5 puts BOTH columns back where they were — 0.72 against 0.82,
+ * 5.9% against 5.5% — rather than trading one for the other.
+ *
+ * FOUR SECONDS WAS THE FIRST GUESS AND IT PASSED `flicker` THREE TIMES OUT OF
+ * THREE, with zero octave changes. It also never reached the high octave once
+ * in sixteen simulated minutes, on either tree: a gate satisfied by deleting
+ * the thing it was watching, which is AGENTS.md §3's "ask how someone could
+ * pass it while changing nothing" arriving from the other side. The sweep is
+ * here so the next person does not have to re-derive that.
+ */
+const REGISTER_HALFLIFE = 0.5;
 /**
  * Tension floor during the intro, so `INTRO_ENTRY`'s order can be heard.
  *
@@ -468,6 +503,40 @@ export class MusicDirector {
   private wantRegister = 0;
   /** Latched so hovering on the halfway line does not flip the octave. */
   private highField = new Latch(0.58, 0.42);
+
+  /**
+   * `encirclement`, smoothed to the timescale the register is supposed to move
+   * on. Halflife in `REGISTER_HALFLIFE`.
+   *
+   * WHY THIS EXISTS: THE TREADMILL BROKE AN ASSUMPTION THAT WAS WRITTEN DOWN.
+   * The note at the assignment below says the register uses `encirclement`
+   * "specifically because it is SLOW ... it needs a term that changes on the
+   * timescale of a wave, not of a dodge". That was true of an arena, where the
+   * crowd converged on a player who could stand still and the ring closed and
+   * opened over a wave. It is not true of a track: the ship flies THROUGH each
+   * group, so encirclement rises as it enters the traffic and falls as it
+   * leaves, several times a minute, by design.
+   *
+   * MEASURED, TWICE OVER. `tools/flicker.mjs` holds the ship in place and
+   * counts how often the lead's octave changes over 18 seconds: 1, 2, 4 across
+   * three runs of the pre-treadmill tree, and 3, 3, 6, 7 across four runs of
+   * the treadmill before this field existed. A melody that changes octave
+   * every three seconds is the "theremin" the note below warns against — it is
+   * not the register following the fight, it is the register unable to decide.
+   *
+   * An 18-second browser window is a small sample of a rare event, so the
+   * quantity was re-measured headlessly over sixteen simulated minutes as
+   * well; that sweep is at `REGISTER_HALFLIFE` and it agrees — 0.82 octave
+   * changes per 18 s before the treadmill, 1.37 after.
+   *
+   * The `Latch`'s 0.58/0.42 band is untouched and is still doing its job; the
+   * problem is not chatter ON the boundary, which is what hysteresis fixes, it
+   * is a real signal that now genuinely crosses the boundary more often. So
+   * the fix is upstream of the latch, on the input, and it is a smoothing
+   * rather than a wider band because a wider band would make the register
+   * unreachable at one end rather than merely slower.
+   */
+  private encSlow = 0;
 
   /*
    * The rebuild key's continuous terms, quantised with hysteresis.
@@ -865,6 +934,7 @@ export class MusicDirector {
     this.heard.sections.clear();
     this.heard.peakEnergy = 0;
     this.highField.reset(false);
+    this.encSlow = 0;
     this.grazing.reset(false);
     this.lastVoicing = [];
     this.phraseSeedVoicing = [];
@@ -1144,7 +1214,19 @@ export class MusicDirector {
      * menace. The tool now measures the lead and prints the per-lane registers
      * beside it, so the same mistake cannot be made from the same number.
      */
-    this.wantRegister = this.highField.update(clamp01(snap.encirclement)) ? 12 : 0;
+    /*
+     * SMOOTHED FIRST. See `encSlow` — on a treadmill the raw signal moves on
+     * the timescale of a pass, and this parameter is documented as needing the
+     * timescale of a wave.
+     *
+     * The halflife is a quarter of a bar at 128bpm and the register is applied
+     * on the bar line anyway, so it costs no response at all in practice —
+     * what it removes is the sub-bar excursions that a pass through a group
+     * produces. `REGISTER_HALFLIFE` carries the sweep, including the value
+     * that made the high octave unreachable.
+     */
+    this.encSlow = damp(this.encSlow, clamp01(snap.encirclement), REGISTER_HALFLIFE, dt);
+    this.wantRegister = this.highField.update(this.encSlow) ? 12 : 0;
     this.grazing.update(snap.grazeRate);
 
     // --- health, as a musical parameter ------------------------------------
@@ -1677,6 +1759,21 @@ export class MusicDirector {
        * cancelling itself.
        */
       budgetDelta: this.movement === 'hush' ? 0 : shape.budget,
+      /*
+       * THE LONG ROTA — which parts are out for this stretch of the run.
+       *
+       * A unit of three waves, about 54 seconds, cycling over four slots whose
+       * CONTENTS are chosen by the act. Every other clock in the score is
+       * shorter than 80 s and none of them accumulates; this one is the game's
+       * own answer to the `mask("<x ~ x ~ ~>/128")` that gives the reference
+       * corpus its long form. See `orchestration.longRest`.
+       *
+       * Suppressed on a HUSHED wave for the same reason `budgetDelta` is: the
+       * movement is already built out of absence and two subtractions of the
+       * same lane are the gesture cancelling itself. Suppressed during a boss
+       * inside `longRest` itself, where the reason belongs.
+       */
+      resting: this.movement === 'hush' ? [] : longRest(this.act, this.wave, this.boss),
     }, this.tonalHeld);
 
     /*
@@ -2449,7 +2546,22 @@ export class MusicDirector {
             // pivot that added it would sit a whole step off the chords either
             // side of it.
             pivotChord(this.tonic, this.pendingTonic ?? this.tonic)
-          : chordForBar(this.tonic, this.mode, progression, i);
+          : /*
+             * The NINTH is reserved material, and this is where the act spends
+             * it.
+             *
+             * `ACT_SHAPE.ninth` is false through the exposition and the
+             * development and true from the intensification on. It already
+             * gated `sig.colour9` — a FADER on a tone an octave above the pad —
+             * and that is the weak version of the idea: a colour tone swelling
+             * in is not a different chord, it is the same chord with a
+             * twinkle. Passing it here makes the ninth a member of the chord
+             * itself for the second half of a run, which the stab states in the
+             * register a listener follows. Same voice count either side; see
+             * `theory.Extension` for why it replaces the third instead of
+             * joining it.
+             */
+            chordForBar(this.tonic, this.mode, progression, i, ACT_SHAPE[this.act].ninth ? 'ninth' : 'seventh');
       const led = voiceLead(previousVoicing, raw);
       previousVoicing = led.notes;
       chords.push(led);

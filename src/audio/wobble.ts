@@ -195,6 +195,18 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        */
       .distort('1.15:0.42')
       .gain(o.level)
+      /*
+       * The same small room `buildBass` sends to, for the same reason.
+       *
+       * `registermap` grouped this voice as `bass/sine` and read `room 0.00`.
+       * The halftime feel is 27.8% of the bars in the game by the recorded
+       * rota, so a bone-dry lane here is a bone-dry low end for a quarter of
+       * every run while the pad above it sends 0.58. One room, one building.
+       * Small (size 2) because a long tail on a wobble fills the gaps the LFO
+       * cuts, and the gaps ARE the part.
+       */
+      .room(0.1)
+      .roomsize(2)
       .orbit(ORBIT_LOW)
   );
 }
@@ -250,6 +262,11 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .lpskew(0.5)
     .distort('1.2:0.4')
     .gain(o.level)
+    // See `wub`. The growl sits an octave up and takes slightly more of the
+    // room for it, which is the ordinary way a mix is depth-staged: the higher
+    // a source, the more of the space you hear around it.
+    .room(0.14)
+    .roomsize(3)
     .orbit(ORBIT_LOW);
 }
 

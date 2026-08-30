@@ -17,8 +17,8 @@
 import { note, s, silence, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp01, remap } from '../core/math';
-import type { Chord, ChordSpan, ModeName } from './theory';
-import { buildChord, contourForBar, degreeToSemitone } from './theory';
+import type { Chord, ChordSpan, Extension, ModeName } from './theory';
+import { LANE_RANGE, buildChord, contourForBar, degreeToSemitone, foldInto, laneTones } from './theory';
 // `riser` is no longer imported: the build is a timpani roll now, and a
 // white-noise uplifter has no equivalent in the canon this score is aiming at.
 // The function is left in `kit.ts` rather than deleted — it is a correct
@@ -1607,8 +1607,17 @@ function percLayers(m: MusicalState): Pattern[] {
  * Named because they are a contract, not a tuning preference — `motorcheck`
  * asserts them, and they are the reason the gallop's ascent has a ceiling.
  */
-const MOTOR_BOTTOM = 57;
-const MOTOR_TOP = 69;
+/*
+ * Read out of `LANE_RANGE` rather than restated here.
+ *
+ * These two numbers are unchanged — the motor's window is the one register in
+ * the score that did not move — but they now live in the same table every other
+ * lane's window does, so `registermap`'s window assertion and `motorcheck`'s
+ * range assertion are reading the same source as the builder. AGENTS.md §3:
+ * "a tool holding its own copy of a constant will lie the day it moves."
+ */
+const MOTOR_BOTTOM = LANE_RANGE.motor.lo;
+const MOTOR_TOP = LANE_RANGE.motor.hi;
 
 /**
  * The motor's note line and the tones it was built from.
@@ -1643,14 +1652,16 @@ export function motorVoicing(m: MusicalState): {
    * hold the chord for it to be present, which is what allows the pad to become
    * an occasional colour rather than a permanent bed.
    */
-  const tones = m.chord.notes
-    .map((n) => {
-      let v = n;
-      while (v > MOTOR_TOP) v -= 12;
-      while (v < MOTOR_BOTTOM) v += 12;
-      return v;
-    })
-    .sort((a, b) => a - b);
+  /*
+   * `foldInto` rather than a hand-rolled loop, and it DEDUPES — which matters
+   * now that the chord is a seventh.
+   *
+   * The old loop mapped every note and kept duplicates, so a chord whose fold
+   * put two tones on the same pitch handed `third` and `fifth` the same number
+   * and the comping quietly became a two-note figure. Four tones folded into
+   * thirteen semitones makes that likely rather than rare.
+   */
+  const tones = foldInto(m.chord.notes, MOTOR_BOTTOM, MOTOR_TOP);
   const root = tones[0];
   const third = tones[Math.min(1, tones.length - 1)];
   const fifth = tones[Math.min(2, tones.length - 1)];
@@ -1706,8 +1717,29 @@ export function motorVoicing(m: MusicalState): {
       line = `[${root}@3 ${third}] [${fifth}@3 ${octave}]`;
       break;
     case 'chase':
-      // The chromatic run. Directional, and it buzzes rather than pulses.
-      line = `${root} ${root + 1} ${root + 2} ${third}`;
+      /*
+       * The chromatic run. Directional, and it buzzes rather than pulses.
+       *
+       * RUNS DOWN FROM THE THIRD rather than up from the root, and that is a
+       * fix rather than a preference. `${root} ${root+1} ${root+2}` is written
+       * relative to a note that is only bounded ABOVE by `MOTOR_TOP`, so on any
+       * chord whose fold puts the bottom voice near the ceiling the third note
+       * of the run left the lane's window — `research-music.md` §2.4 records it
+       * reaching MIDI 71 against a stated ceiling of 69, with
+       * `motorcheck.mjs`'s range assertion passing because the branch was never
+       * reached in the states it sampled. A rule the code can break and the
+       * gate cannot see is worse than no rule.
+       *
+       * Descending onto the root arrives somewhere, which is also the better
+       * chromatic approach: a run that lands on the tonic reads as an approach,
+       * and one that leaves it reads as drift. The top of the run is
+       * `min(root + 3, MOTOR_TOP)`, so every note is inside `[root, MOTOR_TOP]`
+       * and therefore inside the window BY CONSTRUCTION rather than by luck.
+       */
+      {
+        const runTop = Math.min(root + 3, MOTOR_TOP);
+        line = `${runTop} ${runTop - 1} ${runTop - 2} ${root}`;
+      }
       break;
     case 'shuffle':
       line = `[~ ${third} ${fifth}] [~ ${third} ${fifth}] [~ ${third} ${fifth}] [~ ${third} ${fifth}]`;
@@ -1753,10 +1785,32 @@ export function motorVoicing(m: MusicalState): {
    * is going, and a snare roll only tells it that something is ending.
    */
   if (m.fillBar) {
-    let target = m.nextChord.root;
-    while (target > MOTOR_TOP) target -= 12;
-    while (target < MOTOR_BOTTOM) target += 12;
-    const step = target > third ? 1 : -1;
+    /*
+     * The turnaround approaches from WHICHEVER SIDE FITS.
+     *
+     * `target - step * 3` reaches three semitones outside the target, and the
+     * target itself is only folded to the window's edge — so on a next-chord
+     * root that folds to 57 the run started at 54, and on one that folds to 69
+     * it started at 72. `research-music.md` §2.4 named this as the second of
+     * the motor's two escapes, against `motorcheck`'s assertion that every note
+     * lands in 57-69, and the check was passing because the sampled states did
+     * not happen to reach those chords.
+     *
+     * Narrowing the fold to leave approach room was tried first and was WORSE,
+     * measured: `foldInto` into a seven-semitone window has no legal octave for
+     * five pitch classes out of twelve, so it returned notes BELOW the window
+     * and `motorcheck` went red on 80 of them at MIDI 55-56. A fold cannot
+     * promise a window narrower than an octave; see `MIN_LANE_SPAN`.
+     *
+     * The window is thirteen semitones and the run is three, so at least one
+     * direction always fits: if `target - 3` is under the floor then the target
+     * is at most 59 and `target + 3` is at most 62, and symmetrically at the
+     * top. Preferring the direction the melody suggests and flipping only when
+     * it does not fit keeps the gesture and makes the range total.
+     */
+    const target = foldInto([m.nextChord.root], MOTOR_BOTTOM, MOTOR_TOP)[0];
+    const wanted = target > third ? 1 : -1;
+    const step = target - wanted * 3 < MOTOR_BOTTOM || target - wanted * 3 > MOTOR_TOP ? -wanted : wanted;
     line = `${root} ${third} ${fifth} [${target - step * 3} ${target - step * 2} ${target - step} ${target}]`;
   }
 
@@ -1858,6 +1912,24 @@ export function buildMotor(m: MusicalState): Pattern {
        * slightly to one side is also simply how a rhythm section is recorded.
        */
       .pan(0.68)
+      /*
+       * A SMALL ROOM ON THE CLOCK, and the argument is about coherence rather
+       * than about ambience.
+       *
+       * `registermap`'s room column read 0.00 on this lane over 92,928 haps —
+       * the busiest pitched group in the score, dry, on the same orbit as a pad
+       * sending 0.58 and a stab sending 0.28. The reference corpus uses
+       * `.room()` in 55 songs of 60, and what it buys is not "reverb": it is
+       * that every source is heard in the same place. A dry eighth-note pulse
+       * against a wet chord is two recordings played at once.
+       *
+       * 0.15 and a SMALL room (size 3), because this lane plays eight to
+       * sixteen notes a bar and anything longer than the gap between them
+       * cancels the pulse inversion the arrangement is built on. It is the
+       * smallest send in the file and it is deliberately the smallest.
+       */
+      .room(m.sig.space.range(0.15, 0.4))
+      .roomsize(3)
       .orbit(ORBIT_HARMONY);
 
   /*
@@ -2395,6 +2467,24 @@ export function buildBass(m: MusicalState): Pattern {
        * lane, and nobody has HEARD any of this yet.
        */
       .gain(0.86)
+      /*
+       * A ROOM ON THE BASS, and it is small on purpose.
+       *
+       * `registermap` read `room 0.00` on all three of this lane's voice groups
+       * — 57,024 haps, the loudest pitched source in the mix, bone dry, on an
+       * orbit with nothing else sending either. The reference corpus reverses
+       * that: `.room()` in 55 of 60 songs, and the low parts are in the room
+       * with everything else.
+       *
+       * 0.12 with `roomsize(2)`. A large room on a bass is the classic way to
+       * lose a low end — the tail arrives under the next note and the pitch
+       * stops being legible — so this is a short one, at a send small enough
+       * that it reads as "the same space as the pad" rather than as reverb.
+       * The tone still comes from the ladder filter and the saturation above;
+       * this only puts the lane in the same building as the rest of the band.
+       */
+      .room(m.sig.space.range(0.12, 0.3))
+      .roomsize(2)
       .orbit(ORBIT_LOW),
     );
 
@@ -2537,22 +2627,88 @@ export function buildChords(m: MusicalState): Pattern {
    * cadence bar the melody is landing rather than walking, which is what a
    * cadence is.
    */
-  const melodyPresent = m.tension > STEM_CURVES.lead.in && !m.chord.pivot;
+  /*
+   * ---------------------------------------------------------------------
+   * IT IS A DYAD NOW, ALWAYS — and that is arithmetic, not taste.
+   * ---------------------------------------------------------------------
+   *
+   * The rule above was `melodyPresent && openTones.length >= 2`, so the pad
+   * played its FULL chord below the lead's entry point. That was fine while the
+   * chord was a triad and the lane had no ceiling. It stopped being fine on the
+   * day the chord became a seventh and the lane got a thirteen-semitone window,
+   * and the failure is one a fold cannot avoid:
+   *
+   *   A window of N semitones can only hold a chord whose span is under N. A
+   *   root-position shell {root, fifth, seventh} spans eleven, and its root can
+   *   be any of twelve pitch classes, so holding it upright needs 12 + 11 = 23
+   *   semitones. Fold the overflow down an octave instead and the seventh lands
+   *   a WHOLE TONE UNDER THE ROOT. That is not an inversion, it is a cluster.
+   *
+   * MEASURED before this line changed, over all nine modes x every degree x two
+   * tensions: **38 of 88 pad bars contained two tones a semitone or a tone
+   * apart** — `[49,50,54,57]`, `[49,52,54,57]` — held for a whole bar, at 110
+   * to 220 Hz, on the one lane in the mix that never stops sustaining. Low
+   * seconds are the single most reliable way to make a mix sound muddy.
+   *
+   * A DYAD IS THE ONE SHAPE THE FOLD CANNOT SPOIL. Two tones a fifth apart fold
+   * to a FOURTH — an inversion, consonant, and the interval organum, power
+   * chords and the whole 8-bit harmony tradition are built out of. There is no
+   * arrangement of {root, fifth} in any window that produces a second.
+   *
+   * Nothing is lost from the HARMONY, and this is the part worth checking
+   * rather than asserting. The third is stated by the motor, continuously, in
+   * its own register, under every bar of the game (`motorcheck`: "every note is
+   * a chord tone"). The third and the seventh are stated by the stab as guide
+   * tones, verified against `@strudel/tonal`'s own `guidetones` dictionary in
+   * all 44 chords by `tools/harmony.mjs`. The ninth and the thirteenth are the
+   * colour pair above. What the pad contributes is WEIGHT and SUSTAIN, and a
+   * dyad contributes exactly as much of both as a tetrad while occupying two
+   * voices instead of four — which is also two fewer simultaneous voices in the
+   * lane `registermap` measured as the mix's second-largest occupant of the
+   * 250 Hz band.
+   *
+   * The old comment's "below the lead's entry point the pad IS the harmony and
+   * needs its third" was true when it was written and is not true now: three
+   * other lanes state the third and two of them are gated by nothing.
+   */
   const rootPc = (((m.chord.root % 12) + 12) % 12);
+  const ivOf = (n: number): number => ((((n % 12) - rootPc) % 12) + 12) % 12;
   const openTones = m.chord.notes.filter((n) => {
-    const iv = ((((n % 12) - rootPc) % 12) + 12) % 12;
+    const iv = ivOf(n);
     // Root, perfect fifth, or the diminished fifth locrian gives instead.
     return iv === 0 || iv === 7 || iv === 6;
   });
+  /*
+   * ...EXCEPT ON A PIVOT, where the pad keeps the ROOT AND THE THIRD.
+   *
+   * The counter-example below still holds — the incoming dominant's major third
+   * is the new key's leading tone and an open fifth belongs to no key at all —
+   * and it is now expressed as a different dyad rather than as a whole chord.
+   * Root and major third fold to a minor sixth, so this shape is cluster-free
+   * for the same reason the fifth is.
+   */
+  const pivotTones = m.chord.notes.filter((n) => ivOf(n) === 0 || ivOf(n) === 4);
   // Never let the guard empty the pad: a voicing rule that can silence a lane
   // is a bug waiting for the one chord that trips it.
-  const opened = melodyPresent && openTones.length >= 2 ? openTones : m.chord.notes;
-  // TEST: with the third gone the pad is a dyad, so it can sit lower without
-  // the mud that a full triad down there would make. Re-testing the register
-  // move that failed before the pad opened to fifths.
-  const voiced = melodyPresent && openTones.length >= 2
-    ? opened.map((n) => (n > m.tonic + 5 && n - 12 >= 45 ? n - 12 : n))
-    : opened;
+  const chosen = m.chord.pivot ? pivotTones : openTones;
+  const opened = chosen.length >= 2 ? chosen.slice(0, 2) : m.chord.notes.slice(0, 2);
+  /*
+   * THE WINDOW IS `LANE_RANGE.pad`, NOT A CONDITIONAL DROP.
+   *
+   * This was `n > m.tonic + 5 && n - 12 >= 45 ? n - 12 : n` — a rule that
+   * depended on the key, fired only when the melody was sounding, and had no
+   * ceiling at all. Two rules were deciding where this lane sits (that one and
+   * `voiceLead`'s window) and neither was written anywhere a tool could read,
+   * which is how `registermap` came to measure the pad and the stab as the two
+   * largest occupants of the same 250 Hz band.
+   *
+   * Folding into the declared window is unconditional and total: every hap this
+   * lane emits is inside `LANE_RANGE.pad` by construction, so the gate that
+   * asserts it cannot be satisfied by a chord that happens not to trip a
+   * threshold. The open-fifths rule above still decides WHICH tones; this only
+   * decides where they sound.
+   */
+  const voiced = foldInto(opened, LANE_RANGE.pad.lo, LANE_RANGE.pad.hi);
 
   /*
    * THE STABS ARE NO LONGER THE PAD'S NOTES.
@@ -2582,23 +2738,28 @@ export function buildChords(m: MusicalState): Pattern {
    *   3. It empties the 250 Hz band of one of its two largest occupants
    *      without removing a note from the score.
    *
-   * The window is 64-76 rather than the pad's 51-62: above the motor's own
-   * 57-69 ceiling at the bottom, and below the lead triangle's measured 69-80
-   * at the top is impossible with thirteen semitones, so the overlap that
-   * remains is with the tune — and against the tune this lane is a 25%-duty
-   * pulse lasting 220 ms on the offbeats, which is the one relationship in the
-   * file where two lanes in one octave do not fight.
+   * The window is `LANE_RANGE.stab` — 68-80, which is clear of the motor's
+   * ceiling of 69 by one semitone and sits under the tune. Against the tune
+   * this lane is a 25%-duty pulse lasting 220 ms on the offbeats, which is the
+   * one relationship in the file where two lanes in one octave do not fight.
+   *
+   * THE TONES ARE THE CHORD'S OWN, folded — NOT the iReal spelling.
+   *
+   * `laneTones` would spell the chord symbol at this lane's anchor, which is
+   * the corpus idiom and is what the ARP uses. It is the wrong source HERE, and
+   * the reason is worth stating because it is the one place the two designs
+   * disagree: a symbol has no way to express which extension the ACT has
+   * unlocked. `Extension` replaces the third with the ninth from the
+   * intensification on, and that substitution lives in `chord.notes` — a
+   * symbol-driven voicing would go on spelling `A-7` and the reserved material
+   * would never reach the one lane that states it.
+   *
+   * So the stab states the chord AS BUILT, in its own window. It still brings
+   * the SEVENTH into this lane, which it never had: the pad is open fifths
+   * whenever the melody plays, and a chord whose seventh existed only as a
+   * fader was, in every lane that mattered, a triad.
    */
-  const STAB_BOTTOM = 64;
-  const STAB_TOP = 76;
-  const stabFolded = m.chord.notes
-    .map((n) => {
-      let v = n;
-      while (v > STAB_TOP) v -= 12;
-      while (v < STAB_BOTTOM) v += 12;
-      return v;
-    })
-    .sort((a, b) => a - b);
+  const stabFolded = foldInto(m.chord.notes, LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
   /*
    * The root goes, and that keeps the ONSET COUNT flat.
    *
@@ -2620,8 +2781,33 @@ export function buildChords(m: MusicalState): Pattern {
    *
    * Guarded, because a voicing rule that can empty a lane is a bug waiting for
    * the one chord that trips it — the same guard `opened` carries above.
+   *
+   * ---------------------------------------------------------------------
+   * GUIDE TONES, and this is what keeps the onset count flat.
+   * ---------------------------------------------------------------------
+   *
+   * It was `stabFolded.slice(1)` — the folded chord minus its root, which was
+   * two voices while the chord was a triad and would be four now that it is a
+   * seventh with an iReal spelling. Four would be a 100% rise in this lane's
+   * transient count, and `attackfloor` already reads 36 onsets a second with
+   * `MASTER_PLAN` §7 naming onset density as the leading suspect for "abrasive
+   * over time". Register separation paid for in transients is one complaint
+   * traded for another.
+   *
+   * So it takes the two tones that a comping player's right hand actually
+   * plays: the THIRD and the SEVENTH. Those two are the guide tones — they are
+   * what distinguishes a minor seventh from a half-diminished from a dominant,
+   * and the root and the fifth are the two the bass and the bed are already
+   * holding. Two voices, the same as before, now carrying the information the
+   * chord symbol contains instead of a doubling of the pad.
    */
-  const stabVoiced = stabFolded.length >= 3 ? stabFolded.slice(1) : stabFolded;
+  const stabPc = ((((m.chord.root % 12) + 12) % 12));
+  const stabGuide = stabFolded.filter((n) => {
+    const iv = ((((n % 12) - stabPc) % 12) + 12) % 12;
+    // Everything that is not the root and not a perfect or diminished fifth.
+    return iv !== 0 && iv !== 7 && iv !== 6;
+  });
+  const stabVoiced = stabGuide.length >= 2 ? stabGuide.slice(0, 2) : stabFolded.slice(-2);
 
   /*
    * A pad first, stabs second.
@@ -2816,8 +3002,19 @@ export function buildChords(m: MusicalState): Pattern {
    * movement being *prettier*, which is the whole idea.
    */
   const floor = m.feel === 'shuffle' || nova > 0 || m.movement === 'hush' ? 1 : 0;
+  /*
+   * NO `+ 12` ANY MORE, and its removal is half of why this group's measured
+   * span was thirty-four semitones.
+   *
+   * `voiceLead` places the colour tones and this line then moved them an octave
+   * further up, so the lane's real register was the sum of two rules neither of
+   * which stated a ceiling: `registermap` measured MIDI 56-90 across 50,688
+   * haps. `voiceLead` now leads them into `LANE_RANGE.colour` (78-90) and this
+   * plays exactly where it is told, with a fold as the belt-and-braces so the
+   * window is a guarantee rather than an expectation.
+   */
   const colourVoice = (pitch: number, level: Patternable, pan: number, i: number): Pattern =>
-    note(String(pitch + 12))
+    note(String(foldInto([pitch], LANE_RANGE.colour.lo, LANE_RANGE.colour.hi)[0] ?? pitch))
       /*
        * These carry vibrato for the same reason the pad does, and they need it
        * more than the pad does: `release(1.1..2.6)` makes them the LONGEST
@@ -3082,8 +3279,29 @@ export function buildChords(m: MusicalState): Pattern {
          * sounding at once, which belongs in orchestration's voice budget
          * rather than here. This moves one voice out of the pile-up and is
          * measurable; the rest is recorded in the changelog as still open.
+         *
+         * -----------------------------------------------------------------
+         * AND THE OCTAVE IS BACK, BECAUSE THE PILE-UP IT AVOIDED IS GONE.
+         * -----------------------------------------------------------------
+         *
+         * A rejected — or in this case an adopted — move expires when its
+         * premise changes, and this one's premise was the five-voice-groups
+         * table above. Three of those five have moved: `arp/triangle` is at
+         * 84-93 now rather than 69-83, and the stab and the clav are voiced
+         * from `LANE_RANGE.stab` (68-80) rather than from a hand-written 64-76.
+         * What is left in that octave is the tune's own two layers and one
+         * upper-structure part, which is an arrangement rather than a pile-up.
+         *
+         * Meanwhile the `-12` had become a collision of its own, and
+         * `registermap` says so: it put this voice at MIDI 56-66 against the
+         * motor's 58-65 — and the motor plays under EVERY bar of the halftime
+         * feel, which is the only feel this voice exists on. The move that was
+         * "out of the pile-up" is now "into the clock".
+         *
+         * The clav is also, on this feel, not an extra part at all: the
+         * halftime branch returns pad + colour + clav and no `stabVoice`, so
+         * this IS the stab. A stab belongs in the stab's register.
          */
-        .add(note(-12))
         /*
          * THIS VOICE IS THE "PINGING", NAMED BY THE OWNER: "the pinging noise
          * is just really bad base type of sound ... i mean clav or whatever
@@ -3139,7 +3357,26 @@ export function buildChords(m: MusicalState): Pattern {
          * is where a clavinet actually speaks and is the band the whole mix is
          * missing.
          */
-        .lpf(m.sig.openness.range(700, 1600))
+        /*
+         * 700-1600 -> 1300-3000, BECAUSE THE NOTE MOVED AND THE FILTER HAS TO
+         * MOVE WITH IT. This is the third time this exact defect has been
+         * found in this file and it is always the same shape: a lane is
+         * transposed and its lowpass is left where it was, so the instrument
+         * loses its harmonics and turns back into a sine.
+         *
+         * The paragraph above derives its numbers from "a note whose
+         * fundamental is 330 Hz" — the clav at `stab - 12`. Removing the octave
+         * puts this voice at MIDI 68-80, 415-830 Hz, and `registermap` read the
+         * cutoff-to-fundamental ratio at 1.7x, which is the lowest in the file
+         * and the same number the colour tones scored before they were fixed
+         * for it.
+         *
+         * The ratio is what is being kept constant here, not the frequency:
+         * 1300-3000 against 415-740 Hz is 3.1x-4.0x, which is where the old
+         * pair sat against the old range. With `lpenv(1.4)` the wah peak lands
+         * at 3.4-7.9 kHz, which is where a clavinet actually speaks.
+         */
+        .lpf(m.sig.openness.range(1300, 3000))
         .lpq(3.2)
         .lpenv(1.4)
         .lpattack(0.004)
@@ -3322,8 +3559,33 @@ export function buildArp(m: MusicalState): Pattern {
   // and drones are the powerup whose whole idea is more satellites.
   const drones = Math.min(3, m.powerups.drones ?? 0);
   const half = (m.powerups.timewarp ?? 0) > 0;
-  // Sorted, because the walk below starts from the top or the bottom of it.
-  const tones = [...m.chord.notes].sort((a, b) => a - b).map((n) => n + 12);
+  /*
+   * `LANE_RANGE.arp` — 87-99, ABOVE the tune, and this is the largest single
+   * register move in the refactor.
+   *
+   * It was `chord.notes + 12`, which put the arp at a measured MIDI 69-83
+   * against the lead's 69-81: the same window, the same pitches, an
+   * accompaniment running straight through the melody. That is the oldest
+   * mistake in orchestration and it does not present as a level problem, which
+   * is why no amount of fader work ever fixed it.
+   *
+   * `arpDisplacement` existed to fix it and pointed the wrong way — it moved
+   * the arp DOWN twelve semitones, into the motor's 57-69 and the lead's own
+   * sawtooth doubling at 57-68. `docs/MASTER_PLAN.md` §1 S-c prescribed upward
+   * displacement with a highpass and it was never built. This is that: the arp
+   * lives above the tune, and `arpDisplacement` now drops it INTO the tune's
+   * octave on the bars where the tune is not there to be collided with.
+   *
+   * The tones are `laneTones`, so they are an iReal spelling of the chord
+   * symbol at this lane's anchor rather than the pad's notes moved up. A walk
+   * over a real voicing includes the seventh and often the ninth, which is what
+   * makes an arpeggio sound like an arpeggio of a chord rather than a triad
+   * spelled out.
+   *
+   * Sorted, because the walk below starts from the top or the bottom of it —
+   * `laneTones` already returns ascending, and this is the assertion of that.
+   */
+  const tones = laneTones(m.chord, 'arp').sort((a, b) => a - b);
 
   /*
    * Rhythm from the melody's rests; pitches walking the chord.
@@ -3418,33 +3680,24 @@ export function buildArp(m: MusicalState): Pattern {
        * value pattern, so it needs the control wrapper to have a field to add
        * against. See `Signals.arpOctave`.
        *
-       * THE SIGN IS INVERTED HERE, DELIBERATELY, and this is the one change in
-       * this lane that is worth arguing about.
+       * THE `.mul(-1)` IS GONE, AND SO IS THE ARGUMENT IT SETTLED.
        *
-       * `orchestration.arpDisplacement` returns **-12** when the lead and the
-       * arp both survive the voice budget. Its reasoning is right — two lanes
-       * in the melody's octave means neither reads — and its direction is
-       * wrong, because it moves the arp into the only octave in the score that
-       * is already full. Measured with `tools/registermap.mjs`: undisplaced
-       * this lane emits MIDI 69-83 at p5-p95; displaced by -12 it emits 57-71,
-       * which is the pad's window (51-62), the motor's entire window (57-69)
-       * and the lead's sawtooth doubling (57-68) simultaneously — and the
-       * displacement fires exactly when all three of those are sounding,
-       * because that is what "both lanes won a slot" means. The octave ABOVE
-       * the arp holds nothing at all: the highest thing in the mix is the
-       * colour 7th and 9th at 784-1568 Hz, at gain 0.3.
+       * A previous pass found `arpDisplacement` pointing the wrong way — it
+       * moved the arp DOWN into the motor's window whenever the lead came
+       * forward — and fixed it HERE, by negating the signal in the builder,
+       * with a comment ending "if the sign is ever fixed upstream, delete the
+       * `.mul(-1)`". Two functions then disagreed about which direction a
+       * positive number meant, which is the sort of thing that stays correct
+       * exactly until somebody reads one of them on its own.
        *
-       * So orchestration decides WHETHER to displace and the builder decides
-       * WHICH WAY, because the builder is the only thing that knows where it
-       * has room. Displaced, this lane plays 81-95 — 1109-2489 Hz — which is
-       * the register the mix has 3.2% of its energy in. `MASTER_PLAN` §1 S-c
-       * asks for exactly this ("upward displacement with an hpf sparkle") and
-       * has asked since before S3 was written.
-       *
-       * If the sign is ever fixed upstream, delete the `.mul(-1)` and not this
-       * comment.
+       * The sign is fixed upstream now, and the reason it could be is that this
+       * lane's HOME moved: `tones` is `laneTones(m.chord, 'arp')`, so the arp is
+       * based at `LANE_RANGE.arp` (87-99) rather than at `chord.notes + 12`.
+       * `arpDisplacement` therefore returns a plain semitone offset with the
+       * obvious meaning — 0 to stay above the tune, -12 to drop into the tune's
+       * octave on the bars where the tune is not using it.
        */
-      .add(note(m.sig.arpOctave.mul(-1)))
+      .add(note(m.sig.arpOctave))
       /*
        * Triangle, and the resonant filter comes off with it.
        *
@@ -3507,11 +3760,41 @@ export function buildArp(m: MusicalState): Pattern {
        * whose source is a triangle (3rd partial -19 dB), which is the least
        * fatiguing way there is to spend a filter.
        */
-      .lpf(m.sig.openness.range(1500, 7000))
-      // A boundary rather than the dead 20 Hz this used to sit at whenever the
-      // player was undamaged — see the pad's highpass. 330 Hz is a fifth below
-      // the lowest fundamental this lane emits (MIDI 69 = 440 Hz), so it takes
-      // out the low skirt this lane puts across the pad and nothing else.
+      /*
+       * 1500-7000 -> 1900-8000, AND THIS IS THE THIRD TIME IN THIS FILE.
+       *
+       * The comment above is about a lane being transposed and its lowpass
+       * left where it was. That happened again, to this lane, in the same pass
+       * that wrote the comment's own fix: `LANE_RANGE.arp` moved the walk to
+       * 87-99 and `registermap` immediately read `harm@lpf 2.7x` — and 2.7 on a
+       * TRIANGLE is nothing at all, because a triangle has only ODD harmonics,
+       * so the first one above the fundamental is the THIRD. A cutoff under 3x
+       * removes every partial this oscillator has and leaves a sine.
+       *
+       * 1900-8000 puts mid openness at 4950 Hz, which is 3.2x the median
+       * fundamental (MIDI 91, 1568 Hz) and clears its third partial at 4704.
+       * The third partial of a triangle is -19 dB, so this is the cheapest air
+       * in the file: it is what makes this read as a bell rather than as a
+       * flute, and it is the only lane in the score whose energy peaks above
+       * 1 kHz at all.
+       *
+       * The rule this keeps failing is worth stating once more as a rule: a
+       * lane's filter is defined RELATIVE TO ITS FUNDAMENTAL, so a register
+       * change is a filter change. `registermap`'s `harm@lpf` column exists to
+       * make it visible and it is the number to read after any transposition.
+       */
+      .lpf(m.sig.openness.range(1900, 8000))
+      /*
+       * A boundary rather than the dead 20 Hz this used to sit at whenever the
+       * player was undamaged — see the pad's highpass.
+       *
+       * Deliberately NOT raised with the register. 330 Hz was a fifth below the
+       * old floor of MIDI 69 and is now nearly two octaves below MIDI 87, so it
+       * removes strictly less than it used to. That is correct: this control's
+       * job is to keep the lane's low SKIRT off the pad, and a highpass placed
+       * just under a fundamental of 1245 Hz would be shaping the tone rather
+       * than separating the lanes, which is what the lowpass above is for.
+       */
       .hpf(m.sig.thin.range(330, 700))
       .lpq(m.sig.ring.range(2, 5))
       .lpenv(1.4)
@@ -3519,6 +3802,25 @@ export function buildArp(m: MusicalState): Pattern {
       .delay(0.26 + homing * 0.3)
       .delaysync(sync)
       .delayfeedback(0.3 + homing * 0.22)
+      /*
+       * A ROOM, at last. This lane measured `room 0.00` — bone dry.
+       *
+       * `registermap` prints a room column and it read 0.00 on eight of fifteen
+       * voice groups, this one among them, while the pad next door on the SAME
+       * ORBIT sent 0.58. Seven different sends on one orbit is seven different
+       * rooms, which is to say no room at all: the ear places sources by their
+       * shared reverberation, and a mix where the loud clock lanes are dry and
+       * the quiet colour lanes are wet reads as a wall of unrelated objects
+       * rather than as a band in a space. 55 of the 60 songs in the reference
+       * corpus use `.room()`; this score used it on four lanes of eleven.
+       *
+       * Small, because this lane has a tempo-synced delay already and a wet
+       * sixteenth-note line turns to porridge. 0.24 against the pad's 0.58 is
+       * "the same room, further from the microphone", which is what a
+       * high filigree part should sound like.
+       */
+      .room(m.sig.space.range(0.24, 0.55))
+      .roomsize(4)
       .gain(level)
       .pan(pan)
       .orbit(ORBIT_HARMONY);
@@ -4759,8 +5061,33 @@ interface Motif {
  * At most this many enemy motifs sound at once. Without a cap, a swarm wave
  * turns the mix into noise and the information the motifs carry is lost — which
  * defeats the purpose of having them.
+ *
+ * ---------------------------------------------------------------------------
+ * THREE -> TWO, and this is the cheapest half of the voice-count problem.
+ * ---------------------------------------------------------------------------
+ *
+ * `orchestration.ts` opens by naming "nine unrelated melodies at once" as the
+ * honest worst case and builds a budget of TONAL LANES to fix it. But `motifs`
+ * is ONE lane holding up to three independent ostinatos, so winning a single
+ * slot in that budget bought three lines — and the budget could not see it.
+ * The owner's report is the arithmetic read back: "why are there multiple
+ * conflicting melodies and theyre all on different tempos too, very confusing".
+ * They ARE on different tempos: `glissando` is a `seq` of two, `stutter` is
+ * `*4`/`*8`/`*16` chosen by enemy count, and the others have their own
+ * subdivisions again.
+ *
+ * Two is the number a counter-lane can be and still be counterpoint. Three
+ * lines against a tune and a comp is five parts, which is more than the ear
+ * follows and more than the SNES could physically play — the constraint this
+ * whole file argues the score should be imitating.
+ *
+ * It costs INFORMATION, and that cost is real rather than hand-waved: the
+ * motifs are how the stage is audible, so a third archetype on screen is now
+ * silent instead of quiet. The `priority` ordering is what makes it acceptable
+ * — the two that sound are the two that matter most, and `conductor` (100) is
+ * never the one that drops.
  */
-export const MAX_MOTIFS = 3;
+export const MAX_MOTIFS = 2;
 
 const MOTIFS: readonly Motif[] = [
   {
@@ -5167,6 +5494,13 @@ export function chordForBar(
   mode: ModeName,
   progression: readonly ChordSpan[],
   bar: number,
+  /*
+   * Which extension the ACT has unlocked. Optional and defaulting to the
+   * seventh, so every tool that builds a bar by hand — and there are six —
+   * keeps working and gets the ordinary chord rather than silently getting the
+   * reserved one. See `theory.Extension` and `ACT_SHAPE.ninth`.
+   */
+  extend: Extension = 'seventh',
 ): Chord {
   /*
    * The phrase is the unit, and the progression addresses bars rather than
@@ -5202,5 +5536,5 @@ export function chordForBar(
   // The contour is the one thing here that depends on WHERE in the phrase we
   // are rather than on which chord it is: it is how the pad gets told which way
   // the tune is going, so it can avoid going the same way. See MELODY_CONTOUR.
-  return { ...buildChord(tonic, mode, degree), contour: contourForBar(bar) };
+  return { ...buildChord(tonic, mode, degree, 0, extend), contour: contourForBar(bar) };
 }

@@ -294,14 +294,71 @@ export function impact(level = 0.6): Pattern {
   ).orbit(ORBIT_AIR);
 }
 
-/** Sub-bass sine on the given note pattern. The floor of the whole mix. */
+/**
+ * Sub-bass sine on the given note pattern. The floor of the whole mix.
+ *
+ * ---------------------------------------------------------------------------
+ * THE ENVELOPE IS THE TIMBRE HERE, because a sine has no other one.
+ * ---------------------------------------------------------------------------
+ *
+ * This lane emits MIDI 26-45 — 41 to 110 Hz. One cycle of 50 Hz is TWENTY
+ * MILLISECONDS. An `attack(0.006)` therefore gates the oscillator on in under
+ * a third of a cycle, which is not an attack at all: it is a step
+ * discontinuity, and a step in a waveform is broadband. Every harmonic that
+ * click contains is above the note, in the register the ear is most sensitive
+ * in, on the loudest lane in the bottom of the mix, two to eight times a bar.
+ *
+ * The `release(0.08)` did the same thing at the other end — 80 ms is four
+ * cycles, so the note is cut off mid-swing and the discontinuity is
+ * proportional to wherever in the cycle it happened to be.
+ *
+ * That is the mechanism behind "the pinging noise is just really bad base type
+ * of sound": a pure sine cannot ping, but the switch turning it on and off can,
+ * and nothing else in the low end is loud enough to mask it.
+ *
+ * 24 ms in and 180 ms out is roughly one cycle and nine — enough that the
+ * ramp is longer than the waveform it is ramping, which is the actual rule for
+ * envelopes below 100 Hz and is why real sub patches are always slow. It costs
+ * the transient, and the transient is the kick's job: `buildKick` is a
+ * synthesised sine drop with its own 4 ms attack sitting on top of this, so the
+ * attack a listener hears on the downbeat is unchanged.
+ *
+ * The release is BOUNDED BY THE PART, not chosen for its own sake. `buildSub`'s
+ * densest lattice puts notes two eighths apart — 460 ms at 130 bpm — and a hap
+ * that long plus a 180 ms tail is 410 ms, so the floor is continuous without
+ * two different sub pitches ever sounding at once. Intermodulation between two
+ * tones an octave and a fifth apart at 50 Hz is the other way this lane can
+ * turn to mud, and it is the one a longer tail would cause.
+ *
+ * NOT `.ds()`. That control sets decay and sustain ONLY and lets attack and
+ * release fall through to superdough's grouped defaults (AGENTS.md §4) — which
+ * is exactly how the loudest pitched lane in the game ran a 1 ms attack for the
+ * project's whole life. All four are set explicitly.
+ *
+ * AND IT STAYS DRY, deliberately, while the bass, the motor and the arp were
+ * all given a room in the same pass.
+ *
+ * `registermap`'s room column read `room 0.00` on eight of fifteen voice groups
+ * and the reference corpus uses `.room()` in 55 songs of 60, so the count is
+ * worth moving — but not by moving THIS lane, and a count moved for its own
+ * sake is the "gates optimised against" failure. Reverb is a set of delayed,
+ * filtered copies; on a source that is a single sine below 110 Hz those copies
+ * arrive within a fraction of a cycle of each other and sum as comb filtering
+ * on the fundamental, which is a pitch-legibility problem rather than a sense
+ * of space. Every mix engineer's rule is the same one: the sub is the driest
+ * thing in the record. The three groups left dry after that pass are this one,
+ * the kick and the noise clap, and all three are dry on purpose.
+ *
+ * MEASURED: nothing. This is arithmetic on the period of a 50 Hz wave and a
+ * reading of superdough's envelope code. Nobody has heard it.
+ */
 export function sub(notes: Patternable, level = 0.7): Pattern {
   return note(notes)
+    .attack(0.024)
+    .decay(0.25)
+    .sustain(0.85)
+    .release(0.18)
     .s('sine')
-    .attack(0.006)
-    .decay(0.2)
-    .sustain(0.8)
-    .release(0.08)
     .gain(level)
     .orbit(ORBIT_LOW);
 }

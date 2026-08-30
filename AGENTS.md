@@ -160,6 +160,28 @@ alone turns that into 48,960 colliding haps, so the count has been seen red.
 default depth of 0.5 — half a semitone, audibly out of tune on a sustained
 chord. **Always set both.** Verify with `vibprobe`, which reads haps.
 
+**A REGISTER CHANGE IS A FILTER CHANGE, and this file has now caught it three
+times.** `lpf`/`hpf` are absolute frequencies; a lane's timbre is the RATIO of
+its cutoff to its fundamental. Transpose a lane and leave its filter and you
+have not moved an instrument, you have replaced it with a duller one — at a
+cutoff under 3× a triangle loses every partial it has (its first is the THIRD)
+and becomes a sine. The three: the colour tones ("THE FILTER WAS BELOW THE
+NOTE", 1.4× at the top of their range), the halftime clav (1.7× after the
+octave came off), the arp (2.7× after it moved above the tune, in the same pass
+that fixed the clav). `registermap` prints a `harm@lpf` column for exactly this
+— **read it after any transposition, in the same commit.**
+
+**A FOLD CANNOT PROMISE A WINDOW NARROWER THAN AN OCTAVE.** `theory.foldInto`
+moves a pitch by octaves until it fits, so a window under twelve semitones has
+no legal answer for some pitch classes and has to return something outside it —
+which makes any gate asserting that window fail at random on one chord in
+twelve rather than on a real defect. `theory.MIN_LANE_SPAN` is asserted by
+`registermap`. And a fold PRESERVES pitch class while DESTROYING spacing, so
+folding three or more tones into thirteen semitones puts a low SECOND in a
+sustained lane: measured at 38 of 88 pad bars the day the chord grew a seventh,
+with every register gate green. Two notes a fifth apart fold to a fourth and
+are the one shape that cannot go wrong. `harmony.mjs` asserts the spacing.
+
 **`.detune()` and `.spread()` are supersaw-only.** They are no-ops on `pulse`,
 `triangle` and `sawtooth`. To get an ensemble on a non-supersaw lane, give each
 voice its own vibrato *rate* — the beating between rates is the effect. Voices

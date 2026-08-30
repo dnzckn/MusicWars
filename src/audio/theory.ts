@@ -6,6 +6,64 @@
  * the director can transpose, invert and voice chords with plain arithmetic,
  * and there is no string parsing between "the player is in trouble" and "the
  * chord got darker".
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED, AND WHY IT IS A DIFFERENT KIND OF HARMONY
+ * ---------------------------------------------------------------------------
+ *
+ * This file used to build every chord as `[0, 2, 4]` — a bare diatonic triad on
+ * a scale degree — and treat the 7th and the 9th as `colour`, "a gain the caller
+ * rides, not a note list". A corpus of sixty published Strudel pieces
+ * (eefano/strudel-songs-collection) was diffed against every function this
+ * project's `src/audio/` calls, and the gap was not one of degree:
+ *
+ *     technique              songs using it (of 60)     this project
+ *     voicing()                      39                      0
+ *     anchor()                       37                      0
+ *     chord()                        29                      0
+ *     mode()                         16                      0
+ *
+ * They compose with CHORD SYMBOLS and let a voicing dictionary spell them; this
+ * project hand-assembled note arrays. A chord symbol is not decoration — it is
+ * the thing that makes a seventh and a ninth STRUCTURAL rather than an
+ * afterthought, and structural extensions are most of the distance between
+ * "video game music" and the reference this score keeps naming.
+ *
+ * So: every (mode, degree) pair now resolves to a real chord symbol, and the
+ * symbol is spelled by `renderVoicing` against the iReal dictionary that ships
+ * inside `@strudel/tonal` — the identical function `Pattern.voicing()` calls,
+ * used directly rather than through a pattern because everything here is plain
+ * arithmetic over MIDI and stays that way. `dict('ireal')` resolves; it is in
+ * fact the package's DEFAULT dictionary (`voicings.mjs`, `setDefaultVoicings`).
+ *
+ * All 61 (mode, degree) pairs across the nine modes map onto seven symbols —
+ * `^7 7 -7 h7 o7 -^7 ^7#5` — and every one of the seven is a key of the iReal
+ * dictionary. There is no fallback branch because nothing reaches one; see
+ * `chordSuffix`.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THE SECOND HALF: ONE CHORD, MANY ANCHORS
+ * ---------------------------------------------------------------------------
+ *
+ * The corpus idiom is not only `chord(...).voicing()`. It is
+ *
+ *     .layer(
+ *       x => n("<0 -3>").chord(x).anchor('f#2').mode('root').voicing()...,
+ *       x => n("<[0,3] [2,3]>").chord(x).anchor('c#3').mode('root').voicing()...,
+ *       x => chord(x).anchor('f4').voicing()...,
+ *       x => chord(x).anchor('f5').voicing()...,
+ *     )
+ *
+ * — ONE chord source, four `anchor`s, four registers. That is the mechanism
+ * this score has never had. `tools/registermap.mjs` over 761,376 haps measured
+ * nine of twelve pitched voice groups with MOST of their notes in 200-800 Hz,
+ * with `chords/pulse:pw0.5` and the lead on overlapping MIDI windows. The
+ * owner hears it directly: "why are there multiple conflicting melodies and
+ * theyre all on different tempos too, very confusing".
+ *
+ * `LANE_RANGE` is that table of anchors, and it is exported so the builders and
+ * the gate read the SAME numbers — AGENTS.md §3, "a tool holding its own copy
+ * of a constant will lie the day it moves."
  */
 
 // Imported rather than restated: `pivotChord` always lands on the last bar of a
@@ -13,6 +71,25 @@
 // bar does. AGENTS.md §3, "a tool holding its own copy of a constant will lie
 // the day it moves" — the same applies inside `src/`.
 import { BARS_PER_PHRASE } from '../core/transport';
+/*
+ * The iReal voicing dictionary and the function that spells a symbol with it.
+ *
+ * Deep imports rather than the package index, deliberately. `@strudel/tonal`'s
+ * index pulls `tonal.mjs`, `voicings.mjs` and `ireal.mjs` and registers pattern
+ * methods on `Pattern.prototype` as a side effect; nothing here patterns
+ * anything. `ireal.mjs` is pure data with no imports at all, and
+ * `tonleiter.mjs` is the pure-function half of the voicing machinery —
+ * `renderVoicing` is exactly what `voicing()` calls once it has unwrapped the
+ * hap (`voicings.mjs`, the `voicing` register block). The package has no
+ * `exports` map, so both paths resolve identically under Node and under Vite.
+ *
+ * `simple` is the dictionary `registerVoicings('ireal', simple)` installs, so
+ * asking for it by object is the same thing as asking for it by the name
+ * `dict('ireal')`.
+ */
+import { simple as IREAL } from '@strudel/tonal/ireal.mjs';
+import { renderVoicing } from '@strudel/tonal/tonleiter.mjs';
+import { noteToMidi } from '@strudel/core';
 
 export type ModeName =
   | 'lydian'
@@ -121,6 +198,341 @@ export const MODE_LADDER: readonly ModeName[] = [
   'locrian',
   'octatonic',
 ];
+
+/* -------------------------------------------------------------------------
+ * THE REGISTER MAP — one chord, one anchor per lane.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A lane's home register, as an `anchor` and the window it may occupy.
+ *
+ * `anchor` is the note `renderVoicing` aligns the chord to. In `'root'` mode
+ * that means the voicing's BOTTOM note lands in `[anchor - 11, anchor]` and the
+ * rest stacks above it, so an anchor is "roughly where this part's bass sits",
+ * which is how the corpus songs read.
+ *
+ * `lo`/`hi` are the hard window. Anything the voicing puts outside is folded by
+ * octaves until it fits, so the window is a guarantee and not a hope.
+ */
+export interface LaneWindow {
+  anchor: number;
+  lo: number;
+  hi: number;
+}
+
+export type LaneId = 'sub' | 'bass' | 'pad' | 'motor' | 'stab' | 'lead' | 'colour' | 'arp';
+
+/**
+ * WHERE EACH PART LIVES. The single most valuable table in this file.
+ *
+ * MEASURED, before this existed (`tools/registermap.mjs`, 761,376 haps over a
+ * 10,560-state sweep). Written as p5-p95 MIDI, sorted by median:
+ *
+ *     sub/sine             33-47
+ *     bass/sine            45-54     bass/sawtooth  45-64
+ *     chords/pulse:pw0     51-62     <- the pad
+ *     chords/triangle      56-90     <- the 7th and 9th, a 34-semitone smear
+ *     lead/sawtooth:pw0.5  57-68
+ *     motor/pulse:pw0.5    58-69
+ *     chords/pulse:pw0.5   67-75     <- the stab
+ *     lead/triangle:pw0.5  69-80     lead/pulse:pw0.5  70-81
+ *     arp/triangle         69-83     <- ON TOP OF THE TUNE
+ *
+ * Nine of twelve pitched groups had MOST of their notes between 200 and 800 Hz
+ * (MIDI 55.4-79.4). The arp and the lead shared a window outright, which is the
+ * oldest mistake in orchestration — doubling your melody with your
+ * accompaniment — and `arpDisplacement` "fixed" it by moving the arp DOWN into
+ * the motor's window instead, which trades one collision for another.
+ *
+ * THE SHAPE THIS IMPOSES is a real band, bottom to top:
+ *
+ *     sub      the floor, one note, nothing above its own second harmonic
+ *     bass     the line
+ *     pad      the BED: low, open, sustained — a keyboard player's left hand
+ *     motor    the CLOCK: chord tones, eighths, the part that never stops
+ *     stab     the UPPER STRUCTURE: what the left hand is not holding
+ *     lead     the TUNE, and it owns its octave
+ *     colour   the 9th and the 13th, on top of the chord, not wandering
+ *     arp      SPARKLE, above the tune AND above the extensions
+ *
+ * Overlaps that remain are deliberate and they are the ones an arranger keeps:
+ * the bass line crosses the bed, and the upper structure sits under the tune.
+ * What is gone is two lanes occupying the SAME window with the same pitches,
+ * which is the thing that reads as congestion rather than as harmony.
+ *
+ * A NOTE ON THE ONE NUMBER THAT DID NOT MOVE. `motor` stays 57-69: it is a
+ * contract `tools/motorcheck.mjs` already asserts and `buildMotor`'s gallop
+ * ceiling is derived from it. Everything else moved around it.
+ */
+export const LANE_RANGE: Record<LaneId, LaneWindow> = {
+  // 41-110 Hz. The `lpf` is at 435 Hz, so this lane is fundamental plus two.
+  sub: { anchor: 33, lo: 26, hi: 45 },
+  // 87-220 Hz. `buildBass` writes `root - 12` and reaches an octave above it.
+  bass: { anchor: 45, lo: 38, hi: 57 },
+  /*
+   * 116-233 Hz, and it is DOWN from a measured 51-62.
+   *
+   * The pad is the only lane whose register move has been measured twice with
+   * opposite verdicts, so the history matters. Capping it as a full triad made
+   * roughness WORSE (1950 -> 2066 pairs) because the displaced voices simply
+   * collided further down. Opening it to fifths changed the object, and the
+   * same move re-tested against a DYAD was worth -18% on `chords+lead`. This
+   * table continues that second result rather than reversing the first.
+   *
+   * The floor is 46 and not 45 because `buildChords` highpasses this lane at
+   * 80 Hz to keep it off the sub, and MIDI 46 is 116 Hz — comfortably above.
+   */
+  pad: { anchor: 52, lo: 46, hi: 58 },
+  // 220-440 Hz. Unchanged, and named in `layers.ts` as MOTOR_BOTTOM/MOTOR_TOP.
+  motor: { anchor: 57, lo: 57, hi: 69 },
+  // 415-830 Hz. Above the motor's ceiling, under the tune.
+  stab: { anchor: 68, lo: 68, hi: 80 },
+  // 440-988 Hz. The tune's own octave, and nothing else sustains in it.
+  lead: { anchor: 69, lo: 69, hi: 83 },
+  /*
+   * 740-1480 Hz, and it is the largest single narrowing in the table: the
+   * extension pair measured 56-90, a 34-semitone spread for TWO voices.
+   *
+   * They are extensions of a chord, so they belong on top of that chord and
+   * nowhere else. `buildChords` records a measurement that folding them DOWN
+   * made masking monotonically worse (1137 -> 1856); this pins them UP, which
+   * is the direction that measurement pointed and which nobody tried.
+   *
+   * THE FLOOR OF 78 IS THE MEASURED CHOICE AND IT IS NOT OBVIOUS. Four
+   * (colour, arp) pairs were run through `tools/masking.mjs`, same 660 states,
+   * same 2,143,944 overlapping pairs, changing nothing else:
+   *
+   *     colour   arp      total weight   chords+lead   share
+   *     56-90    69-83        1565.5        6036.8      48%   <- before
+   *     78-91    84-96        1768.8        5054.2      36%
+   *     74-86    84-96        1709.9        6300.6      46%
+   *     76-88    87-99        1549.7        6059.7      49%
+   *     78-90    87-99        1572.5        5054.2      40%   <- this
+   *
+   * `chords+lead` is the pair this project has spent two years reducing — the
+   * loudest pair in the mix and, with audibility weighting, most of its
+   * roughness. It is driven almost entirely by the colour FLOOR: at 78 it
+   * clears the lead's p95 of 79 and the pair drops 16%; at 76 and 74 it does
+   * not and the pair goes back above where it started. The arp's floor drives
+   * the `arp+chords` pair instead, and 87 is where it stops meeting the top of
+   * this window.
+   *
+   * The total is flat against a baseline of 1565.5 (+0.4%, inside the noise of
+   * the two runs either side of it) while the loudest pair is down 16% and its
+   * share of everything from 48% to 40%. `masking`'s own header says the total
+   * is a diagnostic and not a score; the pair ordering is what it says to act
+   * on, and that is what moved.
+   */
+  colour: { anchor: 78, lo: 78, hi: 90 },
+  /*
+   * 1245-2489 Hz — ABOVE the tune AND above the chord's extensions, which is
+   * the whole point and is three semitones higher than the first attempt.
+   *
+   * `docs/MASTER_PLAN.md` §1 S-c prescribed exactly this and it was never
+   * built; `arpDisplacement` shipped pointing the other way. When the lead is
+   * silent the arp drops into the tune's empty octave instead (see
+   * `arpDisplacement`), so the octave is never simply abandoned.
+   *
+   * 84 WAS TRIED AND MEASURED FIRST, and it landed on the colour pair's new
+   * home: `masking` reported a lane pair that had not existed before,
+   * `arp+chords` at weight 3200 — the largest single new collision in the
+   * whole pass, and a textbook case of the effect `research-music.md` warns
+   * about, that moving a voice RELOCATES collisions rather than removing them.
+   * 87 clears `LANE_RANGE.colour.hi` by minus three and takes that pair to
+   * 1630. See the table on `colour` for the four configurations.
+   */
+  arp: { anchor: 87, lo: 87, hi: 99 },
+};
+
+/*
+ * EVERY WINDOW IS AT LEAST THIRTEEN SEMITONES WIDE, and that is a correctness
+ * requirement rather than an aesthetic one.
+ *
+ * `foldInto` moves a pitch by octaves until it fits. A window narrower than an
+ * octave cannot contain every pitch class, so on such a window the fold has no
+ * legal answer and has to return something outside it — which makes the window
+ * a suggestion and makes any gate asserting it a gate that fails at random on
+ * one chord in twelve. It was caught exactly that way: `stab` at 68-78 and
+ * `arp` at 84-95 were eleven and twelve semitones when first written, and
+ * `motorcheck` went red on 80 notes at MIDI 55-56 the first time a sub-octave
+ * window was used for the fill turnaround's approach room.
+ *
+ * `tools/registermap.mjs` asserts this span, so a window narrowed below it in
+ * future fails before it can produce a stray note.
+ */
+export const MIN_LANE_SPAN = 12;
+
+/* -------------------------------------------------------------------------
+ * CHORD SYMBOLS — the harmony as something with a NAME.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The seventh chord on a scale degree, as an iReal symbol suffix.
+ *
+ * Built from the mode's own intervals rather than from a lookup of "what chord
+ * does aeolian have on III" — the modes table is the authority and this reads
+ * it, so adding a mode cannot silently produce a wrong symbol.
+ *
+ * VERIFIED EXHAUSTIVELY rather than assumed: the nine modes give 61
+ * (mode, degree) pairs and they resolve to seven symbols —
+ *
+ *     ^7 x14   -7 x20   7 x8   h7 x8   o7 x10   -^7 x2   ^7#5 x2
+ *
+ * — every one of which is a key of the iReal dictionary. Octatonic comes out
+ * `o7` on all eight degrees, which is not a defect: every seventh chord built
+ * in scale-thirds on the half-whole diminished scale IS a diminished seventh,
+ * and "there is no chord here that is not diminished" is exactly what that mode
+ * is in the ladder for.
+ *
+ * The fallback exists for a mode nobody has written yet. If it ever fires the
+ * chord still sounds — as a plain triad — rather than throwing inside a pattern
+ * build, which is the failure `progressionFor` already guards against.
+ */
+const SEVENTH_SUFFIX: Record<string, string> = {
+  '4/7/11': '^7', // major 7
+  '4/7/10': '7', //  dominant 7
+  '3/7/10': '-7', // minor 7
+  '3/6/10': 'h7', // half-diminished
+  '3/6/9': 'o7', //  fully diminished
+  '3/7/11': '-^7', // minor-major 7 — the tonic of harmonic minor
+  '4/8/11': '^7#5', // augmented major 7 — harmonic minor's III
+  '4/8/10': '7#5',
+  '4/6/10': '7b5',
+  '3/7/9': '-6',
+  '4/7/9': '6',
+};
+
+const TRIAD_SUFFIX: Record<string, string> = {
+  '4/7': '^',
+  '3/7': '-',
+  '3/6': 'o',
+  '4/8': '+',
+};
+
+export function chordSuffix(mode: ModeName, degree: number): string {
+  const root = degreeToSemitone(mode, degree);
+  const iv = (d: number): number =>
+    ((((degreeToSemitone(mode, degree + d) - root) % 12) + 12) % 12);
+  const third = iv(2);
+  const fifth = iv(4);
+  const seventh = iv(6);
+  return (
+    SEVENTH_SUFFIX[`${third}/${fifth}/${seventh}`] ??
+    TRIAD_SUFFIX[`${third}/${fifth}`] ??
+    '-'
+  );
+}
+
+/**
+ * The chord symbol for a (tonic, mode, degree), e.g. `"A-7"`, `"C#h7"`.
+ *
+ * Sharps rather than flats because `NOTE_NAMES` is the file's one spelling and
+ * `tokenizeChord` accepts either.
+ */
+export function chordSymbol(tonic: number, mode: ModeName, degree: number): string {
+  const pc = ((((tonic + degreeToSemitone(mode, degree)) % 12) + 12) % 12);
+  return NOTE_NAMES[pc] + chordSuffix(mode, degree);
+}
+
+/**
+ * Spell a chord symbol as MIDI notes, anchored to a lane's register.
+ *
+ * This is `Pattern.voicing()` with the pattern taken off: `renderVoicing` is
+ * the function `voicings.mjs` calls once it has unwrapped the hap, and `IREAL`
+ * is the dictionary `dict('ireal')` names. `mode: 'root'` is the corpus
+ * setting — it takes the dictionary's first (closest, most idiomatic) voicing
+ * and puts its bottom note at or just under the anchor, which is what makes an
+ * anchor readable as "where this part sits".
+ *
+ * MEMOISED because the same handful of (symbol, anchor) pairs recur every bar
+ * of a run and `renderVoicing` parses strings on every call. The cache is
+ * unbounded on purpose and cannot grow past 12 pitch classes x 7 suffixes x 8
+ * lanes = 672 entries.
+ *
+ * DEFENSIVE, and for the reason `progressionFor` gives: an unrecognised symbol
+ * used to throw from deep inside a pattern build, killing the frame with a
+ * message that pointed nowhere near the cause. A symbol the dictionary does not
+ * know returns an empty array and every caller falls back to the plain stack it
+ * was built from.
+ */
+const voicingCache = new Map<string, readonly number[]>();
+
+export function voicingAt(symbol: string, anchor: number): readonly number[] {
+  const key = `${symbol}@${anchor}`;
+  const hit = voicingCache.get(key);
+  if (hit) return hit;
+  let out: readonly number[] = [];
+  try {
+    out = renderVoicing({ chord: symbol, dictionary: IREAL, anchor, mode: 'root', octaves: 1 })
+      .map((name) => noteToMidi(name))
+      .filter((m) => Number.isFinite(m))
+      .sort((a, b) => a - b);
+  } catch {
+    out = [];
+  }
+  voicingCache.set(key, out);
+  return out;
+}
+
+/**
+ * Fold a set of pitches into a window by octaves, and drop the duplicates the
+ * fold creates.
+ *
+ * The idiom already existed three times in `layers.ts` — the motor's
+ * `MOTOR_BOTTOM/TOP` fold, the stab's `STAB_BOTTOM/TOP` fold, and the pad's
+ * conditional drop — each written out longhand with its own bounds. One
+ * function, and the bounds come from `LANE_RANGE`, so a lane cannot drift out
+ * of its own declared window without the table saying so.
+ */
+export function foldInto(pitches: readonly number[], lo: number, hi: number): number[] {
+  const out: number[] = [];
+  for (const p of pitches) {
+    let v = p;
+    // A window narrower than an octave cannot contain every pitch class, so the
+    // loops are bounded rather than trusting `hi - lo >= 12`.
+    let guard = 0;
+    while (v > hi && guard++ < 12) v -= 12;
+    guard = 0;
+    while (v < lo && guard++ < 12) v += 12;
+    if (v > hi) v -= 12;
+    if (!out.includes(v)) out.push(v);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * The tones a LANE plays for a chord: an iReal voicing at the lane's anchor,
+ * folded into the lane's window.
+ *
+ * Each lane therefore gets a genuinely different subset of the same harmony
+ * rather than the same three notes at a different octave. That distinction is
+ * the one the measurement kept pointing at: two lanes playing the same pitch
+ * classes an octave apart are one part with a doubling, and the mix reads them
+ * as thickness rather than as counterpoint.
+ *
+ * ONE LANE USES THIS, AND THE REASON THE OTHERS DO NOT IS WORTH KNOWING.
+ * `buildArp` walks it, because an arpeggio over a real five-note voicing is a
+ * different and better thing from an arpeggio over a triad — it picks up the
+ * seventh and often the ninth for free, which is what makes a walk sound like
+ * a chord rather than like a scale fragment.
+ *
+ * The pad, the stab and the motor deliberately fold `chord.notes` instead. A
+ * SYMBOL cannot express which extension the act has unlocked: `Extension`
+ * replaces the third with the ninth from the intensification on, and a
+ * symbol-driven voicing would go on spelling `A-7` while the reserved material
+ * never reached the lanes that state it. `tools/harmony.mjs` asserts that the
+ * partition survives voicing precisely so that distinction stays visible.
+ *
+ * Falls back to the chord's own `notes` if the dictionary had nothing, so a
+ * lane can never go silent because of a spelling.
+ */
+export function laneTones(chord: Chord, lane: LaneId): number[] {
+  const w = LANE_RANGE[lane];
+  const spelled = chord.symbol ? voicingAt(chord.symbol, w.anchor) : [];
+  const source = spelled.length ? spelled : chord.notes;
+  const folded = foldInto(source, w.lo, w.hi);
+  return folded.length ? folded : foldInto(chord.notes, w.lo, w.hi);
+}
 
 /** One chord, and how many bars it lasts. */
 export type ChordSpan = readonly [degree: number, bars: number];
@@ -482,11 +894,29 @@ export function pivotChord(fromTonic: number, toTonic: number): Chord {
   while (root > fromTonic + 6) root -= 12;
   while (root < fromTonic - 6) root += 12;
   return {
-    // Major triad: root, LEADING TONE of the incoming key, fifth.
-    notes: [root, root + 4, root + 7],
-    // The flat seventh, and the ninth above it. Faded by `sig.colour7/9` like
+    /*
+     * A DOMINANT SEVENTH, spelled as one: root, LEADING TONE of the incoming
+     * key, fifth, flat seventh.
+     *
+     * The flat seventh used to be `colour` — a tone that faded in on a signal
+     * — which meant the one chord in the run whose entire job is to PULL was
+     * built as a plain major triad most of the time. A dominant without its
+     * seventh is not a dominant; the tritone between the third and the seventh
+     * is the tension, and the resolution up a fourth is the release. Now that
+     * `Chord.notes` carries sevenths everywhere, this one is no longer the
+     * exception it should never have been.
+     */
+    notes: [root, root + 4, root + 7, root + 10],
+    // Root, leading tone, fifth — and the flat seventh as the tension. The
+    // same partition every other chord carries; see `Chord.core`.
+    core: [root, root + 4, root + 7],
+    tensions: [root + 10],
+    // The ninth and the thirteenth above it. Faded by `sig.colour7/9` like
     // every other colour tone, so the pull is strongest when the mix is open.
-    colour: [root + 10, root + 14],
+    colour: [root + 14, root + 21],
+    // The symbol the pad and the stab spell it from. `7` is the iReal key for
+    // a dominant seventh, so a pivot voices like every other chord.
+    symbol: NOTE_NAMES[(((root % 12) + 12) % 12)] + '7',
     root,
     /*
      * Degree 4 — a dominant, stated as one.
@@ -555,11 +985,92 @@ export function degreeToSemitone(mode: ModeName, degree: number): number {
   return steps[idx] + octave * 12;
 }
 
+/**
+ * The scale tone nearest a wanted interval above a chord's root.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS NOT `degree + 8`
+ * ---------------------------------------------------------------------------
+ *
+ * Stacking thirds by scale STEPS — 0, 2, 4, 6 for the seventh chord and 8, 12
+ * for the ninth and the thirteenth — is right in a seven-note scale and wrong
+ * in any other, because "eight steps up" only means "a second above the
+ * octave" when the octave is seven steps. `MODES.octatonic` has EIGHT, so
+ * `degree + 8` is the octave itself: the ninth collapsed onto the root, the
+ * chord's third was replaced by a doubling of its own bass, and
+ * `tools/harmony.mjs` caught it as two bars that "unlock the ninth and do not
+ * play it".
+ *
+ * An interval is a distance in semitones, so the search is over semitones. The
+ * ninth is the scale tone nearest fourteen above the root and the thirteenth
+ * the one nearest twenty-one — which reproduces `degree + 8` and `degree + 12`
+ * exactly in all eight heptatonic modes (phrygian correctly gets a FLAT ninth,
+ * because its second degree is flat) and gives the octatonic a b9 and a natural
+ * 13 instead of a unison and a fifth.
+ *
+ * Ties go to the LOWER candidate: a flat ninth is a colour this palette already
+ * has (phrygian, phrygian dominant) and a sharp ninth is a blues sound that
+ * belongs to a different tradition than the one this score is imitating.
+ */
+export function extensionSemitone(mode: ModeName, degree: number, want: number): number {
+  const root = degreeToSemitone(mode, degree);
+  let best = degreeToSemitone(mode, degree + 1) + 12;
+  let bestDist = Infinity;
+  for (let d = degree + 1; d <= degree + 13; d++) {
+    const semi = degreeToSemitone(mode, d);
+    const dist = Math.abs(semi - root - want);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = semi;
+    }
+  }
+  return best;
+}
+
 export interface Chord {
-  /** MIDI notes of the core triad, low to high. */
+  /**
+   * MIDI notes of the chord's CORE, low to high. Four of them: 1, 3, 5, 7.
+   *
+   * It was three — a bare diatonic triad — with the seventh living in `colour`
+   * as "a gain the caller rides, not a note list". That is the difference this
+   * refactor is largely about. A seventh that only exists as a level is a
+   * seventh the harmony does not have: the motor cannot comp it, the arp cannot
+   * walk it, the stab cannot voice it, and every lane in the mix spells a triad
+   * while one quiet triangle plays the tone that would have made it a chord.
+   *
+   * Four tones, always, structurally. `colour` moves up to the 9th and the 13th
+   * — genuine colour, which is what that field was always supposed to be.
+   */
   notes: number[];
+  /**
+   * The three tones that are the chord's body, and the one that is its
+   * TENSION — a partition of `notes`, never a second copy of it.
+   *
+   * `tools/harmony.mjs` asserts `core.length === 3`, `tensions.length === 1`,
+   * that the tension is 9, 10 or 11 semitones above the root, and that
+   * `[...core, ...tensions]` reconstructs `notes` exactly AFTER `voiceLead` has
+   * re-octaved and re-sorted everything. That last one is the assertion with
+   * teeth: voicing destroys position, so without an explicit partition there is
+   * no way for any tool downstream to tell a seventh from a fifth, and "the
+   * chord has a seventh" would be a claim about the source rather than about
+   * the object.
+   *
+   * Both are derived from pitch class after voicing rather than carried
+   * through it, so they cannot go stale.
+   */
+  core: number[];
+  tensions: number[];
+  /**
+   * The chord symbol, e.g. `"A-7"`. See `chordSymbol` and `laneTones`.
+   *
+   * Optional so the six tools that construct a `Chord` by hand, and
+   * `voiceLead`'s spread, keep compiling — `laneTones` falls back to `notes`
+   * when it is absent, which is the same fallback it uses for a symbol the
+   * dictionary cannot spell.
+   */
+  symbol?: string;
   /*
-   * The 7th and 9th, kept OUT of `notes` on purpose.
+   * The 9th and the 13th, kept OUT of `notes` on purpose.
    *
    * Extensions used to be selected at build time from a tension threshold, so
    * crossing it rewrote the chord — and everything that reads the chord. The
@@ -567,10 +1078,12 @@ export interface Chord {
    * line: measured, one step of the tension dial left the arp with 44% of its
    * phrase and the chords with 75%.
    *
-   * Separating them lets the triad be a pure function of the progression while
+   * Separating them lets the core be a pure function of the progression while
    * the colour tones fade in and out on a signal. The harmony still opens up as
    * things get tense — it just does it by getting louder rather than by being
-   * replaced. `[seventh, ninth]`, always both, always in that order.
+   * replaced. `[ninth, thirteenth]`, always both, always in that order; the
+   * SEVENTH is no longer here, because a seventh is not colour, it is the
+   * chord.
    */
   colour: number[];
   /** MIDI note of the chord root, for the bass line. */
@@ -620,15 +1133,96 @@ export interface Chord {
  * They are now always returned, separately, and the caller fades them — see the
  * note on `Chord.colour`.
  */
-export function buildChord(tonic: number, mode: ModeName, degree: number, octave = 0): Chord {
+/**
+ * How far up the stack of thirds a chord is spelled.
+ *
+ * `seventh` is 1-3-5-7. `ninth` REPLACES THE THIRD with the ninth — 1-9-5-7 —
+ * rather than adding it, and that is the whole reason this is an enum rather
+ * than a boolean.
+ *
+ * WHY REPLACE. `buildChords` records a version of "add the ninth" being
+ * reverted for taking the stab from two voices to three: 46,464 haps to 69,696
+ * over an identical sweep, and 41.1 to 44.7 pitched note-events per bar,
+ * against `MASTER_PLAN` §7's standing suspicion that ONSET DENSITY is what
+ * "abrasive over time" means. A ninth that costs a transient is harmony bought
+ * with the complaint it is supposed to answer.
+ *
+ * Replacing the third is also what a keyboard player does. The third is the
+ * tone that grinds against a sustained melody a semitone or a tone away — the
+ * pad already drops it for exactly that reason — and the MOTOR states it
+ * continuously in its own register, so the chord's quality is never in doubt.
+ * What the substitution buys is the sound of a ninth chord, at the same voice
+ * count, in the one lane a listener follows the harmony in.
+ *
+ * WHICH ONE IS PLAYED is a property of the ACT: `ACT_SHAPE.ninth` is false in
+ * the exposition and the development and true from the intensification on, so
+ * the ninth is RESERVED MATERIAL — a thing the run earns rather than a thing
+ * that is simply on. See `arrangement.ts`.
+ */
+export type Extension = 'seventh' | 'ninth';
+
+export function buildChord(
+  tonic: number,
+  mode: ModeName,
+  degree: number,
+  octave = 0,
+  extend: Extension = 'seventh',
+): Chord {
   const base = tonic + octave * 12;
-  const notes = [0, 2, 4].map((d) => base + degreeToSemitone(mode, degree + d));
-  // Both colour tones are always computed. `extensions` decides how much of
-  // each is *heard*, which is a gain the caller rides, not a note list.
-  const colour = [6, 8].map((d) => base + degreeToSemitone(mode, degree + d));
+  /*
+   * `[0, 2, 4, 6]` — a SEVENTH chord, not a triad.
+   *
+   * The seventh is the tone that tells you what kind of chord you are hearing.
+   * A minor triad and a half-diminished are the same three notes plus one, and
+   * `PROGRESSIONS` is full of degrees whose whole identity is their seventh:
+   * dorian's major VII, phrygian dominant's bII, harmonic minor's V. Without
+   * it every mode in the ladder reduces to major-or-minor and the ladder does
+   * not sound like a ladder.
+   *
+   * The pitch classes here are the same ones `chordSuffix` reads to name the
+   * chord and the same ones the iReal dictionary spells in `laneTones`, because
+   * both derive from `degreeToSemitone` rather than from a table. There is one
+   * definition of "the chord on this degree" in this file.
+   */
+  const at = (d: number): number => base + degreeToSemitone(mode, degree + d);
+  /*
+   * The ninth and the thirteenth are found by INTERVAL, not by scale step. See
+   * `extensionSemitone` — `degree + 8` is the octave in an eight-note scale,
+   * and `MODES.octatonic` is one.
+   */
+  const ninth = base + extensionSemitone(mode, degree, 14);
+  const thirteenth = base + extensionSemitone(mode, degree, 21);
+  // The body: root, the third OR the ninth that stands in for it, and the
+  // fifth. Three tones, whichever extension is in play — see `Extension`.
+  const core = [at(0), extend === 'ninth' ? ninth : at(2), at(4)].sort((a, b) => a - b);
+  // The tension: the seventh, always, and always exactly one.
+  const tensions = [at(6)];
+  const notes = [...core, ...tensions].sort((a, b) => a - b);
+  /*
+   * The 9th and the 13th, and the field's meaning moved up a rung with the
+   * chord.
+   *
+   * `Signals.colour7` and `colour9` are named for what they used to fade — the
+   * seventh and the ninth — and they now ride the NINTH and the THIRTEENTH.
+   * The names are director-side and renaming them would touch four files for
+   * no behavioural change, so it is recorded here instead: `colour[0]` is what
+   * `colour7` fades and `colour[1]` is what `colour9` fades, whatever they are
+   * called. What matters is the ordering, which is unchanged — the lower
+   * extension arrives first.
+   */
+  const colour = [ninth, thirteenth];
   // No contour by default: a chord built outside the phrase — for the key
   // readout, the intro's first chord — has no bar to take a shape from.
-  return { notes, colour, root: notes[0], degree, contour: 0 };
+  return {
+    notes,
+    core,
+    tensions,
+    colour,
+    symbol: chordSymbol(tonic, mode, degree),
+    root: at(0),
+    degree,
+    contour: 0,
+  };
 }
 
 /**
@@ -667,7 +1261,25 @@ export function buildChord(tonic: number, mode: ModeName, degree: number, octave
  * true root while the upper voices lead. That division of labour is the
  * standard one and it is why it works.
  */
-export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high = 79): Chord {
+/*
+ * The window comes from `LANE_RANGE.pad`, not from two literals.
+ *
+ * It was `low = 55, high = 79` — twenty-four semitones, which is not a pad's
+ * register, it is the whole of the middle of the mix. `registermap` measured
+ * the result at 51-62 because `buildChords` then folded voices down again on
+ * its own; two rules were arguing about where this lane sits and neither of
+ * them was written down anywhere a tool could read.
+ *
+ * `high` is `LANE_RANGE.pad.hi + 6` because this function's own ceiling test is
+ * `stack[top] > high + 6` — a soft allowance for the top voice of a stack whose
+ * bottom is already inside the window. `buildChords` folds what is left.
+ */
+export function voiceLead(
+  prev: readonly number[],
+  chord: Chord,
+  low = LANE_RANGE.pad.lo,
+  high = LANE_RANGE.pad.hi,
+): Chord {
   if (!prev.length) return chord;
   const previous = [...prev].sort((a, b) => a - b);
   /*
@@ -675,7 +1287,7 @@ export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high 
    * sit an octave higher, which is where a keyboard player puts a 9th: on top,
    * out of the way of the triad rather than inside it.
    */
-  const lead = (pitches: readonly number[], lo: number, hi: number): number[] => {
+  const leadVoices = (pitches: readonly number[], lo: number, hi: number): number[] => {
     const out: number[] = [];
     for (const n of pitches) {
       let best = n;
@@ -695,7 +1307,19 @@ export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high 
     }
     return out;
   };
-  const colour = lead(chord.colour, low + 5, high + 12);
+  /*
+   * The colour tones are led into `LANE_RANGE.colour`, not into "somewhere
+   * above the pad".
+   *
+   * It was `low + 5 .. high + 12` — a window derived from the pad's, so moving
+   * the pad moved the 9th, and `registermap` measured the result at MIDI 56-90:
+   * a thirty-four-semitone spread for two voices, the widest of any group in
+   * the score and wider than the pad, the motor and the stab put together. A
+   * tone that can be anywhere is not a register, and two of them wandering
+   * across three octaves is why "chords" collided with every other lane in the
+   * masking table at once.
+   */
+  const colour = leadVoices(chord.colour, LANE_RANGE.colour.lo, LANE_RANGE.colour.hi);
 
   /*
    * Every inversion is tried, and the one whose voices move least wins.
@@ -756,8 +1380,23 @@ export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high 
       while (placed - 12 > stack[v - 1]) placed -= 12;
       stack.push(placed);
     }
-    if (stack[voices - 1] > high + 6) continue;
-    let score = 0;
+    /*
+     * PENALISED, NOT REJECTED — and the difference became load-bearing the day
+     * the chord grew a seventh.
+     *
+     * This was `if (stack[voices - 1] > high + 6) continue`. A three-note
+     * compact stack is at most eight semitones tall and always fitted; a
+     * FOUR-note stack of a seventh chord is ten or eleven, so against a window
+     * this narrow every rotation could overshoot, `candidates` would come back
+     * empty, and the function would silently return the chord unvoiced — the
+     * exact lurching it exists to remove, arriving as a fallback rather than as
+     * a bug anyone would see.
+     *
+     * 40 per semitone is heavy enough that any voicing inside the window beats
+     * any voicing outside it (the movement terms are single digits), and finite
+     * so there is always something to choose from.
+     */
+    let score = 40 * Math.max(0, stack[voices - 1] - (high + 6));
     for (let v = 0; v < voices; v++) score += Math.abs(stack[v] - was(v));
     /*
      * And a pad that stays under the tune.
@@ -769,12 +1408,12 @@ export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high 
      * middle of the melody's own register in two modes out of six and a
      * different instrument's job in the other four.
      *
-     * The melody's floor is the tonic an octave up, which for the range this is
-     * always called with is `low + 14`. Above that the pad is competing with the
-     * tune rather than supporting it, so it is charged for going there — softly,
-     * because the alternative is sometimes genuinely worse voice leading.
+     * The ceiling was `low + 14` — the melody's floor expressed relative to a
+     * window that has since moved and is now written down. `LANE_RANGE.pad.hi`
+     * is the same intent stated once, in the table both the builders and the
+     * gate read, rather than as arithmetic on this function's argument.
      */
-    score += 2 * Math.max(0, stack[voices - 1] - (low + 14));
+    score += 2 * Math.max(0, stack[voices - 1] - LANE_RANGE.pad.hi);
 
 
     for (let v = 1; v < voices; v++) {
@@ -831,12 +1470,39 @@ export function voiceLead(prev: readonly number[], chord: Chord, low = 55, high 
     }
   }
   const unique = [...new Set(notes)].sort((a, b) => a - b);
+  const voiced = unique.length ? unique : chord.notes;
+  /*
+   * RE-DERIVE THE PARTITION, by pitch class, from the voicing that won.
+   *
+   * Voicing destroys position: every tone has been re-octaved and the whole
+   * stack re-sorted, so `core` and `tensions` as `buildChord` wrote them no
+   * longer name any note in `notes`. Carrying them through unchanged would make
+   * them a claim about a chord that no longer exists — and `harmony.mjs`'s
+   * PARTITION assertion exists precisely because that failure is invisible:
+   * three numbers and one number, both plausible, neither pointing at anything.
+   *
+   * Pitch class is the right key because an octave transposition is exactly
+   * what voicing is allowed to do and exactly what it must not be allowed to
+   * hide. The tension is whichever voiced note shares a pitch class with the
+   * seventh; everything else is the body.
+   */
+  const tensionPcs = new Set(chord.tensions.map((n) => (((n % 12) + 12) % 12)));
+  const ledTensions = voiced.filter((n) => tensionPcs.has((((n % 12) + 12) % 12)));
+  const ledCore = voiced.filter((n) => !tensionPcs.has((((n % 12) + 12) % 12)));
   return {
     ...chord,
-    notes: unique.length ? unique : chord.notes,
-    // Never double a triad tone with a colour tone: the fade would then change
+    notes: voiced,
+    /*
+     * The partition falls back to the unvoiced one if the fold collapsed two
+     * tones onto the same pitch, which `unique` can do. A partition that does
+     * not reconstruct `notes` is worse than no partition, so the fallback keeps
+     * the two halves consistent with each other rather than with the original.
+     */
+    core: ledCore.length && ledTensions.length ? ledCore : voiced.slice(0, Math.max(1, voiced.length - 1)),
+    tensions: ledCore.length && ledTensions.length ? ledTensions : voiced.slice(-1),
+    // Never double a chord tone with a colour tone: the fade would then change
     // the loudness of a pitch already sounding rather than adding one.
-    colour: colour.filter((n) => !unique.includes(n)),
+    colour: colour.filter((n) => !voiced.includes(n)),
   };
 }
 
