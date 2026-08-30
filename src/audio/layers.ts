@@ -3049,10 +3049,85 @@ export function buildChords(m: MusicalState): Pattern {
      */
     const clav = (rhythm: string, level: Patternable): Pattern =>
       note(rhythm)
-        .s('square')
-        .ad('0.003:0.08')
-        .sustain(0)
-        .release(0.05)
+        /*
+         * DOWN AN OCTAVE, out of the melody's register.
+         *
+         * Reported from play: "why are there multiple conflicting melodies and
+         * theyre all on different tempos too, very confusing". The register map
+         * says exactly where that comes from. `tools/registermap.mjs` over
+         * 761,376 haps:
+         *
+         *   chords/pulse:pw0.5   MIDI 67-75
+         *   chords/square        MIDI 67-75   <- this voice, identical window
+         *   lead/triangle        MIDI 69-80
+         *   lead/pulse           MIDI 70-81
+         *   arp/triangle         MIDI 69-83
+         *
+         * Five voice groups inside one octave, each on its own subdivision.
+         * That is not a mix problem and no amount of gain work reaches it: it
+         * is an ORCHESTRATION problem, and the rule it breaks is the oldest one
+         * there is — voices are separated by register or by rhythmic function,
+         * and preferably both. A clav and a pad in the same octave playing
+         * different rhythms do not read as two parts, they read as one confused
+         * part.
+         *
+         * The clav is the voice that should move, because it is the RHYTHMIC
+         * one. A pad sustains and can hold the alto register without obscuring
+         * a melody above it; a stab is transient and competes directly. Down an
+         * octave it becomes what a clavinet actually is in an arrangement — an
+         * inner rhythmic voice under the tune, not a second tune.
+         *
+         * This does NOT fix the count. Lead, motor and arp are still three
+         * independent lines and the honest fix for that is fewer of them
+         * sounding at once, which belongs in orchestration's voice budget
+         * rather than here. This moves one voice out of the pile-up and is
+         * measurable; the rest is recorded in the changelog as still open.
+         */
+        .add(note(-12))
+        /*
+         * THIS VOICE IS THE "PINGING", NAMED BY THE OWNER: "the pinging noise
+         * is just really bad base type of sound ... i mean clav or whatever
+         * that sound is".
+         *
+         * It was a RAW SQUARE with a 3ms attack, an 80ms decay to SILENCE, a
+         * 50ms release and no reverb whatsoever. Every one of those four is a
+         * ping generator on its own and together they are nothing else: a
+         * square has odd harmonics all the way up with no rolloff, 3ms is below
+         * the ear's threshold for hearing an onset as anything but a click, and
+         * decaying to zero sustain means the note has no body to speak of. It
+         * was doing this in the melody's own octave until this pass moved it
+         * down.
+         *
+         * A real clavinet is a PLUCKED STRING under a pickup. It has an onset
+         * you can hear, a short body, and it lives in a room. Three changes:
+         *
+         *   triangle, not square — a triangle rolls off at 1/k^2 against the
+         *   square's 1/k, so the top two thirds of the harmonic ladder that
+         *   makes this read as a ping simply is not generated. The `lpf` below
+         *   was already trying to remove it after the fact, which is always
+         *   more expensive and less complete than not making it.
+         *
+         *   a 14ms onset and a real sustain — 0.003 to 0.014 puts the attack
+         *   where a plucked string actually is, and sustain 0.16 gives the
+         *   release something to ramp FROM. AGENTS.md §3 records that lengthening
+         *   release on a sustain(0) lane is the archetypal gate-passing no-op,
+         *   because superdough ramps release from sustain: 0.05 -> 0.22 only
+         *   means anything alongside the sustain change.
+         *
+         *   and 0.28 of room. 55 of the 60 songs in
+         *   eefano/strudel-songs-collection use `.room()`; this lane used none,
+         *   in a mix where the pad sits at 0.28 and the lead at 0.34. A dry
+         *   voice next to wet ones does not sound like a different instrument,
+         *   it sounds like a cheap one.
+         *
+         * It stays SHORT and it stays a stab. The point is that it is a plucked
+         * note rather than a transient, not that it becomes a pad.
+         */
+        .s('triangle')
+        .ad('0.014:0.11')
+        .sustain(0.16)
+        .release(0.22)
+        .room(0.28)
         /*
          * 700-1600, and the envelope peak lands where the comment always said
          * it did. The old ceiling of 950 Hz with `lpenv(1.4)` topped the wah
@@ -4726,7 +4801,36 @@ const MOTIFS: readonly Motif[] = [
         // A square at 2.6kHz with Q4 is a bright blip on top of everything
         // else; a triangle says the same thing without the edge.
         .s('triangle')
-        .ds('0.07:0')
+
+        /*
+         * A PLUCK, NOT A CLICK.
+         *
+         * Reported from play: "there's a lot of pinging type sound which isnt
+         * great". `tools/attackfloor.mjs` has been reporting exactly this all
+         * along and it was repeatedly filed as pre-existing: the motifs stem
+         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
+         * attack and a 31ms tail. That is not a short note, it is a transient.
+         *
+         * The cause is `.ds('0.07')` and nothing else. Per AGENTS.md §4, ADSR
+         * defaults are GROUPED: setting decay and sustain leaves attack and
+         * release to fall through to 0.001s and 0.01s. So the envelope was a
+         * one-millisecond ramp onto a note that decays to silence and is gone.
+         *
+         * Appending `.release()` alone would have been the trap AGENTS.md §3
+         * names outright — superdough ramps release FROM sustain, so on a
+         * sustain(0) lane it is inaudible and would have turned the gate green
+         * with no change to the sound. Sustain has to come up with it.
+         *
+         * These stay SHORT, because a motif that becomes a pad stops being a
+         * motif and this lane is how an archetype announces itself. A real
+         * plucked string is about 10-15ms onto the note and a tail that decays
+         * rather than stopping; that is what these are now.
+         */
+        .attack(0.012)
+        .ds('0.13:0.12')
+        .release(0.22)
+        // See the room note on the first motif voice above.
+        .room(0.3)
         .lpf(2600)
         .lpq(1.8)
         .gain(0.26)
@@ -4793,7 +4897,56 @@ const MOTIFS: readonly Motif[] = [
       const div = count > 8 ? 16 : count > 4 ? 8 : 4;
       return note(`${m.chord.root + 24}*${div}`)
         .s('square')
-        .ds('0.03:0')
+
+        /*
+         * A PLUCK, NOT A CLICK.
+         *
+         * Reported from play: "there's a lot of pinging type sound which isnt
+         * great". `tools/attackfloor.mjs` has been reporting exactly this all
+         * along and it was repeatedly filed as pre-existing: the motifs stem
+         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
+         * attack and a 31ms tail. That is not a short note, it is a transient.
+         *
+         * The cause is `.ds('0.03')` and nothing else. Per AGENTS.md §4, ADSR
+         * defaults are GROUPED: setting decay and sustain leaves attack and
+         * release to fall through to 0.001s and 0.01s. So the envelope was a
+         * one-millisecond ramp onto a note that decays to silence and is gone.
+         *
+         * Appending `.release()` alone would have been the trap AGENTS.md §3
+         * names outright — superdough ramps release FROM sustain, so on a
+         * sustain(0) lane it is inaudible and would have turned the gate green
+         * with no change to the sound. Sustain has to come up with it.
+         *
+         * These stay SHORT, because a motif that becomes a pad stops being a
+         * motif and this lane is how an archetype announces itself. A real
+         * plucked string is about 10-15ms onto the note and a tail that decays
+         * rather than stopping; that is what these are now.
+         */
+        .attack(0.012)
+        .ds('0.09:0.12')
+        .release(0.18)
+        /*
+         * AND PUT IT IN A ROOM.
+         *
+         * "the pinging noise is just really bad base type of sound" — the
+         * timbre, not the envelope, and `attackfloor` prints the cause beside
+         * the one it printed for the envelope: motifs `room 0.00, dry 100%`.
+         * So do sub, bass, arp and hats. Five of seven pitched lanes were bare
+         * oscillators with no space around them at all, against chords at 0.28
+         * and lead at 0.34.
+         *
+         * Measured against real practice rather than taste: of the 60 songs in
+         * eefano/strudel-songs-collection, 55 use `.room()` — 92%. The common
+         * values are 0.2, 0.3, 0.5, 0.8 and 1.0. A dry raw triangle sitting
+         * next to two wet lanes does not read as a different instrument, it
+         * reads as a cheap one, because nothing in a physical space is dry.
+         *
+         * 0.3 rather than the 0.6+ the pads run, because these are SHORT and a
+         * long tail on a fast repeating motif smears into the next one — the
+         * same reason `buildBass` shortens its release when `layered` stacks
+         * eighths underneath.
+         */
+        .room(0.3)
         .lpf(4200)
         .hpf(600)
         .gain(0.17)
@@ -4807,7 +4960,36 @@ const MOTIFS: readonly Motif[] = [
     build: (m, count) =>
       note(count > 3 ? `~ ${m.chord.root + 12} ~ ${m.chord.root + 12}` : `~ ${m.chord.root + 12} ~ ~`)
         .s('triangle')
-        .ds('0.09:0')
+
+        /*
+         * A PLUCK, NOT A CLICK.
+         *
+         * Reported from play: "there's a lot of pinging type sound which isnt
+         * great". `tools/attackfloor.mjs` has been reporting exactly this all
+         * along and it was repeatedly filed as pre-existing: the motifs stem
+         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
+         * attack and a 31ms tail. That is not a short note, it is a transient.
+         *
+         * The cause is `.ds('0.09')` and nothing else. Per AGENTS.md §4, ADSR
+         * defaults are GROUPED: setting decay and sustain leaves attack and
+         * release to fall through to 0.001s and 0.01s. So the envelope was a
+         * one-millisecond ramp onto a note that decays to silence and is gone.
+         *
+         * Appending `.release()` alone would have been the trap AGENTS.md §3
+         * names outright — superdough ramps release FROM sustain, so on a
+         * sustain(0) lane it is inaudible and would have turned the gate green
+         * with no change to the sound. Sustain has to come up with it.
+         *
+         * These stay SHORT, because a motif that becomes a pad stops being a
+         * motif and this lane is how an archetype announces itself. A real
+         * plucked string is about 10-15ms onto the note and a tail that decays
+         * rather than stopping; that is what these are now.
+         */
+        .attack(0.014)
+        .ds('0.16:0.14')
+        .release(0.26)
+        // See the room note on the first motif voice above.
+        .room(0.3)
         .lpf(2000)
         .gain(0.22)
         .pan(0.38)
