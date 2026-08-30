@@ -215,6 +215,59 @@ export interface InstrumentStats {
  *
  * DO NOT ADD A GEOMETRY TO MAKE A WEAPON DIFFERENT. That was tried, it is
  * written up above, and the next weapon's difference belongs in `Props`.
+ *
+ * ---------------------------------------------------------------------------
+ * SIX WERE ADDED ANYWAY, AND THE PARAGRAPH ABOVE IS THE REASON THEY ARE THESE
+ * SIX AND NOT ANY OTHERS. Read this before reading it as a reversal.
+ *
+ * The rule above refuses a geometry ADDED TO MAKE A WEAPON DIFFERENT — a
+ * second fan, a third cone, a star of lances that is a lance with a `count`.
+ * Every one of the seven it cut answered the same question, "where does the
+ * hitbox appear", and answering it a fourteenth way is what produced "all one
+ * idea". That refusal stands and nothing below relaxes it.
+ *
+ * What `docs/plan-refactor-3.md` §9a records and this file had not spent is
+ * that the two source games contribute DIFFERENT halves. Ball x Pit's is the
+ * property substrate, which landed. **Vampire Survivors' is the delivery
+ * vocabulary** — "attacks horizontally, fires in the faced direction,
+ * boomerangs, orbits, generates zones, bounces around, strikes at random,
+ * erases everything in sight, freezes in a line, shields, fires in four fixed
+ * directions, zones while moving and strikes when stopping" — and almost none
+ * of its weapons carries a status at all. Its roster is the mirror image of
+ * the one this file shipped, and refusing its half outright on the strength of
+ * a rule written about the OTHER half is how a roster ends up strong on one
+ * axis and empty on the other, which is where this one was.
+ *
+ * SO THE TEST IS NOT "IS IT A NEW SHAPE", IT IS "DOES IT ANSWER A QUESTION THE
+ * SEVEN CANNOT". Four of the six below do not answer "where does the hitbox
+ * appear" at all; they answer WHEN, and there was no shape in the table that
+ * could:
+ *
+ *   `wake`      the condition is the player MOVING. No existing shape reads
+ *               the stick. Two different behaviours, chosen by it.
+ *   `riposte`   the trigger is the player BEING HIT. Every other shape in the
+ *               table is on a timer or a beat grid.
+ *   `erase`     no aim, no travel, no target selection, one long cooldown, the
+ *               whole visible field at once.
+ *   `guard`     deals nothing, ever, and its activation is a CHARGE that sits
+ *               there until something takes it.
+ *
+ * Two of them are geometry, and they are the two the source names as its own
+ * distinctive deliveries rather than as variants:
+ *
+ *   `boomerang` out and BACK, hitting on both passes. `seek` cannot: a seek
+ *               bolt is spent at its range. Ball x Pit has nothing like it.
+ *   `compass`   four FIXED WORLD AXES that ignore the aim entirely. `arc`'s
+ *               `count` spreads strokes around the compass but centres them on
+ *               `p.aim`, so it rotates with the player; the whole point of
+ *               Phiera Der Tuphello is that it does not.
+ *
+ * AND FOUR OF THE TEN NEW WEAPONS ADDED NO SHAPE, deliberately, because their
+ * delivery already existed and the honest thing was to say so. CAESURA is a
+ * `lance` with its damage set to zero; BACKBEAT is a static `arc`, which is
+ * already a stroke either side of you; ALEATORY is a `strike`, which already
+ * lands on a random body without travelling; CLUSTER is an `aura`. "Another
+ * weapon that fires at the nearest thing" is not a shape and never was.
  */
 export type InstrumentShape =
   /* ---------------------------------------------------------------------- *
@@ -291,6 +344,116 @@ export type InstrumentShape =
   | 'strike'
   /** A field dropped in the world that stays where it was put. */
   | 'field'
+  /* ---------------------------------------------------------------------- *
+   * THE SIX FROM VAMPIRE SURVIVORS' DELIVERY VOCABULARY. See the long note
+   * above `InstrumentShape` for why these six and not the other eleven.
+   * ---------------------------------------------------------------------- */
+  /**
+   * THROWN OUT, AND IT COMES BACK THROUGH EVERYTHING IT PASSED. VS Cross.
+   *
+   * The one delivery in the table where a single projectile hits the same body
+   * twice on purpose. It costs no new machinery: `BulletFlag.Returning`
+   * reverses a bolt once at the midpoint of its own life, so the outbound and
+   * inbound halves are the same bolt on the same line, and the round trip is
+   * `2 * range / speed`.
+   *
+   * WHAT IT READS: `count` blades, `damage`, `speed`, `range` (half the round
+   * trip), `interval`, `bounces` and `pierce` — a boomerang that stopped at
+   * the first body would only ever return from a body's face, so `pierce` is
+   * high by construction on everything wearing this shape. `area`, `arc` and
+   * `linger` are unread: a blade has no blast, no fan and nothing to leave
+   * behind.
+   */
+  | 'boomerang'
+  /**
+   * FOUR FIXED WORLD AXES, AND THE AIM IS NOT AN INPUT. VS Phiera Der
+   * Tuphello, and VS Song of Mana for the vertical pair.
+   *
+   * The distinction from `arc` is the whole weapon and it is worth stating
+   * flatly: `fireArc` spreads `count` strokes evenly around the compass but
+   * centres them on `p.aim`, so the star rotates with the player. This one is
+   * welded to the world. It is the only thing in the roster that covers your
+   * back without you turning round, and the only one whose coverage the player
+   * cannot aim, improve or ruin.
+   *
+   * WHAT IT READS: `count` bolts PER AXIS, `damage`, `speed`, `range`,
+   * `interval`, `arc` (the jitter between the bolts on one axis, so a `count`
+   * above one is a narrow stream rather than a stack of identical bolts) and
+   * `pierce`. `area`, `linger` and `bounces` are unread.
+   */
+  | 'compass'
+  /**
+   * ZONES WHILE YOU MOVE, A STRIKE WHEN YOU STOP. VS Shadow Pinion, and VS
+   * Santa Water for the zones.
+   *
+   * THE CONDITION IS THE DELIVERY. Nothing else in the table reads the stick:
+   * FERMATA's charge does, but it is a rig RULE that scales an existing
+   * weapon, and `Swell` reads the music and the encirclement. This is one
+   * weapon with two behaviours and the player chooses between them by moving
+   * or not moving, continuously, which is the only decision in the game that
+   * is made with the left hand.
+   *
+   * WHAT IT READS: `interval` (the gap between drops while moving AND the
+   * strike's cooldown when stopped), `count` (pools per drop while moving,
+   * strikes per landing when stopped), `damage`, `area`, `linger` (how long a
+   * pool lies), `range` (how far a stopped strike reaches). `speed`, `arc`,
+   * `pierce` and `bounces` are unread — nothing here travels.
+   */
+  | 'wake'
+  /**
+   * IT ANSWERS WHEN YOU ARE HIT. VS Victory Sword.
+   *
+   * The only shape whose activation is not on a clock at all. It still folds a
+   * stat block and still has an `interval`, but the interval is a FLOOR on how
+   * often the answer may be given rather than a cadence — the trigger is
+   * `World.onPlayerHit`, so a run that is never touched never fires it and a
+   * run that is being swarmed fires it constantly. That is a weapon that is
+   * worth more the worse the run is going, which nothing else in the table is.
+   *
+   * WHAT IT READS: `count` answering strikes, `damage`, `area` (each answer's
+   * blast), `range` (how far an answer reaches for a body), `interval` (the
+   * floor). `speed`, `arc`, `pierce`, `bounces` and `linger` are unread.
+   */
+  | 'riposte'
+  /**
+   * EVERYTHING ON THE SCREEN, ON A LONG COOLDOWN. VS Pentagram.
+   *
+   * No aim, no travel, no target selection, no falloff: the hit lands on every
+   * live body inside `area` of the ship simultaneously, and `area` is set at
+   * roughly the visible field. It is the only weapon in the roster whose
+   * output does not depend on where anything is, which makes it the answer to
+   * being surrounded and worthless against one thing at the edge of the map —
+   * the exact inverse of `lance`.
+   *
+   * WHAT IT READS: `interval` (the cooldown, and it is long), `damage`,
+   * `area` (the reach, which is the whole screen), `count` (repeats of the
+   * pulse) and `linger` (how long the flash hangs). `speed`, `arc`, `pierce`,
+   * `bounces` and `range` are unread.
+   */
+  | 'erase'
+  /**
+   * A CHARGE THAT EATS A HIT. IT DEALS NOTHING, EVER. VS Laurel.
+   *
+   * The second no-damage draftable weapon (`lance` at zero damage is the
+   * other), and the reason both exist is `docs/plan-refactor-3.md` §0: VS's
+   * build space has SHAPE because Laurel and Clock Lancet are in it. A roster
+   * where every card is throughput is a roster where the only question is how
+   * much.
+   *
+   * `count` charges are held, refilled one at a time on `interval`, and spent
+   * by `Player.takeHit` before anything else — before the auto-bomb rescue and
+   * before the WARD powerup, because a charge that regenerates on its own is
+   * the cheapest thing the player is carrying. Spending one throws what hit
+   * you off and applies the weapon's properties to it, which is why a shape
+   * that deals no damage still carries a property honestly.
+   *
+   * WHAT IT READS: `count` (charges held), `interval` (seconds to refill one),
+   * `area` (the discharge's shove radius), `linger` (extra invulnerability the
+   * discharge grants). `damage` is deliberately NOT read and every ladder rung
+   * leaves it at zero; `speed`, `arc`, `pierce`, `bounces` and `range` are
+   * unread.
+   */
+  | 'guard'
   /* ---------------------------------------------------------------------- *
    * THE SIX SHAPES THAT ARE NOT "DAMAGE IS DEALT IN SHAPE X".
    *
@@ -920,6 +1083,42 @@ export type PropName = keyof typeof PROPERTIES;
  * replace one. AGENTS.md 3.
  */
 export const FUSION_ONLY_PROPERTIES: readonly PropName[] = ['vuln', 'rend', 'execute'];
+
+/**
+ * THE SIX NEW DELIVERIES, AND WHICH COUNTERS OBSERVE EACH ONE.
+ *
+ * The exact argument `PROPERTIES` makes one screen up, applied to the other
+ * axis. A property waits for a hit, a roll and a body that can carry it, and
+ * any of the three can be missing while everything type-checks — so
+ * `tools/propfire.mjs` exists. **A DELIVERY IS NO DIFFERENT AND WAS PREVIOUSLY
+ * UNMEASURED**: a boomerang that never returns still throws bolts, still deals
+ * its outbound damage and still passes `levelup`, `wiring`, `aimcheck` and
+ * `deadhunt-ranges`; a retaliator that never retaliates fires nothing and no
+ * gate in the suite can tell that from a run where the player was never hit.
+ * `bounces` sat in this file as a declared stat with no consumer for the whole
+ * life of the table for exactly this reason, and what let it is that nothing
+ * could observe whether a bolt had ever bounced.
+ *
+ * So each of the six has a `World.deliveryFires` counter and a
+ * `World.deliveryChances` denominator, and the two shapes with TWO behaviours
+ * have two of each — `wake` is zones while moving AND a strike when stopped,
+ * and half of it working would be a card that lies half the time.
+ *
+ * EXPORTED SO THE GATE HOLDS NO COPY, which is the `tools/contrast.mjs` lesson
+ * in AGENTS.md §3: the day a shape's counters move, a second list over in
+ * `tools/` would keep reporting the old ones green.
+ */
+export const DELIVERIES = {
+  boomerang: ['boomerang'],
+  compass: ['compass'],
+  wake: ['wake', 'wakestrike'],
+  riposte: ['riposte'],
+  erase: ['erase'],
+  guard: ['guard', 'guardrefill'],
+} as const satisfies Partial<Record<InstrumentShape, readonly string[]>>;
+
+/** Every delivery counter name, in table order. */
+export const DELIVERY_COUNTERS: readonly string[] = Object.values(DELIVERIES).flat();
 
 /** Every property name, in table order. */
 export const PROPERTY_NAMES = Object.keys(PROPERTIES) as PropName[];
@@ -1690,6 +1889,390 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     ],
   },
 
+  /* ==================================================================== *
+   * TEN MORE, AND THE OTHER HALF OF THE SOURCE MATERIAL.
+   *
+   * The twenty above are Ball x Pit: twenty composable PROPERTIES over seven
+   * shapes, which is the architecture `docs/plan-refactor-3.md` §9b asks for
+   * and it landed. What it did NOT spend is §9a's other paragraph — that
+   * Vampire Survivors' ~70 weapons contribute the DELIVERY vocabulary, and
+   * that almost none of them carries a status at all. Its roster is the mirror
+   * image of the twenty: all of its interest is in HOW the thing reaches you.
+   *
+   * So the twenty were strong on one axis and empty on the other, and these
+   * ten are taken one-to-one off that list rather than invented — the fourth
+   * roster, and the first one whose entries can each be pointed at a real
+   * weapon in a real game. Each row names the VS weapon it is.
+   *
+   * SIX OF THEM ADD A SHAPE AND FOUR DELIBERATELY DO NOT. See the long note
+   * above `InstrumentShape` for the test that decided which: a shape has to
+   * answer a question the seven cannot, and "another weapon that fires at the
+   * nearest thing" is not one. CAESURA is a `lance` with its damage set to
+   * zero, BACKBEAT a static `arc`, ALEATORY a `strike`, CLUSTER an `aura`.
+   *
+   * TWO OF THEM DEAL NO DAMAGE AT ALL, which is the point of including them.
+   * §0 of the same plan is explicit that VS's build space has SHAPE because
+   * Laurel and Clock Lancet are in it; a roster where every card is throughput
+   * is a roster whose only question is how much. DAMPER and CAESURA are those
+   * two, and they are the first draftable weapons in this game that do not
+   * deal damage.
+   *
+   * THE COST IS TEN MORE CARDS IN A FOUR-CARD OFFER and it is measured rather
+   * than asserted — `tools/offerpool.mjs` runs 30, 20 and 12 draftable arms
+   * inside one build. AGENTS.md §5 records a change reverted for costing 31%
+   * of a building player's fusions; the number for this one is in the commit.
+   * ==================================================================== */
+
+  /* --------------------------------------------------- boomerang (Cross) */
+  {
+    id: 'rondo',
+    label: 'RONDO',
+    shape: 'boomerang',
+    weight: 0.9,
+    blurb: '24 dmg x2, thrown and caught · it passes through everything on the way out and hits all of it again coming back.',
+    character: 'mechanical — a struck rim, answered by its own return',
+    /*
+     * VS Cross: "aims at the nearest enemy, has boomerang effect". `pierce: 99`
+     * is structural rather than generous — a blade consumed by the first body
+     * would return from that body's face and the second half of the weapon
+     * would not exist. `ghost` is carried for the same reason at the property
+     * level, so a fusion that inherits RONDO inherits the pass-through with it.
+     *
+     * `range` is HALF the round trip: the bolt reverses at the midpoint of its
+     * own life, so it travels `range` out and `range` back.
+     */
+    base: stats({ interval: 0.9, count: 2, damage: 24, speed: 780, range: 340, pierce: 99 }),
+    props: { ghost: 1, bleed: 3, bleedStack: 1 },
+    steps: [
+      {
+        note: '32 dmg x3, thrown 30% further · the return pass opens the same wound again — two bleed stacks per body per throw',
+        add: { count: 1 },
+        mul: { damage: 1.35, range: 1.3 },
+        prop: { ghost: 1, bleed: 4 },
+      },
+      {
+        note: '43 dmg x4, and the blades come off the walls · the line they return along is no longer the one they went out on',
+        add: { count: 1, bounces: 2 },
+        mul: { damage: 1.35 },
+        prop: { ghost: 1, bleed: 6, bleedStack: 2 },
+      },
+    ],
+  },
+  /* ------------------------------- compass (Phiera Der Tuphello / Song of Mana) */
+  {
+    id: 'quadrille',
+    label: 'QUADRILLE',
+    shape: 'compass',
+    weight: 0.9,
+    blurb: '7 dmg on each of four fixed compass lines, three times a second · every bolt splits once into a clone on its first hit.',
+    character: 'mechanical — four square strokes, always the same four',
+    /*
+     * VS Phiera Der Tuphello: "fires quickly in four fixed directions". The
+     * fixed part is the weapon — see `compass` in `InstrumentShape` — and the
+     * `split` property is what makes the four lines worth holding into the
+     * late game, because a fixed axis cannot be pointed at the thing that
+     * matters and has to pay off in volume instead.
+     */
+    base: stats({ interval: 0.3, count: 1, damage: 7, speed: 950, range: 520, arc: 0.06 }),
+    props: { split: 1 },
+    steps: [
+      {
+        note: '10 dmg, two bolts per axis — eight in the air at once, and where you are pointing still has nothing to do with it',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { split: 1 },
+      },
+      {
+        note: '14 dmg, three per axis, reaching 40% further · each bolt splits TWICE, so twelve lines leave and thirty-six arrive',
+        add: { count: 1 },
+        mul: { damage: 1.4, range: 1.4 },
+        prop: { split: 2 },
+      },
+    ],
+  },
+  /* ------------------------- wake (Shadow Pinion, and Santa Water's zones) */
+  {
+    id: 'ostinato',
+    label: 'OSTINATO',
+    shape: 'wake',
+    weight: 0.9,
+    blurb: '34 dmg pools dropped behind you twice a second while you move · stand still and it stops dropping and starts striking instead.',
+    character: 'eerie — a figure repeated under everything else',
+    /*
+     * VS Shadow Pinion: "damaging zones when moving, strikes when stopping",
+     * with Santa Water's random-placement zones folded into the moving half
+     * rather than given a weapon of their own. Two source entries, one card,
+     * because "drops pools" on its own is DETUNE with a different trigger and
+     * the trigger is the only thing here that is new.
+     */
+    base: stats({ interval: 0.5, count: 1, damage: 34, area: 96, linger: 2.4, range: 420 }),
+    props: { poison: 6, poisonStack: 1 },
+    steps: [
+      {
+        note: 'two pools a drop, lying 60% longer · and standing still now lands two strikes instead of one',
+        add: { count: 1 },
+        mul: { linger: 1.6 },
+        prop: { poison: 8 },
+      },
+      {
+        note: '46 dmg, three pools, 30% wider · 11/s a stack. A corridor you have already walked is one they cannot',
+        add: { count: 1 },
+        mul: { damage: 1.35, area: 1.3 },
+        prop: { poison: 11 },
+      },
+    ],
+  },
+  /* --------------------------------------------- riposte (Victory Sword) */
+  {
+    id: 'antiphon',
+    label: 'ANTIPHON',
+    shape: 'riposte',
+    weight: 0.85,
+    blurb: 'nothing at all until you are hit · then 60 dmg lands on 2 bodies at once, each shocking 180px for 30 more.',
+    character: 'aggressive — a call answered louder than it was made',
+    /*
+     * VS Victory Sword: "strikes at the nearest enemy, retaliates". The
+     * retaliation is the whole card and the strike-at-nearest half is dropped,
+     * because that half is `seek` and the roster has six of those. It is
+     * therefore worth MORE the worse the run is going, which nothing else in
+     * the table is — and worth nothing to a player who is not being touched,
+     * which is a real drawback rather than a balance number.
+     *
+     * `interval` is a FLOOR on how often the answer may be given, not a
+     * cadence. See `riposte` in `InstrumentShape`.
+     */
+    base: stats({ interval: 0.8, count: 2, damage: 60, area: 150, range: 520 }),
+    props: { quake: 30, quakeRadius: 180 },
+    steps: [
+      {
+        note: '84 dmg to 3 bodies, reaching 30% further · the answer is now worth more than the hit that bought it',
+        add: { count: 1 },
+        mul: { damage: 1.4, range: 1.3 },
+        prop: { quake: 44 },
+      },
+      {
+        note: '118 dmg to 4, each shocking 260px for 62 · the answer clears the bodies that landed the hit off you',
+        add: { count: 1 },
+        mul: { damage: 1.4, area: 1.35 },
+        prop: { quake: 62, quakeRadius: 260 },
+      },
+    ],
+  },
+  /* ----------------------------------------------- erase (Pentagram) */
+  {
+    id: 'coda',
+    label: 'CODA',
+    shape: 'erase',
+    weight: 0.8,
+    blurb: '150 dmg to every body on the screen at once, every 9s · a third of whatever survives is frozen where it stands.',
+    character: 'heavy — the last bar, and nothing after it',
+    /*
+     * VS Pentagram: "erases everything in sight". The screen clear, on the
+     * longest cooldown in the roster — and the only weapon whose output does
+     * not depend on where anything is, which makes it the answer to being
+     * surrounded and worthless against one thing at the edge of the map. That
+     * is the exact inverse of LANCE, which is why both can be in the same
+     * table.
+     */
+    base: stats({ interval: 9, count: 1, damage: 150, area: 620, linger: 0.5 }),
+    props: { freeze: 0.35 },
+    steps: [
+      {
+        note: '218 dmg, and the wait drops from 9s to 7s · half of what lives through it is frozen solid',
+        mul: { damage: 1.45, interval: 0.78 },
+        prop: { freeze: 0.5 },
+      },
+      {
+        note: '316 dmg TWICE in a row every 5.5s · seven in ten survivors are frozen, and the second pulse lands on them',
+        add: { count: 1 },
+        mul: { damage: 1.45, interval: 0.78 },
+        prop: { freeze: 0.7 },
+      },
+    ],
+  },
+  /* -------------------------------------- guard (Laurel) — NO DAMAGE */
+  {
+    id: 'damper',
+    label: 'DAMPER',
+    shape: 'guard',
+    weight: 0.8,
+    blurb: 'no damage, ever · 1 charge that eats a hit whole, throws what hit you clear and leaves it at half speed. One back every 14s.',
+    character: 'mournful — the soft pedal, everything pulled back',
+    /*
+     * VS Laurel: "shields from damage when active". THE FIRST DRAFTABLE WEAPON
+     * IN THIS GAME THAT DEALS NO DAMAGE, and `docs/plan-refactor-3.md` §0 is
+     * the argument for it: VS's build space has shape because Laurel and Clock
+     * Lancet are in it, and a roster where every card is throughput has only
+     * one question in it.
+     *
+     * `damage` is 0 at every rung and `fireGuard` does not read it. The
+     * property is not decoration either — a charge that breaks applies the
+     * weapon's `slow` to whatever broke it, which is a real effect a
+     * no-damage shape can honestly deliver, and it is what `propfire` measures
+     * this weapon by.
+     */
+    base: stats({ interval: 14, count: 1, damage: 0, area: 240, linger: 0.8 }),
+    props: { slow: 0.5 },
+    steps: [
+      {
+        note: 'two charges instead of one, and one comes back every 10s · what breaks a charge is left at 40% speed',
+        add: { count: 1 },
+        mul: { interval: 0.72 },
+        prop: { slow: 0.6 },
+      },
+      {
+        note: 'three charges, one back every 7s · breaking one now buys a second and a half of invulnerability on top of eating the hit',
+        add: { count: 1 },
+        mul: { interval: 0.72, linger: 1.9 },
+        prop: { slow: 0.7 },
+      },
+    ],
+  },
+  /* ------------------------------- lance at zero (Clock Lancet) — NO DAMAGE */
+  {
+    id: 'caesura',
+    label: 'CAESURA',
+    shape: 'lance',
+    weight: 0.8,
+    blurb: 'no damage, ever · a line held along your heading, and everything standing in it is frozen for as long as it stands there.',
+    character: 'shimmering — the double bar, and the silence at it',
+    /*
+     * VS Clock Lancet: "fires a line that freezes, deals NO damage". It is a
+     * `lance` and NOT a new shape, deliberately: the delivery is the held line
+     * SWELL already wears, and what is new is that the damage is zero. Saying
+     * that plainly is better than inventing a geometry to carry it.
+     *
+     * `fireLance` sets `dps = damage / interval`, so a zero here is a line
+     * with no hitbox at all — and `updateEffects` still runs `applyStatus` for
+     * an effect carrying a property set, on the `PROP.fieldTick` cadence, so
+     * the hold lands and renews exactly as FERMATA's snare does.
+     */
+    base: stats({ interval: 1.1, count: 1, damage: 0, area: 16, linger: 0.5, range: 480 }),
+    props: { hold: 0.6 },
+    steps: [
+      {
+        note: 'two parallel lines, 40% longer, held four times as steadily · twice the field is simply closed',
+        add: { count: 1 },
+        mul: { range: 1.4, linger: 4 },
+        prop: { hold: 0.6 },
+      },
+      {
+        note: 'three lines, longer again · the hold now outlasts the beam by a second, so a body walks out of it and stays stopped',
+        add: { count: 1 },
+        mul: { range: 1.25 },
+        prop: { hold: 1 },
+      },
+    ],
+  },
+  /* ------------------------------------------ static arc (Whip) */
+  {
+    id: 'backbeat',
+    label: 'BACKBEAT',
+    shape: 'arc',
+    weight: 0.9,
+    blurb: '18 dmg in a flat stroke either side of you, through everything · a third of what it catches misses half its attacks for 3s.',
+    character: 'aggressive — the crack on two and four',
+    /*
+     * VS Whip: "attacks horizontally, passes through". A STATIC `arc` already
+     * IS this — `fireArc`'s non-travelling branch spreads `count` strokes
+     * evenly around the compass from `p.aim`, so a `count` of two is one
+     * stroke ahead and one behind, which is the whip exactly. No shape was
+     * added and the reason is written above `InstrumentShape`.
+     *
+     * It carries `blind` because dadbaad's own closing note says GLARE's blind
+     * "is nearly pointless in this build" for want of blinded bodies rather
+     * than for want of a working property — a second, much faster carrier is
+     * the honest fix for that, and a whip-crack that dazzles is what the
+     * property is for.
+     */
+    base: stats({ interval: 0.45, count: 2, damage: 18, arc: 1.15, range: 300 }),
+    props: { blind: 0.35 },
+    steps: [
+      {
+        note: '25 dmg, reaching 35% further, and four strokes rather than two — the diagonals as well as front and back',
+        add: { count: 2 },
+        mul: { damage: 1.4, range: 1.35, arc: 1.2 },
+        prop: { blind: 0.5 },
+      },
+      {
+        note: '35 dmg in six strokes, all round · everything the whip touches is dazzled, with no roll at all',
+        add: { count: 2 },
+        mul: { damage: 1.4, range: 1.2 },
+        prop: { blind: 1 },
+      },
+    ],
+  },
+  /* ------------------------------------- strike, unaimed (Lightning Ring) */
+  {
+    id: 'aleatory',
+    label: 'ALEATORY',
+    shape: 'strike',
+    weight: 0.9,
+    blurb: '22 dmg on 3 bodies at random anywhere on screen, each arcing on to 2 more for 10 · nothing travels and nothing is aimed.',
+    character: 'shimmering — chance music, struck where it falls',
+    /*
+     * VS Lightning Ring: "strikes at random enemies". A `strike` already lands
+     * on a random live body without travelling — see `fireStrike` — so the
+     * shape is right and what makes this a different weapon from TIMPANI is
+     * the stat block: TIMPANI is one enormous 200px blast near you on a slow
+     * clock, this is many small pinpricks across the whole field on a fast
+     * one. Its 900px `range` is roughly the visible screen.
+     */
+    base: stats({ interval: 0.75, count: 3, damage: 22, area: 26, range: 900 }),
+    props: { chain: 2, chainDamage: 10 },
+    steps: [
+      {
+        note: '31 dmg on 4 at once, each arcing on to 3 for 15 — nothing on the screen is out of its reach',
+        add: { count: 1 },
+        mul: { damage: 1.4 },
+        prop: { chain: 3, chainDamage: 15 },
+      },
+      {
+        note: '43 dmg on 6, arcing to 4 for 22, and it lands nearly twice as often',
+        add: { count: 2 },
+        mul: { damage: 1.4, interval: 0.55 },
+        prop: { chain: 4, chainDamage: 22 },
+      },
+    ],
+  },
+  /* --------------------------------------------- close aura (Garlic) */
+  {
+    id: 'cluster',
+    label: 'CLUSTER',
+    shape: 'aura',
+    weight: 0.9,
+    blurb: '16 dmg in a 130px ring twice a second, thrown hard off you · 5% of what it catches turns on its own side for 5s.',
+    character: 'eerie — every note at once, close and low',
+    /*
+     * VS Garlic: "damages nearby enemies, reduces resistance to knockback".
+     * An `aura` and not a new shape — GLARE is one too, and the difference is
+     * the stat block and the SHOVE. `fireAura` reads `s.speed` as the ring's
+     * expansion speed, and the shove is 0.8 of that, so a ring set to 980
+     * throws bodies twice as hard as GLARE's default 430. That is the honest
+     * reading of "reduces resistance to knockback" in a game whose only enemy
+     * attack is contact: the weapon's job is to keep them off you.
+     *
+     * GLARE is a hard flash on the half-bar at 210px; this is a small, fast,
+     * unlocked cloud you stand inside. They read as different weapons on
+     * screen, which was the test.
+     */
+    base: stats({ interval: 0.55, count: 1, damage: 16, area: 130, speed: 980, linger: 0.25 }),
+    props: { charm: 0.05 },
+    steps: [
+      {
+        note: '23 dmg in a 175px ring that hangs before it fades · 9% of what it catches changes sides',
+        mul: { damage: 1.4, area: 1.35, linger: 2.2 },
+        prop: { charm: 0.09 },
+      },
+      {
+        note: '32 dmg, 235px, two rings a pulse · 14% turn, and at this width you are pushing a hole through the crowd',
+        add: { count: 1 },
+        mul: { damage: 1.4, area: 1.35 },
+        prop: { charm: 0.14 },
+      },
+    ],
+  },
+
   /* ------------------------------------------------------------------ *
    * THE RESULTS — twenty-one evolutions and two unions.
    *
@@ -1985,6 +2568,141 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     props: { charm: 0.22 },
     steps: [],
   },
+
+  /* ------------------------------------------------------------------ *
+   * TEN ENDINGS FOR THE TEN VAMPIRE SURVIVORS DELIVERIES.
+   *
+   * `tools/levelup.mjs` fails any instrument with no evolution — "a dead end
+   * to commit to" — so ten bases means ten more recipes, and every one of them
+   * is free in offer terms because `progression.ts` skips `def.fused` when it
+   * builds the draft pool (AGENTS.md §5).
+   *
+   * EVERY ONE KEEPS ITS BASE'S SHAPE, and that is the rule rather than a
+   * coincidence. The shape IS what the base was added for; an ending that
+   * turned the boomerang back into a seek bolt would delete the delivery this
+   * whole pass exists to add, and the player would have spent three levels and
+   * a catalyst to be handed a bolt.
+   * ------------------------------------------------------------------ */
+  {
+    id: 'refrain',
+    label: 'REFRAIN',
+    shape: 'boomerang',
+    fused: true,
+    weight: 0,
+    blurb: '62 dmg x5 out and back · 3 bleed stacks on each pass, and every body it passes arcs on to 2 more for 24.',
+    character: 'mechanical — the theme returning, and returning',
+    base: stats({ interval: 0.55, count: 5, damage: 62, speed: 900, range: 620, pierce: 99, bounces: 3 }),
+    props: { ghost: 1, bleed: 9, bleedStack: 3, chain: 2, chainDamage: 24 },
+    steps: [],
+  },
+  {
+    id: 'reel',
+    label: 'REEL',
+    shape: 'compass',
+    fused: true,
+    weight: 0,
+    blurb: '16 dmg, three bolts on each of four fixed axes, six times a second · each splits three times and scatters 3 more when it lands.',
+    character: 'mechanical — a reel, four square and relentless',
+    base: stats({ interval: 0.16, count: 3, damage: 16, speed: 1100, range: 760, arc: 0.1 }),
+    props: { split: 3, burst: 3 },
+    steps: [],
+  },
+  {
+    id: 'groundbass',
+    label: 'GROUND BASS',
+    shape: 'wake',
+    fused: true,
+    weight: 0,
+    blurb: '78 dmg pools three at a time, lying for 4.5s · 2 poison stacks and a 40% drag on anything wading through your wake.',
+    character: 'eerie — the same bass, under everything, forever',
+    base: stats({ interval: 0.34, count: 3, damage: 78, area: 150, linger: 4.5, range: 620 }),
+    props: { poison: 18, poisonStack: 2, slow: 0.4 },
+    steps: [],
+  },
+  {
+    id: 'responsory',
+    label: 'RESPONSORY',
+    shape: 'riposte',
+    fused: true,
+    weight: 0,
+    blurb: '210 dmg to 6 bodies the moment you are touched · each shocks 380px for 130, and everything caught takes 12% more per stack.',
+    character: 'aggressive — the choir answering the cantor, twice as loud',
+    base: stats({ interval: 0.4, count: 6, damage: 210, area: 320, range: 760 }),
+    props: { quake: 130, quakeRadius: 380, vuln: 0.12, vulnStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'finale',
+    label: 'FINALE',
+    shape: 'erase',
+    fused: true,
+    weight: 0,
+    blurb: '520 dmg to everything on the screen, three times over, every 4.2s · every survivor is frozen solid and takes 15% more per stack.',
+    character: 'heavy — the last page, all of it at once',
+    base: stats({ interval: 4.2, count: 3, damage: 520, area: 900, linger: 0.9 }),
+    props: { freeze: 1, vuln: 0.15, vulnStack: 2 },
+    steps: [],
+  },
+  {
+    id: 'unacorda',
+    label: 'UNA CORDA',
+    shape: 'guard',
+    fused: true,
+    weight: 0,
+    blurb: 'no damage · five charges, one back every 4s · breaking one freezes everything within 460px and buys 2.6s of invulnerability.',
+    character: 'mournful — one string, and the room gone quiet',
+    base: stats({ interval: 4, count: 5, damage: 0, area: 460, linger: 2.6 }),
+    props: { slow: 0.85, freeze: 1, hold: 1.4 },
+    steps: [],
+  },
+  {
+    id: 'grandpause',
+    label: 'GRAND PAUSE',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: 'no damage · five held lines reaching 900px, and everything standing in any of them is frozen for two seconds past leaving it.',
+    character: 'shimmering — G.P., and nobody plays',
+    base: stats({ interval: 0.9, count: 5, damage: 0, area: 26, linger: 3, range: 900 }),
+    props: { hold: 2, slow: 0.8 },
+    steps: [],
+  },
+  {
+    id: 'flam',
+    label: 'FLAM',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '52 dmg in six strokes all round, three times a second · everything caught is blinded and takes 3 bleed stacks.',
+    character: 'aggressive — two sticks, a hair apart',
+    base: stats({ interval: 0.3, count: 6, damage: 52, arc: 2.4, range: 560 }),
+    props: { blind: 1, bleed: 7, bleedStack: 3 },
+    steps: [],
+  },
+  {
+    id: 'stochastic',
+    label: 'STOCHASTIC',
+    shape: 'strike',
+    fused: true,
+    weight: 0,
+    blurb: '62 dmg on 8 bodies at random anywhere, twice a second · each arcs on to 5 more for 40, and half of what it touches is blinded.',
+    character: 'shimmering — a cloud of events, none of them chosen',
+    base: stats({ interval: 0.4, count: 8, damage: 62, area: 40, range: 1100 }),
+    props: { chain: 5, chainDamage: 40, blind: 0.5 },
+    steps: [],
+  },
+  {
+    id: 'tamtam',
+    label: 'TAM-TAM',
+    shape: 'aura',
+    fused: true,
+    weight: 0,
+    blurb: '58 dmg in a 330px ring three times a second, thrown hard · 30% of what it catches changes sides and the rest is slowed 70%.',
+    character: 'heavy — one enormous gong, still ringing',
+    base: stats({ interval: 0.35, count: 2, damage: 58, area: 330, speed: 1100, linger: 0.5 }),
+    props: { charm: 0.3, slow: 0.7, quake: 60, quakeRadius: 220 },
+    steps: [],
+  },
   {
     id: 'requiem',
     label: 'REQUIEM',
@@ -2027,6 +2745,25 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
    * DAMAGE IS 1.6x THE BETTER PARENT (1.5x for the tier-two chains), for the
    * same reason: `synthesiseDuet` rescales to 1.5x, so this clears the
    * fallback by a margin at every pair.
+   *
+   * ------------------------------------------------------------------
+   * SEVEN `burn` FIELDS WENT 14 -> 23, AND THE REASON IS A GATE THAT WAS
+   * ALREADY RED BEFORE THIS PASS TOUCHED ANYTHING.
+   *
+   * `a4a553a` raised EMBER's ladder to `burn 12/17/23` — a density fix, and a
+   * good one — and `tools/fusefire.mjs` was not re-run. Seven rows below were
+   * authored against the old `burn: 14` ceiling, so from that commit onward
+   * BOMB, FROSTFIRE, INFERNO, MAGMA, BRIMSTONE, SUN and FIREWORKS each carried
+   * a WEAKER burn than the generic duet they shadow: spending two maxed
+   * instruments on an authored arrangement bought a worse card than not
+   * having one, and `readyDuets` refuses the pair once a recipe exists, so
+   * the player could not even see the better option.
+   *
+   * That is precisely the defect 31c8756 wrote this gate to catch — its own
+   * commit message records "ALL 63 ROWS WERE WEAKER THAN THEIR OWN FALLBACK"
+   * as the first thing it found. It found it again. Verified red at `fb3db55`
+   * in a detached worktree before this edit, with these seven named and no
+   * others.
    * ------------------------------------------------------------------ */
   {
     id: 'detonate',
@@ -2037,7 +2774,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '170 dmg x2, weighted 2.75x by the iron · every hit blows a 250px ring for 95 and leaves 2 burn stacks.',
     character: 'heavy — a bass drum with a fuse in it',
     base: stats({ interval: 1, count: 2, speed: 820, range: 700, damage: 170 }),
-    props: { burn: 14, burnStack: 2, quake: 95, quakeRadius: 250, heavy: 2.75 },
+    props: { burn: 23, burnStack: 2, quake: 95, quakeRadius: 250, heavy: 2.75 },
     steps: [],
   },
   {
@@ -2049,7 +2786,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '37 dmg x3 · frostburn: every hit stacks +10% damage taken, to five, and it still burns and freezes.',
     character: 'shimmering — struck glass over a live coal',
     base: stats({ interval: 0.3, count: 3, speed: 1000, range: 620, damage: 37 }),
-    props: { burn: 14, burnStack: 2, freeze: 0.14, vuln: 0.1, vulnStack: 1 },
+    props: { burn: 23, burnStack: 2, freeze: 0.14, vuln: 0.1, vulnStack: 1 },
     steps: [],
   },
   {
@@ -2061,7 +2798,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '171 dmg in a 330px ring around you, twice a second · everything in it burns at 14/s a stack and is slowed 60%.',
     character: 'aggressive — a wall of fire, roaring',
     base: stats({ interval: 0.45, count: 1, area: 330, linger: 0.5, damage: 171 }),
-    props: { burn: 14, burnStack: 2, slow: 0.6 },
+    props: { burn: 23, burnStack: 2, slow: 0.6 },
     steps: [],
   },
   {
@@ -2073,7 +2810,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '212 dmg per gout, three of them, lying where they fall for 4s · anything wading takes 2 burn stacks, 14/s each.',
     character: 'heavy — lava, dropped in gouts',
     base: stats({ interval: 1.3, count: 3, area: 150, linger: 4, damage: 212 }),
-    props: { burn: 14, burnStack: 2, quake: 96, quakeRadius: 330 },
+    props: { burn: 23, burnStack: 2, quake: 96, quakeRadius: 330 },
     steps: [],
   },
   {
@@ -2085,7 +2822,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '176 dmg in a 290px ring · everything caught takes BOTH burn and poison stacks, 14/s and 12/s a stack.',
     character: 'eerie — sulphur, hissing',
     base: stats({ interval: 0.5, count: 1, area: 290, linger: 0.45, damage: 176 }),
-    props: { burn: 14, burnStack: 2, poison: 12, poisonStack: 2, erode: 0.25, erodeFloor: 0.6 },
+    props: { burn: 23, burnStack: 2, poison: 12, poisonStack: 2, erode: 0.25, erodeFloor: 0.6 },
     steps: [],
   },
   {
@@ -2097,7 +2834,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '2134 dmg where it is dropped, and it hangs for 6s · everything inside 520px of it is blinded and burning.',
     character: 'shimmering — one unbearable sustained chord',
     base: stats({ interval: 2.6, count: 1, area: 520, linger: 6, damage: 2134 }),
-    props: { burn: 14, burnStack: 2, blind: 1 },
+    props: { burn: 23, burnStack: 2, blind: 1 },
     steps: [],
   },
   {
@@ -2109,7 +2846,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '76 dmg x4 lobbed in a spread · wherever one lands 6 more go out from it, and each sets 2 burn stacks.',
     character: 'shimmering — rockets, and then the report',
     base: stats({ interval: 0.9, count: 4, arc: 1.4, speed: 900, range: 600, damage: 76 }),
-    props: { burn: 14, burnStack: 2, burst: 6 },
+    props: { burn: 23, burnStack: 2, burst: 6 },
     steps: [],
   },
   {
@@ -2685,7 +3422,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '425 dmg x2, weighted by the iron · a 330px blast for 140, and 2 radiation stacks: +12% damage taken each.',
     character: 'heavy — the low end of the world falling out',
     base: stats({ interval: 1, count: 2, speed: 800, range: 720, damage: 425 }),
-    props: { burn: 14, burnStack: 2, poison: 10, poisonStack: 1, quake: 140, quakeRadius: 330, heavy: 2.75, vuln: 0.12, vulnStack: 2 },
+    props: { burn: 23, burnStack: 2, poison: 10, poisonStack: 1, quake: 140, quakeRadius: 330, heavy: 2.75, vuln: 0.12, vulnStack: 2 },
     steps: [],
   },
   {
@@ -2697,7 +3434,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '340 dmg x3 shells landing ON things · each blows 300px for 130 and HOLDS everything left in the crater.',
     character: 'heavy — a fuse, and then the one',
     base: stats({ interval: 1.2, count: 3, area: 160, range: 900, damage: 340 }),
-    props: { burn: 14, burnStack: 2, quake: 130, quakeRadius: 300, hold: 1.2 },
+    props: { burn: 23, burnStack: 2, quake: 130, quakeRadius: 300, hold: 1.2 },
     steps: [],
   },
   {
@@ -2745,7 +3482,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     blurb: '1230 dmg x2, tripled by the dark · 30% of what they touch is simply gone. Then the weapon goes quiet.',
     character: 'eerie — a single note that swallows the bar',
     base: stats({ interval: 1.2, count: 2, speed: 900, range: 800, damage: 1230 }),
-    props: { burn: 14, burnStack: 2, blind: 1, dark: 3.6, darkCooldown: 1.8, execute: 0.3 },
+    props: { burn: 23, burnStack: 2, blind: 1, dark: 3.6, darkCooldown: 1.8, execute: 0.3 },
     steps: [],
   },
   {
@@ -2782,6 +3519,112 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     character: 'eerie — the tritone, held',
     base: stats({ interval: 0.55, count: 3, speed: 950, range: 700, damage: 460 }),
     props: { charm: 0.45, leech: 0.12, vuln: 0.15, vulnStack: 2 },
+    steps: [],
+  },
+
+  /* ------------------------------------------------------------------ *
+   * SEVEN AUTHORED PAIRS FOR THE NEW DELIVERIES — a handful, not sixty.
+   *
+   * `C(30,2)` is 435 pairs and `synthesiseDuet` already covers every one of
+   * them, so nothing is a dead end and the roster WIDTH is what this pass
+   * buys. Sixty more recipes would be a second pass wearing this one's
+   * clothes. These seven are the pairs where a new delivery makes an obvious
+   * result, plus one that is structural.
+   *
+   * THE STRUCTURAL ONE IS LULL. DAMPER x CAESURA is the only pair in the whole
+   * table where BOTH parents deal no damage, so its generic duet deals none
+   * either — `tools/fusefire.mjs`' FALLBACK section fails a pair that "deals
+   * no damage", and it is right to. Authoring the pair is the answer, and the
+   * result is the honest one: two defences make a bigger defence.
+   *
+   * THE NUMBERS ARE NOT GUESSED. Each row's property set is
+   * `mergeProps(parentA@max, parentB@max)` plus an authored delta, and each
+   * row's nominal dps clears the dps of the generic duet it shadows — both of
+   * which `fusefire` asserts directly, and both of which every one of the
+   * original sixty-three failed before that gate was written.
+   * ------------------------------------------------------------------ */
+  {
+    id: 'firewheel',
+    label: 'FIREWHEEL',
+    shape: 'boomerang',
+    fused: true,
+    weight: 0,
+    blurb: '121 dmg x3 out and back · every body it passes takes a 200px 60-dmg blast and 2 burn stacks, on BOTH passes.',
+    character: 'aggressive — a burning hoop, thrown flat',
+    base: stats({ interval: 0.7, count: 3, damage: 121, speed: 900, range: 520, pierce: 99 }),
+    props: { burn: 23, burnStack: 2, bleed: 6, bleedStack: 2, ghost: 1, quake: 60, quakeRadius: 200 },
+    steps: [],
+  },
+  {
+    id: 'stasis',
+    label: 'STASIS',
+    shape: 'lance',
+    fused: true,
+    weight: 0,
+    blurb: '42 dmg/s in three held lines · everything standing in one is frozen AND takes 12% more per stack from everything else you own.',
+    character: 'shimmering — one chord, and the clock stopped',
+    base: stats({ interval: 0.9, count: 3, damage: 42, area: 22, linger: 2, range: 700 }),
+    props: { hold: 1.2, vuln: 0.12, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'starburst',
+    label: 'STARBURST',
+    shape: 'compass',
+    fused: true,
+    weight: 0,
+    blurb: '32 dmg, three bolts on each of four fixed axes · each splits twice, scatters 6 more, and arcs on to 3 for 26.',
+    character: 'shimmering — a rocket, and everything it throws',
+    base: stats({ interval: 0.28, count: 3, damage: 32, speed: 1000, range: 700 }),
+    props: { split: 2, burst: 6, chain: 3, chainDamage: 26 },
+    steps: [],
+  },
+  {
+    id: 'lull',
+    label: 'LULL',
+    shape: 'guard',
+    fused: true,
+    weight: 0,
+    blurb: 'no damage, ever · three charges that each eat a hit, and breaking one freezes every body within 380px where it stands.',
+    character: 'mournful — the bar where nothing happens',
+    base: stats({ interval: 5, count: 3, damage: 0, area: 380, linger: 2.4 }),
+    props: { slow: 0.7, hold: 1, freeze: 1 },
+    steps: [],
+  },
+  {
+    id: 'thunderclap',
+    label: 'THUNDERCLAP',
+    shape: 'erase',
+    fused: true,
+    weight: 0,
+    blurb: '1700 dmg to every body on the screen, twice, every 2.2s · what survives is frozen and takes 14% more per stack from everything.',
+    character: 'heavy — one strike, and the whole room in it',
+    base: stats({ interval: 2.2, count: 2, damage: 1700, area: 820, linger: 0.6 }),
+    props: { freeze: 0.7, chain: 4, chainDamage: 22, vuln: 0.14, vulnStack: 1 },
+    steps: [],
+  },
+  {
+    id: 'miasma',
+    label: 'MIASMA',
+    shape: 'wake',
+    fused: true,
+    weight: 0,
+    blurb: '90 dmg pools three at a time wherever you walk · poison, 14% of them change sides, and every touch takes 4% of what is LEFT.',
+    character: 'eerie — a cloud that stays where it was left',
+    base: stats({ interval: 0.4, count: 3, damage: 90, area: 170, linger: 3.5, range: 520 }),
+    props: { poison: 11, poisonStack: 1, charm: 0.14, rend: 0.04 },
+    steps: [],
+  },
+  {
+    id: 'ruff',
+    label: 'RUFF',
+    shape: 'arc',
+    fused: true,
+    weight: 0,
+    blurb: '42 dmg x8, three times a second, coming off the walls faster every time · one hit in twelve simply ends what it touched.',
+    character: 'aggressive — a roll of strokes, none of them separable',
+    base: stats({ interval: 0.3, count: 8, damage: 42, arc: 1.6, speed: 900, range: 620, bounces: 3 }),
+    props: { blind: 1, accel: 0.45, execute: 0.08 },
     steps: [],
   },
 ];
@@ -3394,6 +4237,24 @@ export const FUSIONS: readonly FusionDef[] = [
   { kind: 'evolution', base: 'accelerando', catalyst: 'rapid', result: 'fugue', line: 'the subject is answered, and answered again' },
   { kind: 'evolution', base: 'charm', catalyst: 'homing', result: 'consort', line: 'the turncoats form a consort' },
 
+  /*
+   * TEN MORE ENDINGS, ONE PER NEW DELIVERY. `levelup.mjs` fails a base with no
+   * evolution, so this block is the size of the roster addition rather than a
+   * taste decision. Every rig item was already catalysing at least one base
+   * (`levelup` asserts that too), so these ten only DEEPEN the existing
+   * double-duty AGENTS.md §5 permits — no thirteenth passive.
+   */
+  { kind: 'evolution', base: 'rondo', catalyst: 'spread', result: 'refrain', line: 'the theme comes back, and back' },
+  { kind: 'evolution', base: 'quadrille', catalyst: 'rapid', result: 'reel', line: 'the four lines stop pausing between figures' },
+  { kind: 'evolution', base: 'ostinato', catalyst: 'magnet', result: 'groundbass', line: 'the figure sinks into the floor and stays there' },
+  { kind: 'evolution', base: 'antiphon', catalyst: 'compressor', result: 'responsory', line: 'the answer comes back with the whole choir behind it' },
+  { kind: 'evolution', base: 'coda', catalyst: 'reverb', result: 'finale', line: 'the last bar takes the room with it' },
+  { kind: 'evolution', base: 'damper', catalyst: 'fermata', result: 'unacorda', line: 'the pedal goes down and stays down' },
+  { kind: 'evolution', base: 'caesura', catalyst: 'timewarp', result: 'grandpause', line: 'the break becomes the piece' },
+  { kind: 'evolution', base: 'backbeat', catalyst: 'capo', result: 'flam', line: 'one stroke becomes two, a hair apart' },
+  { kind: 'evolution', base: 'aleatory', catalyst: 'laser', result: 'stochastic', line: 'chance stops being occasional' },
+  { kind: 'evolution', base: 'cluster', catalyst: 'resonance', result: 'tamtam', line: 'the cloud finds the room and will not stop' },
+
   { kind: 'union', base: 'chorale', catalyst: 'cathedral', result: 'requiem', line: 'the choir and the room become one' },
   { kind: 'union', base: 'harmonics', catalyst: 'crossstrung', result: 'stringsection', line: 'the section takes the whole line' },
 
@@ -3463,6 +4324,19 @@ export const FUSIONS: readonly FusionDef[] = [
   { kind: 'lattice', base: 'beam', catalyst: 'cutter', result: 'xray', line: 'four crossed cuts, and everything they touch takes 24% more from everything else you own' },
   { kind: 'lattice', base: 'sforzando', catalyst: 'assassin', result: 'sniper', line: 'one shot down the whole line: 12% of what it touches is finished where it stands' },
   { kind: 'lattice', base: 'incubus', catalyst: 'succubus', result: 'diabolus', line: 'nearly half of what it touches changes sides, and the rest of it is condemned' },
+
+  /*
+   * SEVEN FOR THE NEW DELIVERIES. See the block above these results in
+   * `INSTRUMENTS` for why seven rather than sixty, and for why LULL is the one
+   * that had to be written rather than chosen.
+   */
+  { kind: 'lattice', base: 'rondo', catalyst: 'ember', result: 'firewheel', line: 'a burning hoop thrown flat: it sets a 200px ring alight at every body it passes, on the way out AND on the way back' },
+  { kind: 'lattice', base: 'caesura', catalyst: 'blackhole', result: 'stasis', line: 'the line stops being a courtesy: three held beams, everything in them frozen and 12% softer per stack' },
+  { kind: 'lattice', base: 'quadrille', catalyst: 'harp', result: 'starburst', line: 'four fixed lines that split, scatter and arc — twelve bolts leave and the field fills up' },
+  { kind: 'lattice', base: 'damper', catalyst: 'caesura', result: 'lull', line: 'three charges, and breaking one freezes every body within 380px where it stood' },
+  { kind: 'lattice', base: 'aleatory', catalyst: 'coda', result: 'thunderclap', line: 'the whole screen at once, twice, every 2.2s — and everything left standing takes 14% more per stack' },
+  { kind: 'lattice', base: 'cluster', catalyst: 'ostinato', result: 'miasma', line: 'the cloud stops following you and stays where you left it — and every touch takes 4% of whatever is left' },
+  { kind: 'lattice', base: 'backbeat', catalyst: 'accelerando', result: 'ruff', line: 'eight strokes off the walls, faster every time, and one hit in twelve simply ends what it touched' },
 ];
 
 /* ------------------------------------------------------------------------ *

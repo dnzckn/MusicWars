@@ -56,6 +56,27 @@ const W = await import(`${R}game/weapons.ts`);
  */
 const ADDED = ['ember', 'phantom', 'anvil', 'gravel', 'nocturne', 'siphon', 'accelerando', 'charm'];
 
+/*
+ * The TEN ids the Vampire Survivors delivery pass added, on top of those eight.
+ *
+ * THREE ARMS NOW, NOT TWO, and the reason is that the question changed. The
+ * original two answered "what did 12 -> 20 cost". This pass is 20 -> 30, which
+ * is a bigger step again and a much bigger one than the change AGENTS.md §5
+ * records as reverted for costing 31% of a building player's fusions — so the
+ * comparison that matters is 30 against 20, with 12 kept as the historical
+ * anchor rather than dropped. All three arms run inside one build against the
+ * same generator, the same weights and the same seeds; the only variable is
+ * how many instruments may be dealt.
+ *
+ * Same caveat as before, sharpened: the 20-arm still has the new SHAPES, the
+ * new recipes and the new fusion results, so it is not the game as it shipped
+ * yesterday. It isolates POOL SIZE and nothing else.
+ */
+const ADDED_VS = [
+  'rondo', 'quadrille', 'ostinato', 'antiphon', 'coda',
+  'damper', 'caesura', 'backbeat', 'aleatory', 'cluster',
+];
+
 const RUNS = Number(process.env.RUNS ?? process.argv[2] ?? 400);
 /*
  * The offer ladder, driven off the real generator rather than off a real run.
@@ -77,7 +98,8 @@ const draftable = W.INSTRUMENTS.filter((d) => !d.fused && d.weight > 0);
 const rig = W.RIG.filter((d) => d.weight > 0);
 console.log(`  draftable instruments ${draftable.length}   rig items ${rig.length}   offer size ${P.OFFER_SIZE}`);
 console.log(`  stand slots ${P.STAND_SLOTS}   rig slots ${P.RIG_SLOTS}   authored recipes ${W.FUSIONS.length}`);
-console.log(`  of the ${draftable.length}, ${ADDED.length} are ids this pass added: ${ADDED.join(', ')}\n`);
+console.log(`  of the ${draftable.length}, ${ADDED_VS.length} are the VS delivery pass: ${ADDED_VS.join(', ')}`);
+console.log(`  and ${ADDED.length} were the property pass before it: ${ADDED.join(', ')}\n`);
 
 if (draftable.length === 0) fail('nothing is draftable — the pool is empty');
 
@@ -149,9 +171,13 @@ function drifter() {
 }
 
 const arms = [];
+const n30 = draftable.length;
+const n20 = n30 - ADDED_VS.length;
+const n12 = n20 - ADDED.length;
 for (const [label, blocked] of [
-  [`${draftable.length} draftable (as shipped)`, []],
-  [`${draftable.length - ADDED.length} draftable (the eight new ids held out)`, ADDED],
+  [`${n30} draftable (as shipped)`, []],
+  [`${n20} draftable (the ten VS deliveries held out)`, ADDED_VS],
+  [`${n12} draftable (both passes held out)`, [...ADDED_VS, ...ADDED]],
 ]) {
   for (const [pname, policy] of [['builder', builder], ['drifter', drifter]]) {
     arms.push(arm(`${label} / ${pname}`, blocked, policy));
@@ -191,22 +217,42 @@ console.log(`\n  'wait' is the mean number of offers before ${WATCH.toUpperCase(
  * unacceptable, so 25% is the line here.
  */
 {
-  const wide = arms.find((a) => a.label.includes('as shipped') && a.label.includes('builder'));
-  const narrow = arms.find((a) => a.label.includes('held out') && a.label.includes('builder'));
-  const a = wide.fusionsTaken / RUNS;
-  const b = narrow.fusionsTaken / RUNS;
-  const drop = b > 0 ? (b - a) / b : 0;
+  const builderAt = (n) => {
+    const a = arms.find((x) => x.label.startsWith(`${n} draftable`) && x.label.endsWith('builder'));
+    return a ? a.fusionsTaken / RUNS : 0;
+  };
+  const a30 = builderAt(n30);
+  const a20 = builderAt(n20);
+  const a12 = builderAt(n12);
   console.log(
-    `\n  designed fusions per run, builder: ${a.toFixed(2)} at ${draftable.length} draftable ` +
-      `against ${b.toFixed(2)} at ${draftable.length - ADDED.length} — ` +
-      `${drop >= 0 ? 'down' : 'up'} ${Math.abs(drop * 100).toFixed(1)}%`,
+    `\n  designed fusions per run, builder: ${a30.toFixed(2)} at ${n30} draftable, ` +
+      `${a20.toFixed(2)} at ${n20}, ${a12.toFixed(2)} at ${n12}`,
   );
-  if (b === 0) fail('the narrow arm landed no fusions at all, so there is nothing to compare against');
-  else if (drop > 0.25) {
-    fail(
-      `widening the pool to ${draftable.length} costs ${(drop * 100).toFixed(1)}% of a building player's fusions —` +
-        ' AGENTS.md §5 reverted a change that cost 31%',
+  /*
+   * TWO STEPS ARE ASSERTED, NOT ONE. The 12 -> 20 step is the historical
+   * anchor and must not have rotted; the 20 -> 30 step is what this pass did
+   * and is the one that could still be reverted. Reporting only the outer
+   * 12 -> 30 span would let a regression in one half be paid for by the other,
+   * which is exactly the kind of averaging AGENTS.md §6 warns about.
+   */
+  for (const [label, wide, narrow, wideN, narrowN] of [
+    ['20 -> 30 (this pass)', a30, a20, n30, n20],
+    ['12 -> 20 (the property pass)', a20, a12, n20, n12],
+    ['12 -> 30 (both)', a30, a12, n30, n12],
+  ]) {
+    const drop = narrow > 0 ? (narrow - wide) / narrow : 0;
+    console.log(
+      `    ${label.padEnd(30)} ${narrow.toFixed(2)} -> ${wide.toFixed(2)}   ` +
+        `${drop >= 0 ? 'down' : 'up'} ${Math.abs(drop * 100).toFixed(1)}%`,
     );
+    if (narrow === 0) {
+      fail(`${label}: the narrow arm landed no fusions at all, so there is nothing to compare against`);
+    } else if (drop > 0.25) {
+      fail(
+        `widening the pool ${narrowN} -> ${wideN} costs ${(drop * 100).toFixed(1)}% of a building player's fusions —` +
+          ' AGENTS.md §5 reverted a change that cost 31%',
+      );
+    }
   }
 }
 

@@ -83,17 +83,34 @@ export const BulletFlag = {
    * what makes `count` a retinue size instead of a volley.
    */
   Summon: 1 << 6,
-  /*
-   * BIT 7 IS FREE. It was `Dragged` — an enemy bullet RITARDANDO had already
-   * slowed, marked so the multiply could not compound every frame it spent
-   * inside the bubble. RITARDANDO's bubble reaches bodies only now (see
-   * `World.dragDeepens`), and a body's slow is a `scale` recomputed from
-   * scratch every step, so there is nothing to latch.
+  /**
+   * BIT 7, WHICH WAS FREE AND IS NOW THE BOOMERANG. Vampire Survivors' Cross:
+   * "aims at the nearest enemy, has boomerang effect".
    *
-   * `BulletPool.flags` is a `Uint8Array`. A ninth flag would need it widened to
-   * `Uint16Array` — cheap, but not something to discover by watching a flag
-   * silently truncate to zero. There are four spare bits now.
+   * IT REVERSES ONCE, AT THE MIDPOINT OF ITS OWN LIFE, and the whole trick is
+   * that this needs no new column. At spawn `age` is 0 and `ttl` is T; `age`
+   * counts up while `ttl` counts down, so `age >= ttl` is true for the first
+   * time at exactly T/2. The bolt therefore turns around at the halfway mark
+   * and retraces its own outbound path, arriving back where it was thrown
+   * from as its lifetime runs out. The flag is CLEARED on the turn, which is
+   * the latch — without it the test stays true for the whole second half and
+   * the bolt would flip every step and stand still.
+   *
+   * DECELERATION WAS THE OBVIOUS IMPLEMENTATION AND IT IS WRONG. A negative
+   * `accel` with `minSpeed = -speed` also returns a bolt along its own line
+   * and costs nothing at all — but the speed passes through ZERO at the apex,
+   * and a piercing bolt parked on a body deals its damage on every one of the
+   * 120 steps a second it spends there. An instant reversal has no dwell: the
+   * bolt is travelling at full speed on both passes and stationary on none.
+   *
+   * COST is one AND against a `Uint8Array` per bullet per step, on the same
+   * line the `DespawnOffscreen` test already occupies.
+   *
+   * `BulletPool.flags` is a `Uint8Array` and this is the eighth and last bit.
+   * A ninth would need it widened to `Uint16Array` — cheap, but not something
+   * to discover by watching a flag silently truncate to zero.
    */
+  Returning: 1 << 7,
 } as const;
 
 export interface BulletSpawn {
@@ -218,6 +235,19 @@ export class BulletPool {
    * falsifiable from a headless harness rather than from watching the screen.
    */
   bounced = 0;
+  /**
+   * Monotonic count of bolts that reached the turn of their arc and came back.
+   *
+   * The same argument as `bounced`, made once already in this file and worth
+   * making again: `bounces` was a declared stat with no consumer for the whole
+   * life of the instrument table precisely because nothing could observe
+   * whether a bolt had ever bounced. A boomerang that never returns passes
+   * every existing gate silently — it deals its outbound damage, it type
+   * checks, its card renders — so the return needs a counter or it will rot
+   * exactly as `bounces` did. `tools/propfire.mjs`' DELIVERIES section reads
+   * this against `spawned` as its denominator.
+   */
+  returned = 0;
   /**
    * Monotonic count of reflections that ACCELERATED the bolt, for the same
    * reason `bounced` exists. `tools/propfire.mjs` reads it as the fire count
@@ -439,6 +469,33 @@ export class BulletPool {
             }
           }
         }
+      }
+
+      /*
+       * THE BOOMERANG TURNS HERE, before the age/ttl update rather than after,
+       * so the crossing is tested against the values this step was integrated
+       * with. See `BulletFlag.Returning`: `age >= ttl` is first true at the
+       * midpoint of the bolt's life, the flag is cleared so it can only happen
+       * once, and the reversal is instant so there is no zero-speed apex for a
+       * piercing bolt to sit on.
+       */
+      if (flags[i] & BulletFlag.Returning && age[i] >= ttl[i]) {
+        flags[i] &= ~BulletFlag.Returning;
+        angle[i] += Math.PI;
+        /*
+         * AND IT VISIBLY THICKENS ON THE WAY BACK, which is the same argument
+         * `accelBySrc` makes four lines down with the sign the other way: a
+         * blade on its return pass and one on its outbound pass are otherwise
+         * pixel-identical, so "it comes back through everything" would be a
+         * counter in a log rather than something the player can watch happen.
+         * Screenshotted at wave 16 before this line, the field was a spray of
+         * identical bolts.
+         *
+         * The hitbox grows with the picture rather than behind it, so what the
+         * player is looking at is what they are hitting with.
+         */
+        this.radius[i] = Math.min(12, this.radius[i] * 1.45);
+        this.returned++;
       }
 
       const t = (ttl[i] -= dt);

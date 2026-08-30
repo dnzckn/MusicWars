@@ -1308,3 +1308,209 @@ than as the same pair with a new silhouette. Every gate was green through two
 rejected rosters. What is measurable is that none of the sixty-three is the
 merge of its parents, that each one's distinctive property fires in a real run,
 and that all 190 pairs produce something.
+
+---
+
+## Ten deliveries from Vampire Survivors — the other half of the source material
+
+The owner: *"items could be further enhanced, more new items are interesting"*,
+and earlier, on the reference games, *"shouldnt be that hard to get a lot of
+these in, no need to stop at 16 either if you can imagine a very rich item
+space"*.
+
+`docs/plan-refactor-3.md` §9a says the two source games contribute DIFFERENT
+halves. Ball x Pit's is the property substrate — twenty composable properties
+over seven shapes — and that landed in `dadbaad`. **Vampire Survivors' is the
+delivery vocabulary**, and it had not been spent at all: "attacks horizontally,
+fires in the faced direction, boomerangs, orbits, generates zones, bounces
+around, strikes at random, erases everything in sight, freezes in a line,
+shields, fires in four fixed directions, zones while moving and strikes when
+stopping". Almost none of its weapons carries a status. Its roster is the exact
+mirror image of the twenty, which is why the twenty were strong on one axis and
+empty on the other.
+
+Ten more bases, taken one-to-one off that list, each row in `weapons.ts` naming
+the VS weapon it is: RONDO (Cross), QUADRILLE (Phiera Der Tuphello), OSTINATO
+(Shadow Pinion + Santa Water), ANTIPHON (Victory Sword), CODA (Pentagram),
+DAMPER (Laurel), CAESURA (Clock Lancet), BACKBEAT (Whip), ALEATORY (Lightning
+Ring), CLUSTER (Garlic).
+
+### Six shapes added, four deliberately not
+
+`InstrumentShape`'s standing rule is **"DO NOT ADD A GEOMETRY TO MAKE A WEAPON
+DIFFERENT"**, written after fourteen geometries produced "all one idea". It
+stands, and it is why these six and not the other eleven. The rule refuses a
+geometry added to make a weapon different — a second fan, a third cone, a star
+of lances that is a lance with a `count`. Four of the six below do not answer
+"where does the hitbox appear" at all; they answer WHEN, and no shape in the
+table could:
+
+| shape | the question it answers that the seven cannot |
+|---|---|
+| `wake` | the condition is the player MOVING — nothing else reads the stick |
+| `riposte` | the trigger is the player BEING HIT — everything else is a clock |
+| `erase` | no aim, no travel, no target selection, the whole screen at once |
+| `guard` | deals nothing, ever, and its activation is a charge that waits |
+| `boomerang` | out and BACK, hitting on both passes. `seek` cannot |
+| `compass` | four FIXED WORLD AXES. `arc`'s star rotates with the player |
+
+And four added no shape, because the honest thing was to say so: CAESURA is a
+`lance` with its damage set to zero, BACKBEAT a static `arc` (which is already
+a stroke either side of you), ALEATORY a `strike` (which already lands on a
+random body without travelling), CLUSTER an `aura`.
+
+**Two deal no damage at all** — DAMPER and CAESURA, the first draftable weapons
+in this game that do not. §0 of the plan is the argument: VS's build space has
+SHAPE because Laurel and Clock Lancet are in it, and a roster where every card
+is throughput has only one question in it.
+
+### The offer pool: 20 to 30, and the answer is "nothing moved"
+
+`tools/offerpool.mjs` runs three arms now — 30, 20 and 12 draftable — inside
+one build, because the question changed. **Designed fusions per run, builder,
+at 1,500 runs per arm: 3.55 at 12, 3.57 at 20, 3.58 at 30.** Up 0.4% for this
+pass and up 0.9% across both. At 400 runs the same measurement read +2.0%,
+which is the AGENTS.md §6 lesson intact: the smaller sample was noise.
+
+Ten more cards cost nothing because fusion results are excluded from the draft
+pool outright, and because ten more bases means ten more evolutions and seven
+more authored pairs — 103 recipes against 86 — all of them free.
+
+### The delivery axis had no gate, and now has one
+
+`tools/propfire.mjs` gained a DELIVERIES section, on the argument that a
+delivery has exactly the failure mode a property has and nothing in the suite
+could see it: **a boomerang that never returns still throws bolts, still deals
+its outbound damage, and passes `levelup`, `wiring`, `aimcheck`, `mirror` and
+`deadhunt-ranges` in full**. `InstrumentStats.bounces` was a declared stat with
+no consumer for the life of the table for exactly this reason.
+
+Eight counters over six shapes, each with a denominator, measured at 180s per
+delivery:
+
+```
+boomerang   776 /  780   99.5%   blades thrown / blades that turned
+compass    7068 / 7068  100.0%   bolts fired / bolts that left on a world axis
+wake        611 /  858   71.2%   pools asked for / pools laid (the wells cap)
+wakestrike   38 /   66   57.6%   stopped activations / strikes that landed
+riposte      56 /   56  100.0%   hits taken holding it / answers given
+erase       954 /  954  100.0%   bodies on screen / bodies the pulse reached
+guard        15 /   15  100.0%   hits arriving with a charge / charges spent
+guardrefill  17 /   25   68.0%   refill ticks / charges actually added
+```
+
+Ten planted defects, each seen red with its own message and undone by an
+inverse edit; the log is at the foot of `propfire.mjs`.
+
+**AND ONE OF THE TEN CAUGHT A VACUOUS ASSERTION IN THE SUBJECT ITSELF.** The
+compass check counted a bolt as axis-aligned by comparing its angle against the
+local `axis` variable the angle had just been computed from — so planting
+`const axis = p.aim + k * (Math.PI / 2)` shifted both sides together, the
+weapon silently became an aimed one, and the gate that exists to say so read
+100%. It is written against the world now (snap the fired angle to the nearest
+90 degrees, measure the residual) and re-planting takes it to 41.3%.
+
+### Two gates were found red AT HEAD, in a detached worktree, before any edit
+
+Neither was on the known-red list.
+
+**`fusefire`, ten rows weaker than their own fallback.** `a4a553a` raised
+EMBER's ladder to `burn 12/17/23` — a good density fix — and `fusefire` was not
+re-run. BOMB, FROSTFIRE, INFERNO, MAGMA, BRIMSTONE, SUN, FIREWORKS, FALLOUT,
+TIMEBOMB and EVENT HORIZON were authored against the old `burn: 14`, so from
+that commit onward each carried a WEAKER burn than the generic duet it shadows:
+spending two maxed instruments on an authored arrangement bought a worse card
+than not having one, and `readyDuets` refuses a pair once a recipe exists, so
+the player could not even see the better option. That is precisely the defect
+31c8756 wrote the gate to catch — "ALL 63 ROWS WERE WEAKER THAN THEIR OWN
+FALLBACK" was the first thing it found. It found it again. All ten raised to 23.
+
+**`combine`, -3%.** "Committing to a fusion build reaches wave 13.9 against
+14.3 for a player who ignores fusions". Still red here at **-1%**, and its
+LOCKED rate fell 26% to 12% because eight rig items now catalyse three bases
+each rather than two.
+
+The one residual `fusefire` failure — `eventhorizon: 'execute' had 9 chances
+and fired 0 times` — is a **sample-size artefact in the gate's own harness**,
+not a defect: identical at HEAD, and green in BOTH trees at `SECS=180`, where
+it reads 11 of 44. At 30% per roll, nine chances misses cleanly 4% of the time.
+
+### Worst case, in objects — measured in a real browser at wave 16
+
+`tools/_look10.mjs`, peak live objects over 9s per weapon, each alone at level
+3. Nothing is near a cap and `BulletPool.overflow` is 0 throughout.
+
+```
+rondo       8 bullets            quadrille  30 bullets (the most of the ten)
+ostinato   14 wells (AT its cap) antiphon   13 novas
+coda        7 novas              damper      0 objects of its own
+caesura     3 effects            backbeat    6 effects
+aleatory   24 effects, 11 novas  cluster    11 novas
+```
+
+`MAX_PLAYER_BULLETS` is 700, `MAX_EFFECTS` 96, `MAX_SUMMONS` 12. The two
+predicted to be expensive were the screen clear and the four-directions weapon;
+the screen clear is the cheapest thing in the roster — it allocates one ring
+and applies its damage in place — and the four-directions weapon is the most
+expensive, at 30 of 700. **`ostinato` sits ON its cap**: three pools every 0.5s
+lying for 3.8s asks for 23 and `pushWell` allows 14, which the gate reports
+honestly as 71.2% rather than as a healthy activation count.
+
+### Two things that were invisible and were fixed by looking
+
+DAMPER's charges had no renderer at all. Every other weapon announces itself by
+putting something in the world; a `guard` deals no damage, spawns no object and
+its entire output is a hit that did not happen — so a charged shield and a
+spent one were the same picture. There is a segmented arc around the hull now,
+and it took two passes: at 21px the segments closed into a solid ring on top of
+the ship's own outline, and in amber they read as three more of the amber
+enemies. 27px, a 0.4 gap, and near-white.
+
+RONDO's return was pixel-identical to its outbound pass — the same argument
+ACCELERANDO's growth is made on. A blade thickens 1.45x on the turn, hitbox
+included, so "it comes back through everything it passed" is something the
+player watches rather than a counter in a log.
+
+### Gates
+
+Green: tsc, vite build, levelup, mirror (13,754 workbench rows, 0 wrong),
+discovery (103 arrangements, all obtainable), wiring, aimcheck, offerchurn,
+rulefire, beatlock, propfire (20 properties + 8 delivery counters), offerpool,
+deadhunt-ranges (**0 of 60** dead level steps), effectsdraw, levelupdraw,
+`arena` HOLDS. `fusefire` green at `SECS=180`; at its default 45s, one
+pre-existing sample-size failure.
+
+**THE COMPARATIVE NUMBERS WERE RE-RUN AT HEAD RATHER THAN READ OFF THE SECTION
+ABOVE**, which is AGENTS.md §6's first rule, and it changes one of the four
+answers. A detached worktree at `fb3db55` with the same node_modules, same
+seeds, same machine:
+
+| gate | HEAD `fb3db55` | this tree |
+|---|---|---|
+| `builds` divergence | **1.33** | **1.34** |
+| `builds` damage spread | 3.5x | 3.5x |
+| `arena` encirclement p90 | 0.51 | **0.54** |
+| `arena` kills/min (card-0) | 317.3 | **572.6** |
+| `openers` weakest share | 88% | **94%** (floor 70) |
+
+Divergence moved by nothing — 1.33 to 1.34 — NOT from the 0.88 recorded two
+sections up, which is a stale figure from an earlier tree. The kills/min jump
+is the loosest of the five: `card-0` takes whatever is first, so widening the
+pool changes what it takes, and three runs is a small sample.
+Red at HEAD and left alone: leadfreeze, wellcheck, registercheck, counterpoint,
+attackfloor, and `combine` (improved -3% to -1%).
+
+### What no gate here can say
+
+Whether the ten are INTERESTING. Every gate was green through three rejected
+rosters. What is measurable is that six of them are deliveries no shape in the
+table could express, that each one's distinctive behaviour fires with a printed
+denominator, and that thirty draftable cards cost the fusion rate nothing.
+
+What was SEEN, in a real browser at wave 16: CAESURA is the most legible of the
+ten by a distance — three long pale lines with frozen bodies stopped in them.
+DAMPER, RONDO, OSTINATO and CODA each read as their own thing. **ALEATORY is
+the weakest**: it is a `strike`, TIMPANI is a `strike`, and on a still frame
+they are rings appearing over there. QUADRILLE's four axes are unmistakable in
+motion and nearly invisible in a photograph, which is a real risk for the one
+weapon whose whole identity is where the bolts went.

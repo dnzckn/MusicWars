@@ -138,7 +138,7 @@ console.log(`  ${'instrument'.padEnd(24)} ${''.padEnd(8)}  [ bar phase 0 -> 1 ] 
  * by continuing to check a lock the table had dropped.
  */
 /*
- * THREE SHAPES HAVE NO ACTIVATION OF THEIR OWN and are excluded here rather
+ * FOUR SHAPES HAVE NO ACTIVATION OF THEIR OWN and are excluded here rather
  * than allowed to report an empty histogram. UNISON and COUNTERPOINT modify
  * other instruments and RITARDANDO is a continuous bubble; all three are
  * resolved in `fireInstruments`' first pass and never reach the dispatcher, so
@@ -146,10 +146,25 @@ console.log(`  ${'instrument'.padEnd(24)} ${''.padEnd(8)}  [ bar phase 0 -> 1 ] 
  * are checked in the fire-count block below instead, which is the assertion
  * that actually applies to them.
  *
+ * `riposte` JOINED THEM, AND THIS IS A DESIGN CHANGE RATHER THAN A RELAXATION,
+ * so it is spelled out — the two look identical in a diff (AGENTS.md §3).
+ * ANTIPHON's trigger is `World.onPlayerHit`, not a clock or a grid line: it is
+ * resolved in the same first pass as the three above and filtered out of
+ * `voices` for the same reason. Asking where its activations fall in the bar
+ * is not a question with a wrong answer, it is a question with no subject,
+ * and this file reported it three times as "never fired, nothing was proved"
+ * — which was true and about the wrong thing.
+ *
+ * THE ASSERTION IT LOSES IS REPLACED RATHER THAN DROPPED, and by a stronger
+ * one: `tools/propfire.mjs`' DELIVERIES section holds ANTIPHON to
+ * `deliveryFires.riposte` against `deliveryChances.riposte` — answers given
+ * against hits taken while holding it — which is a tighter question than "did
+ * it fire at all" and one no other gate can ask.
+ *
  * A shape set and not an id list, so the day one of them moves ids this
  * exclusion moves with it.
  */
-const NO_ACTIVATION = new Set(['unison', 'counterpoint', 'drag']);
+const NO_ACTIVATION = new Set(['unison', 'counterpoint', 'drag', 'riposte']);
 const LOCKED = [];
 const FREE = [];
 for (const d of W.INSTRUMENTS) {

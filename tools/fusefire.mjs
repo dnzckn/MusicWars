@@ -63,7 +63,26 @@ const DT = 1 / 120;
  * The denominator is printed either way, so "the run never asked" and "the
  * property is broken" stay distinguishable — and both are failures.
  */
-const SECS = Number(process.env.SECS ?? process.argv[2] ?? 45);
+/*
+ * 120s per fusion, raised from 45 after a FALSE FAILURE.
+ *
+ * `eventhorizon` reported "execute had 9 chances and fired 0 times — the fusion
+ * is its parents' merge in practice" and the fusion was fine. execute is a 30%
+ * roll, so 0 of 9 has a 4% chance of happening for no reason at all; at 120s
+ * the same build gets 17 chances and fires twice.
+ *
+ * Its chances are thin because two things conspire. `dark` destroys the bolt on
+ * hit and silences the weapon for 1.8s, and execute requires `e.alive` — but
+ * the density pass cut mean enemy hp from 168 to 42 while EVENTHORIZON still
+ * deals 1230, so almost every target is already dead when the roll comes up.
+ * That is a real property of the build and worth knowing; it is not a defect,
+ * and the gate was reporting it as one.
+ *
+ * A check whose sample is too small to distinguish "broken" from "unlucky" is
+ * as bad as one that examines nothing. The run length is set by the RAREST
+ * delta in the table, and that is now a 30% roll behind a 1.8s silence.
+ */
+const SECS = Number(process.env.SECS ?? process.argv[2] ?? 120);
 const SEED = 0x51f2;
 
 let failures = 0;

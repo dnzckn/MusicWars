@@ -60,6 +60,7 @@ import {
   noProps,
   noRules,
   PROP,
+  DELIVERY_COUNTERS,
   PROPERTY_NAMES,
   type BeatLock,
   type InstrumentDef,
@@ -287,6 +288,13 @@ export const Status = {
 function propCounters(): Record<PropName, number> {
   const out = {} as Record<PropName, number>;
   for (const k of PROPERTY_NAMES) out[k] = 0;
+  return out;
+}
+
+/** The same, for the delivery axis. Keys come from `weapons.ts`, not from here. */
+function deliveryCounters(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of DELIVERY_COUNTERS) out[k] = 0;
   return out;
 }
 
@@ -741,6 +749,40 @@ export class World {
    */
   blindedAttacks = 0;
 
+  /**
+   * DID EACH NEW DELIVERY ACTUALLY DO THE THING ITS CARD DESCRIBES?
+   *
+   * `propFires`/`propChances` answer that question for the PROPERTY axis. The
+   * DELIVERY axis had no answer at all, and `weapons.ts`' `DELIVERIES` note
+   * spells out why that matters: a boomerang that never returns still throws
+   * bolts, deals its outbound damage and passes every gate in the suite; a
+   * retaliator that never retaliates is indistinguishable from a run in which
+   * the player was never hit. `InstrumentStats.bounces` sat here as a declared
+   * stat with no consumer for the life of the table for exactly this reason.
+   *
+   * Keys are `weapons.ts`' `DELIVERY_COUNTERS`, so `tools/propfire.mjs` can
+   * assert the two line up rather than keeping its own list. Two shapes have
+   * TWO behaviours and therefore two counters each — half of `wake` working is
+   * a card that lies half the time.
+   *
+   *   boomerang    thrown / RETURNED — the fire count is read off
+   *                `BulletPool.returned`, exactly as `accel` is read off
+   *                `BulletPool.accelerated`, because the reversal happens
+   *                inside the pool's own integration
+   *   compass      bolts attempted / bolts that left on a WORLD AXIS. Not
+   *                "bolts fired": the claim is that the aim is not an input,
+   *                so the assertion is about the ANGLE
+   *   wake         activations while moving / pools laid
+   *   wakestrike   activations while stopped / strikes landed
+   *   riposte      hits taken while holding it / answers given
+   *   erase        pulses / bodies actually reached by one
+   *   guard        hits arriving with a charge in hand / charges spent
+   *   guardrefill  refill ticks due / charges actually added
+   */
+  readonly deliveryFires = deliveryCounters();
+  /** The DENOMINATOR for each of the above. See `deliveryFires`. */
+  readonly deliveryChances = deliveryCounters();
+
   readonly propMoments = {
     /** Discrete hits landed on an enemy by a bolt or a strike. */
     hit: 0,
@@ -765,6 +807,21 @@ export class World {
 
   /** Distance travelled since UP-TEMPO last dropped a ring, in px. */
   private trailSince = 0;
+
+  /* ---------------------------------------------------------------------- *
+   * THE TWO SHAPES WHOSE ACTIVATION IS NOT AN ACTIVATION.
+   *
+   * Both are resolved in `fireInstruments`' first pass and re-written every
+   * step, exactly as the drag bubble and the unison lock are — which is what
+   * makes a fusion that consumes the weapon stop it on the same frame rather
+   * than leaving a ghost armed for the rest of the run.
+   * ---------------------------------------------------------------------- */
+  /** ANTIPHON, if held: the block `onPlayerHit` answers with. */
+  private riposte: { id: string; s: InstrumentStats; slot: number } | null = null;
+  /** Game time of the last answer, so `interval` is a floor rather than a cadence. */
+  private lastRiposte = -999;
+  /** DAMPER, if held: the block a broken charge discharges with. */
+  private guardVoice: { id: string; s: InstrumentStats; slot: number } | null = null;
 
   /**
    * Seconds the ship has been genuinely stationary, for FERMATA's charge.
@@ -1517,6 +1574,13 @@ export class World {
       this.propTicks[k] = 0;
       this.propDamage[k] = 0;
     }
+    for (const k of DELIVERY_COUNTERS) {
+      this.deliveryFires[k] = 0;
+      this.deliveryChances[k] = 0;
+    }
+    this.riposte = null;
+    this.guardVoice = null;
+    this.lastRiposte = -999;
     // In place, never reassigned: see the field's comment, and the
     // `everypowerup` entry in tools/README.md for the bug that taught us.
     prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter);
@@ -4350,7 +4414,29 @@ export class World {
      * for events that are actually rare. `big` keeps its 0.06 for exactly that
      * reason.
      */
-    this.camera.shake(big ? 0.55 : 0.28);
+    /*
+     * 0.09 for an ordinary kill, down from 0.28, because the KILL RATE TRIPLED
+     * and shake is an accumulator.
+     *
+     * Reported from play: "wayy too much screen shake". It is arithmetic rather
+     * than taste. `Camera.update` decays trauma linearly at 1.6/s and draws
+     * amplitude as `trauma^2 * 22`. The density pass took kills/min from 134 to
+     * 400 -- about 6.7 a second -- so at 0.28 a kill the input was 1.88/s
+     * against a 1.6/s drain. Input exceeding drain means trauma does not settle
+     * anywhere: it PEGS AT 1.0 and stays there, which is a permanent 22px
+     * shake for the whole run.
+     *
+     * 0.09 puts the input at 0.60/s, comfortably under the drain, so trauma
+     * settles low and spikes only when several things die at once -- which is
+     * what the channel is for. `big` stays 0.55: a conductor dying should still
+     * move the screen, and those are rare enough not to accumulate.
+     *
+     * The general lesson, worth keeping: an accumulator tuned against one event
+     * rate is silently wrong at another, and nothing here fails when it breaks.
+     * `trauma^2` makes it worse rather than better, because the quadratic that
+     * keeps small hits subtle also makes a pegged value maximally violent.
+     */
+    this.camera.shake(big ? 0.55 : 0.09);
     if (big) this.camera.freeze(0.06);
     this.shock(e.x, e.y, big ? 260 : 130, big ? 2600 : 900);
 
@@ -5628,6 +5714,21 @@ export class World {
           continue;
         }
       }
+      /*
+       * THE GUARD'S DENOMINATOR IS COUNTED BEFORE THE HIT IS TAKEN, and only
+       * when a charge is actually in hand.
+       *
+       * "Hits that arrived while a charge was available" is the only honest
+       * denominator for "charges spent": counting every contact would fold the
+       * refill rate into the rate, and a DAMPER that never refilled would then
+       * read as a shield with a low hit rate rather than as one that is
+       * broken. `player.invuln` is not tested here because `takeHit` returns
+       * false for an invulnerable player and the counter would then be
+       * measuring the invulnerability window.
+       */
+      if (this.player.guard > 0 && this.player.invuln <= 0 && !this.player.dead) {
+        this.deliveryChances.guard++;
+      }
       if (!this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK)) break;
       if (this.player.lastHitAutoBombed) {
         this.autoBombRescue();
@@ -5669,6 +5770,25 @@ export class World {
   private onPlayerHit(): void {
     this.waveDamage++;
     this.ruleChances.hitNova++;
+    /*
+     * THE TWO WEAPONS WHOSE TRIGGER IS THIS MOMENT.
+     *
+     * First, because both are about the hit that just landed: the guard's
+     * discharge should throw off the body that broke the charge before the
+     * ordinary shove moves it, and ANTIPHON's answer should land on the pack
+     * that was on top of you rather than on wherever it has been pushed to.
+     *
+     * A GUARDED HIT STILL REACHES HERE. `takeHit` returns true when a charge
+     * eats the hit, exactly as it does for the WARD powerup, so the shake, the
+     * shove and the answer all still happen — the player loses no health and
+     * everything else about being hit is unchanged, which is what a shield
+     * should feel like.
+     */
+    if (this.player.lastHitGuarded) {
+      this.deliveryFires.guard++;
+      this.dischargeGuard();
+    }
+    this.fireRiposte();
     this.camera.shake(0.85);
     this.camera.freeze(0.09);
     this.camera.strike(0, 0.65);
@@ -6584,13 +6704,34 @@ export class World {
     this.dragDepth = 0;
     this.dragSelf = 1;
     this.dragDeepens = false;
+    /*
+     * ANTIPHON IS RESOLVED HERE AND NEVER FIRED FROM THE LOOP BELOW.
+     *
+     * Its trigger is `onPlayerHit`, not a clock — see `riposte` in
+     * `InstrumentShape` — so it joins `drag`, `unison` and `counterpoint` as a
+     * voice the second pass filters out. What it leaves behind is the folded
+     * stat block and its property slot, so the answer is delivered with the
+     * stats and properties the weapon has RIGHT NOW rather than with whatever
+     * was current when the last card was taken.
+     *
+     * Cleared to null every step before the fold, so putting the weapon into a
+     * fusion stops the answers on the same frame instead of leaving a ghost
+     * retaliator armed for the rest of the run.
+     */
+    this.riposte = null;
+    this.guardVoice = null;
     for (const v of band) {
+      if (v.def.shape === 'guard') {
+        this.guardVoice = { id: v.id, s: v.s, slot: this.propSlot(v.id, v.level) };
+      }
       if (v.def.shape === 'unison') {
         unison = { lock: beatLockOf(v.id, v.level) ?? 'bar', s: v.s };
       } else if (v.def.shape === 'counterpoint') {
         counterpoint = v.s;
       } else if (v.def.shape === 'drag') {
         this.fireDrag(v.id, v.s, dt);
+      } else if (v.def.shape === 'riposte') {
+        this.riposte = { id: v.id, s: v.s, slot: this.propSlot(v.id, v.level) };
       }
     }
     /*
@@ -6605,7 +6746,11 @@ export class World {
      * COUNTERPOINT considers to be first.
      */
     const voices = band.filter(
-      (v) => v.def.shape !== 'unison' && v.def.shape !== 'counterpoint' && v.def.shape !== 'drag',
+      (v) =>
+        v.def.shape !== 'unison' &&
+        v.def.shape !== 'counterpoint' &&
+        v.def.shape !== 'drag' &&
+        v.def.shape !== 'riposte',
     );
 
     /*
@@ -6648,6 +6793,20 @@ export class World {
         // made-up number dressed as a derivation. CHORALE's satellites hold
         // station (`speed: 0`); DRONE-lineage ones sweep.
         this.player.podSpin = s.speed > 0 ? 1.6 : 0;
+      }
+
+      /*
+       * THE GUARD'S CEILING IS WRITTEN EVERY STEP, exactly as the pods' count
+       * is and for the same reason: how many charges there are is a
+       * progression fact and `Player` does not know what is held. The REFILL
+       * is on the instrument's own timer below, so `interval` is genuinely
+       * "seconds to get one back" and a rig item that speeds the band up
+       * speeds the shield up with it.
+       */
+      if (def.shape === 'guard') {
+        this.player.guardMax = Math.max(1, Math.round(s.count));
+        this.player.guardBonusInvuln = Math.max(0, s.linger);
+        if (this.player.guard > this.player.guardMax) this.player.guard = this.player.guardMax;
       }
 
       /*
@@ -6843,6 +7002,17 @@ export class World {
     // the last set circling forever after a fusion consumed them.
     if (!voices.some((v) => v.def.shape === 'orbit')) this.player.podCount = 0;
     /*
+     * And the same for the guard: a fusion that consumes DAMPER takes the
+     * charges with it. Without this the shield would survive its own weapon
+     * for the rest of the run, which is the `podCount` bug one line up wearing
+     * a different name.
+     */
+    if (!voices.some((v) => v.def.shape === 'guard')) {
+      this.player.guardMax = 0;
+      this.player.guard = 0;
+      this.player.guardBonusInvuln = 0;
+    }
+    /*
      * And the same for lances, for the same reason and with sharper teeth.
      *
      * A lance is refreshed rather than re-pushed, so it outlives its own
@@ -6910,6 +7080,21 @@ export class World {
       case 'field':
         this.fireField(id, s);
         break;
+      case 'boomerang':
+        this.fireBoomerang(s);
+        break;
+      case 'compass':
+        this.fireCompass(s);
+        break;
+      case 'wake':
+        this.fireWake(id, s);
+        break;
+      case 'erase':
+        this.fireErase(id, s);
+        break;
+      case 'guard':
+        this.fireGuard(s);
+        break;
       case 'rest':
         this.fireRest(id, s);
         break;
@@ -6929,6 +7114,13 @@ export class World {
       case 'drag':
       case 'counterpoint':
       case 'unison':
+      /*
+       * `riposte` joins them: its trigger is `onPlayerHit`, not a clock, so it
+       * is resolved in the same first pass and filtered out of `voices`. Named
+       * here rather than defaulted for the reason the three above it are — the
+       * day a shape is added the compiler should name the omission.
+       */
+      case 'riposte':
         break;
     }
   }
@@ -7643,6 +7835,22 @@ export class World {
   private fireAura(id: string, s: InstrumentStats): void {
     const p = this.player;
     const rings = Math.max(1, Math.round(s.count));
+    /*
+     * `speed` IS THE RING'S EXPANSION RATE, AND THEREFORE ITS SHOVE.
+     *
+     * It was hardcoded at 430 and `speed` was a stat this shape ignored. VS
+     * Garlic — "damages nearby enemies, reduces resistance to knockback" —
+     * needs the shove to be a dial, and in a game whose only enemy attack is
+     * contact, "harder to keep near you" IS the weapon. `updateNova` already
+     * shoves at `0.8 * speed`, so one stat now drives both how fast the ring
+     * reads and how far it throws.
+     *
+     * 430 IS KEPT AS THE DEFAULT so GLARE, CATHEDRAL, INFERNO and every other
+     * aura that sets no `speed` behave exactly as they did — this is a stat
+     * becoming live, not a rebalance. CLUSTER sets 980 and throws at 784
+     * against GLARE's 344.
+     */
+    const ringSpeed = s.speed > 0 ? Math.max(200, s.speed) : 430;
     for (let i = 0; i < rings; i++) {
       // `World.MAX_NOVAS`, which this array did not have until `mortar` needed
       // one. It cannot bite here at any measured density — the peak over three
@@ -7658,7 +7866,7 @@ export class World {
         r: -i * 26,
         alive: true,
         maxR: Math.max(40, s.area),
-        speed: 430,
+        speed: ringSpeed,
         /*
          * Damage is spread over the crossing AND the hold, so honouring
          * `linger` costs nothing in power.
@@ -7671,7 +7879,9 @@ export class World {
          * — which is what "the ring hangs before it fades" actually describes.
          */
         hold: Math.max(0, s.linger),
-        dps: s.damage / (Math.max(0.08, Math.max(40, s.area) / 430) + Math.max(0, s.linger)),
+        // The crossing time uses the ring's OWN speed, or a faster ring would
+        // quietly deal more per second for the same number in the table.
+        dps: s.damage / (Math.max(0.08, Math.max(40, s.area) / ringSpeed) + Math.max(0, s.linger)),
         hue: this.hueOf(id),
         shoves: true,
         prop: this.activeProp,
@@ -7787,6 +7997,425 @@ export class World {
 
 
 
+
+  /* ---------------------------------------------------------------------- *
+   * THE SIX DELIVERIES FROM VAMPIRE SURVIVORS.
+   *
+   * See the long note above `InstrumentShape` in `weapons.ts` for the test
+   * that decided these six and refused the other eleven, and `DELIVERIES` in
+   * the same file for why each one carries a counter and a denominator.
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * A BOOMERANG: thrown out, and back through everything it passed. VS Cross.
+   *
+   * NO NEW POOL MACHINERY AT ALL, which is what made this affordable.
+   * `BulletFlag.Returning` reverses a bolt once at the midpoint of its own
+   * life — `age >= ttl` is first true at exactly T/2 — so the outbound and
+   * inbound halves are the same bolt on the same line, and `ttl` is set to the
+   * whole round trip rather than to the one-way reach. The bolt therefore
+   * arrives back at the ship as its lifetime runs out.
+   *
+   * `pierce` IS STRUCTURAL HERE RATHER THAN GENEROUS. A blade consumed by the
+   * first body would turn round from that body's face and the second half of
+   * the weapon would not exist, so everything wearing this shape carries a
+   * high `pierce` and the `ghost` property with it. That also means a returning
+   * blade re-hits the bodies it passed, which is the entire card.
+   *
+   * WHAT IT READS: `count`, `damage`, `speed`, `range` (HALF the round trip),
+   * `pierce`, `bounces`. `area`, `arc` and `linger` are deliberately unread —
+   * a blade has no blast, no fan and nothing to leave behind.
+   *
+   * BUDGET: `count` bullets per activation, each alive for `2 * range / speed`
+   * seconds. RONDO at level 3 is four blades with a 1.13s round trip on a 0.9s
+   * clock, so about five live — the cheapest projectile shape in the table
+   * after `lance`, which spawns none.
+   */
+  private fireBoomerang(s: InstrumentStats): void {
+    const p = this.player;
+    const n = Math.max(1, Math.round(s.count));
+    const speed = Math.max(160, s.speed);
+    const reach = s.range > 0 ? s.range : 340;
+    // The round trip, not the reach: the reversal is at the halfway mark.
+    const ttl = (reach / speed) * 2;
+    const damage = s.damage * (p.focused ? 1.35 : 1);
+
+    /*
+     * Aimed at the nearest body, and at the heading when there is none. VS
+     * Cross "aims at the nearest enemy" — but a boomerang thrown at nothing
+     * still comes back, so an empty field is a throw along the facing rather
+     * than a shot withheld. `invuln` shapes are skipped for the reason
+     * `fireSeek` skips them: a blade spent on something that cannot be hurt is
+     * a blade wasted.
+     */
+    let best: Enemy | null = null;
+    let bestD = Infinity;
+    for (const e of this.enemies) {
+      if (!e.alive || e.invuln > 0) continue;
+      const d = dist2(e.x, e.y, p.x, p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    const nose = best ? Math.atan2(best.y - p.y, best.x - p.x) : p.aim;
+
+    for (let i = 0; i < n; i++) {
+      // Fanned a little so `count` blades are `count` lines rather than one
+      // line drawn `count` times. Narrow: they are meant to read as a flight.
+      const t = n === 1 ? 0 : i / (n - 1) - 0.5;
+      this.deliveryChances.boomerang++;
+      this.spawnBolt({
+        x: p.x,
+        y: p.y,
+        angle: nose + t * 0.34,
+        speed,
+        radius: s.pierce > 1 ? 7 : 5,
+        ttl,
+        damage,
+        /*
+         * `pierce` IS READ RATHER THAN ASSUMED, and the first draft hardcoded
+         * `type: 1` here. `tools/deadhunt-ranges.mjs` caught it immediately —
+         * "rondo.pierce=99 (set, static)" — which is the third time in this
+         * file's history that a routine has quietly ignored a stat its own
+         * table sets, and the reason that audit exists.
+         *
+         * The stat is still 99 on everything wearing this shape, because a
+         * blade consumed by the first body would turn round from that body's
+         * face and the second half of the weapon would not exist. But that is
+         * the TABLE's decision, not the routine's, and a fusion that wants a
+         * blade which strikes once and comes back empty can now have one.
+         */
+        type: s.pierce > 1 ? 1 : 0,
+        bounces: s.bounces,
+        flags: this.shotFlags | BulletFlag.Returning,
+      });
+    }
+  }
+
+  /**
+   * FOUR FIXED WORLD AXES, AND THE AIM IS NOT AN INPUT. VS Phiera Der
+   * Tuphello, with VS Song of Mana's vertical beam folded into the same four.
+   *
+   * THE DIFFERENCE FROM `fireArc` IS ONE TERM AND IT IS THE WHOLE WEAPON.
+   * `fireArc` writes `p.aim + (i / strokes) * TAU`, so its star of strokes
+   * rotates with the player; this writes `k * (TAU / 4)` and never reads the
+   * aim at all. It is the only thing in the roster that covers your back
+   * without you turning round, and the only one whose coverage the player can
+   * neither aim, improve nor ruin.
+   *
+   * `count` IS BOLTS PER AXIS, not bolts in total, and `arc` is the jitter
+   * between them — so a `count` of three is a narrow stream down each of the
+   * four lines rather than three bolts stacked on one another.
+   *
+   * WHAT IT READS: `count`, `damage`, `speed`, `range`, `arc`, `pierce`.
+   * `area`, `linger` and `bounces` are unread.
+   *
+   * BUDGET: `4 * count` bullets per activation, each alive for `range / speed`.
+   * QUADRILLE at level 3 is twelve bolts on a 0.3s clock with a 0.77s life, so
+   * about 31 live — and each may `split` twice, which is the one number here
+   * worth watching. Three splits deep the worst case is roughly 90 against
+   * `MAX_PLAYER_BULLETS` of 700.
+   */
+  private fireCompass(s: InstrumentStats): void {
+    const p = this.player;
+    const per = Math.max(1, Math.round(s.count));
+    const speed = Math.max(160, s.speed);
+    const reach = s.range > 0 ? s.range : 520;
+    const jitter = s.arc > 0 ? s.arc : 0;
+    const damage = s.damage * (p.focused ? 1.35 : 1);
+
+    for (let k = 0; k < 4; k++) {
+      const axis = k * (Math.PI / 2);
+      for (let i = 0; i < per; i++) {
+        const t = per === 1 ? 0 : i / (per - 1) - 0.5;
+        const angle = axis + t * jitter;
+        this.deliveryChances.compass++;
+        const idx = this.spawnBolt({
+          // Offset to the muzzle along the axis, so four lines leave from four
+          // sides of the ship rather than all four from its centre.
+          x: p.x + Math.cos(axis) * 12,
+          y: p.y + Math.sin(axis) * 12,
+          angle,
+          speed,
+          radius: s.pierce > 1 ? 6 : 4.5,
+          ttl: (reach / speed) * 1.05,
+          damage,
+          type: s.pierce > 1 ? 1 : 0,
+          flags: this.shotFlags,
+        });
+        /*
+         * COUNTED ON THE ANGLE, NOT ON THE SPAWN, and that is the assertion.
+         * "It fired" is true of every weapon in the table; the claim this
+         * shape makes is that where the player is pointing had nothing to do
+         * with it, so the fire count is bolts that actually LEFT ON A WORLD
+         * AXIS, within the jitter the stat block asked for.
+         *
+         * THE FIRST VERSION OF THIS LINE WAS VACUOUS AND ITS FAIL-TEST CAUGHT
+         * IT, which is the whole argument for running one. It compared `angle`
+         * against `axis` — the variable `angle` had just been computed FROM —
+         * so planting `const axis = p.aim + k * (Math.PI / 2)` shifted both
+         * sides of the comparison together and the check stayed green while
+         * the weapon had silently become an aimed one. AGENTS.md §3's "a ready
+         * row has away: 0 and every aim has at least 1", reproduced exactly.
+         *
+         * It is written against the WORLD now: the fired angle is snapped to
+         * the nearest multiple of 90 degrees and the residual is measured, so
+         * nothing the routine does to `axis` can move the thing being compared
+         * to. Re-planted, and the rate falls from 100% to 41.3% — the survivors
+         * being the bolts whose aim-shifted bearing happened to land on the
+         * grid anyway, which is why this is a RATE and not a boolean.
+         */
+        const quarter = Math.PI / 2;
+        const off = Math.abs(angleDelta(angle, Math.round(angle / quarter) * quarter));
+        if (idx >= 0 && off <= jitter / 2 + 1e-6) {
+          this.deliveryFires.compass++;
+        }
+      }
+    }
+  }
+
+  /**
+   * ZONES WHILE YOU MOVE, A STRIKE WHEN YOU STOP. VS Shadow Pinion, with VS
+   * Santa Water's zones folded into the moving half.
+   *
+   * THE CONDITION IS THE DELIVERY, and nothing else in the table reads the
+   * stick. `World.STILL_SPEED` is the same threshold FERMATA's charge uses —
+   * imported from the class rather than re-picked here, because two "is the
+   * ship moving" numbers would drift and the player would have to learn both.
+   *
+   * The two halves are counted separately (`wake` and `wakestrike`) because
+   * half of this working is a card that lies half the time: a weapon that laid
+   * pools and never struck would look completely healthy from the outside.
+   *
+   * WHAT IT READS: `count` (pools per drop, or strikes per landing), `damage`,
+   * `area`, `linger`, `range` (how far a stopped strike reaches), and
+   * `interval` through the dispatcher. `speed`, `arc`, `pierce` and `bounces`
+   * are unread — nothing here travels.
+   *
+   * BUDGET: pools go into `wells`, which is capped at 14 by `pushWell`, so the
+   * moving half is bounded by the container rather than by the stat block.
+   * OSTINATO at level 3 lays three pools every 0.5s that lie for 3.8s, which
+   * asks for 23 and gets 14.
+   */
+  private fireWake(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const moving = Math.hypot(p.vx, p.vy) >= World.STILL_SPEED;
+    const n = clamp(Math.round(s.count) || 1, 1, 3);
+
+    if (moving) {
+      /*
+       * THE DENOMINATOR IS POOLS ASKED FOR, NOT ACTIVATIONS. `pushWell` caps
+       * the container at 14, so an activation that asks for three and gets one
+       * is a real, visible shortfall — and counting activations would report
+       * that as 100% while a third of the card's promise went in the bin.
+       */
+      this.deliveryChances.wake += n;
+      if (s.linger <= 0) return;
+      /*
+       * Dropped BEHIND the ship, which is what makes it a wake rather than a
+       * ring. Santa Water scatters its zones at random points nearby and
+       * `pushField` already rings them around a centre, so the centre is the
+       * ship's own tail and the ring does the scattering.
+       */
+      const back = Math.atan2(-p.vy, -p.vx);
+      const before = this.wells.length;
+      this.pushField(
+        id,
+        s,
+        clamp(p.x + Math.cos(back) * 42, 60, this.width - 60),
+        clamp(p.y + Math.sin(back) * 42, 60, this.height - 60),
+        n,
+      );
+      this.deliveryFires.wake += this.wells.length - before;
+      return;
+    }
+
+    /*
+     * STOPPED: it strikes instead. `fireStrike` is the routine for "an unaimed
+     * hit that lands ON something", which is exactly what the stopped half is,
+     * so this delegates rather than growing a second copy of it — and the
+     * counter is taken from the difference in `propMoments.hit` so a strike
+     * that found nothing to land on is not counted as one that did.
+     */
+    this.deliveryChances.wakestrike++;
+    const before = this.propMoments.hit;
+    this.fireStrike(id, s);
+    if (this.propMoments.hit > before) this.deliveryFires.wakestrike++;
+  }
+
+  /**
+   * EVERYTHING ON THE SCREEN, ON A LONG COOLDOWN. VS Pentagram.
+   *
+   * No aim, no travel, no target selection and no falloff: the hit lands on
+   * every live body inside `area` of the ship at once. It is the only weapon
+   * in the roster whose output does not depend on where anything is, which
+   * makes it the answer to being surrounded and worthless against one thing at
+   * the edge of the map — the exact inverse of `lance`, and the reason both
+   * can be in the same table.
+   *
+   * `area` IS SET AT ROUGHLY THE VISIBLE FIELD rather than at the arena, and
+   * the difference matters: "erases everything IN SIGHT" is the source's own
+   * wording, and a pulse that reached the whole 3000px world would be a
+   * different and much worse card — it would delete the wave that has not
+   * arrived yet.
+   *
+   * WHAT IT READS: `damage`, `area`, `count` (repeats of the pulse), `linger`
+   * (how long the flash hangs) and `interval` through the dispatcher. `speed`,
+   * `arc`, `pierce`, `bounces` and `range` are unread.
+   *
+   * BUDGET: one `novas` entry per pulse and nothing else. The damage is
+   * applied in this call, so a dropped ring under a saturated array costs a
+   * picture and no damage — the same argument `fireStrike` makes.
+   */
+  private fireErase(id: string, s: InstrumentStats): void {
+    const p = this.player;
+    const pulses = clamp(Math.round(s.count) || 1, 1, 4);
+    const reach = Math.max(120, s.area);
+    const reachSq = reach * reach;
+    const hue = this.hueOf(id);
+
+    for (let k = 0; k < pulses; k++) {
+      for (const e of this.enemies) {
+        if (!e.alive || e.invuln > 0) continue;
+        if (dist2(e.x, e.y, p.x, p.y) > reachSq) continue;
+        /*
+         * COUNTED PER BODY, NOT PER PULSE, and that is what makes the ratio an
+         * assertion rather than arithmetic. The card says EVERY body on the
+         * screen, so the denominator is bodies that were on the screen and the
+         * numerator is bodies that actually lost health — a pulse with a
+         * falloff, a cap or a target limit hiding in it would show up here as
+         * a rate below 100 instead of as a healthy activation count.
+         */
+        this.deliveryChances.erase++;
+        if (this.hurt(e, s.damage, true) > 0) this.deliveryFires.erase++;
+        e.hitFlash = 0.1;
+        if (this.activeProp !== 0 && e.alive) this.applyStatus(e, this.activeProps);
+      }
+      if (this.novas.length < World.MAX_NOVAS) {
+        this.novas.push({
+          x: p.x,
+          y: p.y,
+          r: 0,
+          alive: true,
+          maxR: reach,
+          // Fast, because the damage has already landed: the ring is the
+          // player's readout of how far the pulse went, not its hitbox.
+          speed: reach / Math.max(0.12, Math.min(0.5, s.linger)),
+          // A visual only. See `fireStrike`, which makes the same choice.
+          dps: 0,
+          hold: 0,
+          hue,
+          shoves: false,
+          prop: 0,
+          tick: 0,
+        });
+      }
+    }
+    this.camera.shake(0.5);
+    this.camera.strike(90, 0.5);
+  }
+
+  /**
+   * A CHARGE THAT EATS A HIT, AND IT DEALS NOTHING. VS Laurel.
+   *
+   * This routine is only the REFILL. The spend is in `Player.takeHit`, which
+   * is the one place that knows a hit was about to land, and the discharge is
+   * `dischargeGuard` below, which the world runs when `takeHit` reports it.
+   * Three places rather than one because the three moments are genuinely
+   * different, and folding them would mean either `Player` importing the
+   * property system or `World` re-implementing invulnerability.
+   *
+   * `damage` IS NOT READ AND EVERY LADDER RUNG LEAVES IT AT ZERO. That is the
+   * point of the shape — `docs/plan-refactor-3.md` §0 argues that VS's build
+   * space has shape because Laurel and Clock Lancet are in it — and
+   * `tools/deadhunt-ranges.mjs` will correctly report `damper.damage=0` as a
+   * stat this shape ignores. That report is TRUE and it should stay: the
+   * honest way to ship a weapon that deals nothing is to let the audit say so,
+   * not to hide the zero behind a default.
+   *
+   * WHAT IT READS: `count` (the ceiling), `interval` through the dispatcher
+   * (seconds per charge), and — in `dischargeGuard` — `area` and `linger`.
+   *
+   * BUDGET: zero objects. It is the only shape in the table that allocates
+   * nothing at all while it is running.
+   */
+  private fireGuard(s: InstrumentStats): void {
+    const want = Math.max(1, Math.round(s.count));
+    this.deliveryChances.guardrefill++;
+    if (this.player.guard >= want) return;
+    this.player.guard++;
+    this.deliveryFires.guardrefill++;
+  }
+
+  /**
+   * A CHARGE BREAKS: shove what did it, and leave the weapon's properties on it.
+   *
+   * Called from `onPlayerHit` when `Player.lastHitGuarded` is set. This is what
+   * makes a no-damage weapon carry a property HONESTLY rather than as a line
+   * on a card — DAMPER's `slow` is applied here, to the bodies that were close
+   * enough to have been the ones that hit you, and `tools/propfire.mjs`
+   * measures the weapon by it.
+   *
+   * `repel` rather than a nova: the ring would be a second hitbox on a weapon
+   * whose whole identity is that it has none.
+   */
+  private dischargeGuard(): void {
+    const g = this.guardVoice;
+    if (!g) return;
+    const p = this.player;
+    const radius = Math.max(60, g.s.area);
+    this.repel(p.x, p.y, radius, 620, 320);
+    if (g.slot !== 0) {
+      const props = this.propSets[g.slot];
+      const rSq = radius * radius;
+      for (const e of this.enemies) {
+        if (!e.alive || e.invuln > 0) continue;
+        if (dist2(e.x, e.y, p.x, p.y) > rSq) continue;
+        this.applyStatus(e, props);
+      }
+    }
+    this.particles.ring(p.x, p.y, radius * 0.5, this.hueOf(g.id), 0.35);
+    this.camera.shake(0.3);
+  }
+
+  /**
+   * IT ANSWERS WHEN YOU ARE HIT. VS Victory Sword.
+   *
+   * The only activation in the game that is not on a clock. `interval` is a
+   * FLOOR on how often the answer may be given rather than a cadence, so a run
+   * that is never touched fires this weapon zero times and a run that is being
+   * swarmed fires it constantly — a weapon that is worth more the worse the
+   * run is going, which nothing else in the table is.
+   *
+   * IT DELEGATES TO `fireStrike`, and that is deliberate rather than lazy: the
+   * answer is "an unaimed hit that lands ON something and burns a circle",
+   * which is precisely what a strike is, and a second copy of that routine
+   * would be the drift `fireShape` was extracted to avoid. What this adds is
+   * the trigger, the floor, its own property slot and its own voice.
+   *
+   * IT EMITS `player:shoot` ITSELF. `fireInstruments` emits one shot event per
+   * step for the rarest voice that fired, and this weapon never appears in
+   * that loop — so without this line ANTIPHON would be the only instrument in
+   * the game that never makes a sound.
+   */
+  private fireRiposte(): void {
+    const r = this.riposte;
+    if (!r) return;
+    this.deliveryChances.riposte++;
+    const floor = Math.max(0.05, r.s.interval);
+    if (this.time - this.lastRiposte < floor) return;
+    this.lastRiposte = this.time;
+
+    const before = this.propMoments.hit;
+    this.activeProp = r.slot;
+    this.fireStrike(r.id, r.s);
+    this.activeProp = 0;
+    if (this.propMoments.hit > before) this.deliveryFires.riposte++;
+
+    const family = instrumentDef(r.id)?.character.split('—')[0].trim().split(/\s+/)[0];
+    this.bus.emit('player:shoot', { id: r.id as InstrumentId, voice: family || undefined });
+  }
 
   /**
    * A field, placed rather than centred.

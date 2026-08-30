@@ -438,6 +438,29 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
   bow: 'chords', //      LANCE: one thin sustained edge
   charm: 'lead', //      DUET: two voices agreeing
 
+  /* ------------------------- the ten Vampire Survivors deliveries
+   *
+   * NO LANE WAS ADDED, for the third time and for the same reason: there are
+   * eight stems, the player holds at most four instruments, and `ensembleLift`
+   * sums the levels on a lane and saturates — so four weapons sharing the arp
+   * is a fuller arp rather than four arps. What each one takes is the lane its
+   * MECHANIC belongs to, not the lane its parent had.
+   *
+   * BACKBEAT on `clap` is the one that is not a metaphor: a backbeat IS the
+   * snare on two and four, and the weapon fires a stroke either side of the
+   * ship on a 0.45s clock.
+   */
+  rondo: 'motifs', //     a figure that comes back is what a motif is
+  quadrille: 'clap', //   four square strokes, always the same four
+  ostinato: 'sub', //     a ground figure, underneath, repeating
+  antiphon: 'chords', //  the answering choir
+  coda: 'kick', //        the last bar landing on everything
+  damper: 'chords', //    the soft pedal: a pad pulled back rather than removed
+  caesura: 'lead', //     one held line, and the silence at the end of it
+  backbeat: 'clap', //    two and four, literally
+  aleatory: 'fx', //      chance events, scattered
+  cluster: 'sub', //      every note at once, close and low
+
   /* --------- the results — each inherits its parent's voice and pushes it */
   spiccato: 'arp',
   snap: 'arp', //        pizzicato's other ending — same voice, harder attack
@@ -462,6 +485,25 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
   consort: 'lead',
   requiem: 'chords',
   stringsection: 'chords',
+
+  /* --- the ten new endings, each on its own base's lane, plus seven pairs */
+  refrain: 'motifs',
+  reel: 'clap',
+  groundbass: 'sub',
+  responsory: 'chords',
+  finale: 'kick',
+  unacorda: 'chords',
+  grandpause: 'lead',
+  flam: 'clap',
+  stochastic: 'fx',
+  tamtam: 'sub',
+  firewheel: 'fx',
+  stasis: 'lead',
+  starburst: 'arp',
+  lull: 'chords',
+  thunderclap: 'kick',
+  miasma: 'sub',
+  ruff: 'clap',
 
   /* ------------------ the lattice - sixty-three authored instrument pairs
    *

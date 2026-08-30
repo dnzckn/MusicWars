@@ -105,7 +105,48 @@ export type InstrumentId =
   | 'nocturne'
   | 'siphon'
   | 'accelerando'
-  | 'charm';
+  | 'charm'
+  /*
+   * TEN MORE, AND THIS TIME THE VARIETY IS IN THE DELIVERY.
+   *
+   * The twenty above are Ball x Pit's contribution: twenty composable
+   * PROPERTIES over seven shapes. `docs/plan-refactor-3.md` §9a names the
+   * other half of the source material and this pass had not spent it —
+   * "Vampire Survivors: ~70 weapons, and its contribution is the DELIVERY
+   * vocabulary". Its roster is the mirror image of Ball x Pit's: almost none
+   * of its weapons carries a status, and all of its interest is in HOW the
+   * thing reaches you.
+   *
+   * So these ten are taken one-to-one off that list rather than invented, and
+   * each is named in its own row in `weapons.ts` with the VS weapon it is:
+   *
+   *   rondo      Cross                — thrown out and returns THROUGH them
+   *   quadrille  Phiera Der Tuphello  — four fixed world axes, ignores aim
+   *   ostinato   Shadow Pinion        — zones while moving, a strike when you stop
+   *   antiphon   Victory Sword        — retaliates when YOU are hit
+   *   coda       Pentagram            — erases what is on the screen
+   *   damper     Laurel               — pure defence, deals nothing, ever
+   *   caesura    Clock Lancet         — a line that freezes and deals nothing
+   *   backbeat   Whip                 — a flat stroke either side of you
+   *   aleatory   Lightning Ring       — strikes at random, anywhere, unaimed
+   *   cluster    Garlic               — a close cloud that shoves and turns them
+   *
+   * THE POOL COST IS MEASURED, NOT WAVED AT. Twenty draftable cards became
+   * thirty in a four-card offer, which is a larger change than the one
+   * AGENTS.md §5 records as reverted. `tools/offerpool.mjs` now runs three
+   * arms — 30, 20 and 12 — inside one build, so the 20 -> 30 step is compared
+   * against the same generator rather than against a number in a document.
+   */
+  | 'rondo'
+  | 'quadrille'
+  | 'ostinato'
+  | 'antiphon'
+  | 'coda'
+  | 'damper'
+  | 'caesura'
+  | 'backbeat'
+  | 'aleatory'
+  | 'cluster';
 
 /**
  * Fusions. Never offered at a level-up — only earned, by taking an instrument
@@ -238,7 +279,45 @@ export type EvolvedId =
   | 'eventhorizon'
   | 'xray'
   | 'sniper'
-  | 'diabolus';
+  | 'diabolus'
+  /*
+   * TEN ENDINGS FOR THE TEN NEW BASES, AND THEY ARE ARITHMETIC RATHER THAN
+   * APPETITE. `tools/levelup.mjs` fails any instrument with no evolution —
+   * "a dead end to commit to" — so the recipe count follows the roster size.
+   * Every one costs zero offer slots (`progression.ts` skips `def.fused` when
+   * it builds the draft pool), which is the only reason ten is affordable.
+   *
+   * Each keeps its base's SHAPE, because the shape is what the base was added
+   * for: an evolution that turned the boomerang back into a seek bolt would
+   * delete the delivery the whole pass exists to add.
+   */
+  | 'refrain'
+  | 'reel'
+  | 'groundbass'
+  | 'responsory'
+  | 'finale'
+  | 'unacorda'
+  | 'grandpause'
+  | 'flam'
+  | 'stochastic'
+  | 'tamtam'
+  /*
+   * SEVEN AUTHORED PAIRS, not sixty. `C(30,2)` is 435 and the generic duet
+   * already covers every one of them, so the roster WIDTH is what this pass
+   * buys and another sixty recipes is not. These seven are the pairs where a
+   * new delivery makes an obvious result — a boomerang that is on fire, a
+   * freeze line crossed with a snare, four axes crossed with a scatter — plus
+   * one that is structural: DAMPER x CAESURA is the only pair in the table
+   * where BOTH parents deal no damage, so its generic duet would deal none
+   * either and `tools/fusefire.mjs` fails a pair that deals nothing.
+   */
+  | 'firewheel'
+  | 'stasis'
+  | 'starburst'
+  | 'lull'
+  | 'thunderclap'
+  | 'miasma'
+  | 'ruff';
 
 /**
  * Passive items. Global multipliers, so their honest voicing is to MODIFY an

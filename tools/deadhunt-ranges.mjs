@@ -715,6 +715,20 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
     strike: 'fireStrike',
     field: 'fireField',
     /*
+     * The six Vampire Survivors deliveries. `guard` is the interesting row for
+     * this audit: it is the first shape in the table that does not read
+     * `damage` at all, so the three instruments wearing it will each be
+     * reported as setting a stat their own shape ignores. THAT REPORT IS TRUE
+     * AND SHOULD STAY — a weapon that deals nothing is shipped honestly by
+     * letting the audit say so, not by hiding the zero behind a default.
+     */
+    boomerang: 'fireBoomerang',
+    compass: 'fireCompass',
+    wake: 'fireWake',
+    erase: 'fireErase',
+    guard: 'fireGuard',
+    riposte: 'fireRiposte',
+    /*
      * The five shapes the second-axis pass added. Three of them deal no damage
      * and two of them make OTHER instruments fire, but every one still folds a
      * stat block, so every one can still promise a number nothing reads —
@@ -743,16 +757,38 @@ console.log('\nSTATIC — per shape: stats the routine reads vs stats the instru
    * have to be credited or the table reports `interval` dead for all six
    * shapes, which was this tool's first answer and was wrong.
    */
-  const dispatcherReads = { all: ['interval'], orbit: ['count', 'area'] };
+  /*
+   * `guard` joined `orbit` here, and for the identical reason: the dispatcher
+   * writes `player.guardMax` from `s.count` and `player.guardBonusInvuln` from
+   * `s.linger` inside its own `def.shape === 'guard'` block, exactly as it
+   * writes `podCount` and `podRadius` inside the orbit one. Both are genuinely
+   * read on every step and both would otherwise be reported dead.
+   *
+   * THE LOOKUP IS BY SHAPE NOW rather than a hardcoded `shape === 'orbit'`.
+   * A second hardcoded shape name in the same expression is exactly how this
+   * table would silently stop crediting the third one.
+   */
+  const dispatcherReads = { all: ['interval'], orbit: ['count', 'area'], guard: ['count', 'linger'] };
+  /*
+   * Routines that hand their stats to a helper, so the helper's body counts
+   * too. `field` always did; `riposte` and `wake` DELEGATE TO `fireStrike`
+   * rather than growing a second copy of it, and `guard`'s discharge is a
+   * separate method because it happens on a hit rather than on the clock.
+   */
+  const HELPERS = {
+    field: ['pushWell', 'throwWell'],
+    riposte: ['fireStrike'],
+    wake: ['fireStrike', 'pushField', 'pushWell'],
+    guard: ['dischargeGuard'],
+  };
   const ignoredByShape = {};
   for (const [shape, routine] of Object.entries(ROUTINE)) {
-    // `field` hands its stats to `pushWell` and `throwWell`, so those count.
-    const body = bodyOf(routine) + (shape === 'field' ? bodyOf('pushWell') + bodyOf('throwWell') : '');
+    const body = bodyOf(routine) + (HELPERS[shape] ?? []).map(bodyOf).join('');
     const read = keys.filter(
       (k) =>
         new RegExp(`\\bs(?:tats)?\\.${k}\\b|\\bheld\\.stats\\.${k}\\b`).test(body) ||
         dispatcherReads.all.includes(k) ||
-        (shape === 'orbit' && dispatcherReads.orbit.includes(k)),
+        (dispatcherReads[shape] ?? []).includes(k),
     );
     const ignored = keys.filter((k) => !read.includes(k));
     ignoredByShape[shape] = ignored;

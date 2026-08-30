@@ -204,6 +204,43 @@ const SHOT_VOICES: Partial<Record<string, ShotVoice>> = {
   echoes: { s: 'triangle', decay: 0.1, hpf: 700, lpf: 7000, gain: 0.03, octave: 0, room: 0.46 },
   // A suspension that will not resolve: low, held, no attack.
   blackhole: { s: 'sine', decay: 0.44, hpf: 40, lpf: 600, gain: 0.046, octave: -24, room: 0.3 },
+
+  /* ---------------------------------------------------------------------- *
+   * TEN ROWS FOR THE TEN VAMPIRE SURVIVORS DELIVERIES.
+   *
+   * The family table below already guarantees coverage — every one of the ten
+   * declares one of its six words — so none of these is required to make the
+   * game make a sound. They are here because a family covers six words across
+   * THIRTY weapons now, and the whole argument for `SHOT_VOICES` is that
+   * sharing an `ENSEMBLE_MIX` lane is an arrangement decision while sharing
+   * the sound of pulling the trigger is not.
+   *
+   * Two of the ten are the interesting ones to write, because the weapon deals
+   * no damage. DAMPER is a REFILL rather than a shot — one low soft thud when
+   * a charge comes back, which is the only thing the player needs told — and
+   * CAESURA is a line being drawn rather than a hit landing, so it has almost
+   * no attack and a long tail.
+   * ---------------------------------------------------------------------- */
+  // Thrown and caught: a struck rim with a tail that comes back up.
+  rondo: { s: 'triangle', decay: 0.18, hpf: 400, lpf: 5200, gain: 0.034, octave: 0, room: 0.3 },
+  // Four square strokes: hard, dry, identical every time.
+  quadrille: { s: 'square', decay: 0.045, hpf: 900, lpf: 7000, gain: 0.03, octave: 0, room: 0.1 },
+  // A figure sinking into the floor. Low, repeating, no edge.
+  ostinato: { s: 'sawtooth', decay: 0.3, hpf: 90, lpf: 1200, gain: 0.034, octave: -24, room: 0.26 },
+  // The answer, louder than the call: a hard bloom with a long room.
+  antiphon: { s: 'sawtooth', decay: 0.26, hpf: 300, lpf: 4000, gain: 0.05, octave: -12, room: 0.44 },
+  // The last bar. The lowest, longest thing in the table.
+  coda: { s: 'sine', decay: 0.55, hpf: 30, lpf: 520, gain: 0.06, octave: -24, room: 0.4 },
+  // A charge coming back, not a shot going out: soft, dark, unhurried.
+  damper: { s: 'sine', decay: 0.26, hpf: 100, lpf: 900, gain: 0.024, octave: -12, room: 0.34 },
+  // A line drawn rather than a hit landed: no attack edge, a long thin tail.
+  caesura: { s: 'triangle', decay: 0.46, hpf: 1100, lpf: 9500, gain: 0.022, octave: 12, room: 0.5 },
+  // The crack on two and four. Short, bright, and it wants to be heard.
+  backbeat: { s: 'square', decay: 0.05, hpf: 600, lpf: 8000, gain: 0.044, octave: 0, room: 0.18 },
+  // Chance events: thin, high, scattered, each one different from the last.
+  aleatory: { s: 'triangle', decay: 0.14, hpf: 1400, lpf: 11000, gain: 0.026, octave: 12, room: 0.4 },
+  // Every note at once, close and low: the muddiest voice in the set, on purpose.
+  cluster: { s: 'sawtooth', decay: 0.2, hpf: 70, lpf: 1600, gain: 0.038, octave: -24, room: 0.22 },
 };
 
 /**

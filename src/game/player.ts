@@ -249,6 +249,37 @@ export class Player {
   podRadius = 46;
   podSpin = 1.6;
 
+  /* ---------------------------------------------------------------------- *
+   * THE GUARD — Vampire Survivors' Laurel, and the only thing on this class
+   * that can refuse a hit for free.
+   *
+   * Three fields and no logic: `World.fireGuard` owns the refill clock and
+   * `takeHit` owns the spend, because a charge that regenerates has to know
+   * about the instrument's `interval` and this class does not know what the
+   * player is holding. `guardMax` is written by the world every step from the
+   * folded stat block, exactly as `podCount` is and for the same reason —
+   * "how many there are is a progression fact".
+   *
+   * `guardBonusInvuln` is the discharge's extra invulnerability, in seconds,
+   * so UNA CORDA's card can promise 2.6s and deliver it without `takeHit`
+   * knowing which weapon set it.
+   * ---------------------------------------------------------------------- */
+  /** Charges in hand. Spent by `takeHit` before anything else. */
+  guard = 0;
+  /** Charges the held instrument allows. Written by the world each step. */
+  guardMax = 0;
+  /** Extra seconds of invulnerability a spent charge buys, on top of the usual. */
+  guardBonusInvuln = 0;
+  /**
+   * True for exactly one hit: the last `takeHit` was eaten by a charge.
+   *
+   * The same shape as `lastHitAutoBombed`, and read by `World` for the same
+   * reason — this class has no bus, so the world has to be able to ask what
+   * happened in order to fire the discharge and count it. A counter here that
+   * the world merely read would be a second place the state lives.
+   */
+  lastHitGuarded = false;
+
   /** Seconds remaining per timed powerup. */
   private powerTimers: Partial<Record<PowerupKind, number>> = {};
 
@@ -286,6 +317,10 @@ export class Player {
     this.podCount = 0;
     this.droneAngle.length = 0;
     this.droneCooldown.length = 0;
+    this.guard = 0;
+    this.guardMax = 0;
+    this.guardBonusInvuln = 0;
+    this.lastHitGuarded = false;
   }
 
   droneCount(): number {
@@ -521,6 +556,29 @@ export class Player {
   takeHit(blockAutoBomb = false): boolean {
     if (this.invuln > 0 || this.dead) return false;
     this.lastHitAutoBombed = false;
+    this.lastHitGuarded = false;
+    /*
+     * A GUARD CHARGE IS SPENT FIRST — before the WARD powerup and before the
+     * auto-bomb rescue, and the order is the design rather than convenience.
+     *
+     * A charge refills on its own clock and costs the player nothing; a WARD
+     * is a pickup they found and an auto-bomb costs a bomb. Spending the free
+     * thing before the paid ones is what a player would do by hand, and doing
+     * it in the other order would make DAMPER worse the more the player was
+     * already carrying — an item that punishes you for having found something
+     * else.
+     *
+     * The invulnerability is the ordinary one plus whatever the weapon's
+     * `linger` bought, so the ladder rung that promises "a second and a half
+     * of invulnerability on top" is this line and not a blurb.
+     */
+    if (this.guard > 0) {
+      this.guard--;
+      this.lastHitGuarded = true;
+      this.timeSinceHit = 0;
+      this.invuln = INVULN_ON_HIT + Math.max(0, this.guardBonusInvuln);
+      return true;
+    }
     /*
      * WARD absorbs the hit and is spent doing it.
      *

@@ -247,7 +247,7 @@ function force(w, ids) {
   w.progression.offer = null;
 }
 
-function run(ids, secs = SECS) {
+function run(ids, secs = SECS, opts = {}) {
   const w = new World(SEED);
   // The opener carries burn; forcing the loadout below removes it, but the
   // starter has to be something that exists or `createProgression` falls back.
@@ -270,8 +270,27 @@ function run(ids, secs = SECS) {
   const drive = makeBrain('weave');
   const inp = { x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false };
   const steps = Math.round(secs / DT);
+  /*
+   * `opts.park` — SECONDS IN FOUR THAT THE STICK IS RELEASED.
+   *
+   * The weaving brain never stops, and one delivery in the roster is defined
+   * by stopping: `wake` lays pools while the ship moves and STRIKES when it
+   * does not. Without this the stopped half would report a zero denominator
+   * forever, and a zero denominator is a failure here rather than a skip —
+   * so the harness has to produce the moment.
+   *
+   * It is the same shaping `tools/rulefire.mjs` does for FERMATA, and the same
+   * rule applies: it produces the moment, it does not fake the answer. The
+   * ship is genuinely stationary for those seconds and the weapon genuinely
+   * decides for itself which half to run.
+   */
+  const park = opts.park ?? 0;
   for (let i = 0; i < steps; i++) {
     if (i % 2 === 0) drive(w, inp);
+    if (park > 0 && (i * DT) % 4 < park) {
+      inp.x = 0;
+      inp.y = 0;
+    }
     inp.choice = w.choosing ? 0 : -1;
     force(w, ids);
     w.update(DT, inp);
@@ -470,6 +489,139 @@ console.log('\nCROSS-CONTAMINATION — a run holding one property must fire no o
   else if (leaks === 0) pass('no property fired in a run whose loadout does not carry it');
 }
 
+/* ---------------------------------------- 5b. the OTHER axis: does it DELIVER? */
+
+/*
+ * DOES EACH NEW DELIVERY ACTUALLY DO THE THING ITS CARD DESCRIBES?
+ *
+ * Everything above this line measures the PROPERTY axis, which is Ball x Pit's
+ * half of the roster. The ten weapons taken from Vampire Survivors are the
+ * other half, and their content is the DELIVERY — and a delivery has exactly
+ * the failure mode a property has, with nothing in the suite able to see it:
+ *
+ *   a boomerang that never returns still throws bolts, still deals its
+ *   outbound damage, still type-checks, still renders its card, and passes
+ *   `levelup`, `wiring`, `aimcheck`, `mirror` and `deadhunt-ranges` in full.
+ *
+ *   a retaliator that never retaliates fires nothing at all, and no gate in
+ *   the suite can tell that apart from a run in which the player was never
+ *   hit.
+ *
+ * `InstrumentStats.bounces` was a declared stat with no consumer for the whole
+ * life of the table for exactly this reason — nothing could observe whether a
+ * bolt had ever bounced — and `BulletPool.bounced` is the counter that ended
+ * it. These are the same counter, one per delivery, plus a denominator so a
+ * quiet run and a broken weapon are distinguishable.
+ *
+ * TWO SHAPES HAVE TWO COUNTERS, because they have two behaviours and half of
+ * one working is a card that lies half the time: `wake` lays zones while the
+ * ship moves and STRIKES when it stops, and `guard` refills charges on a clock
+ * and spends them on a hit.
+ *
+ * The names and the shape they belong to are imported from `weapons.ts`
+ * (`DELIVERIES`), never restated here — AGENTS.md §3, the `contrast.mjs`
+ * lesson: a second copy would keep reporting the old counters green the day a
+ * shape's counters move.
+ */
+console.log('\nDELIVERIES — does each new delivery shape do what its card says, with a denominator?');
+
+const DELIVERIES = W.DELIVERIES;
+const DELIVERY_SHAPES = Object.keys(DELIVERIES);
+
+{
+  const probe = new World(1);
+  for (const table of ['deliveryFires', 'deliveryChances']) {
+    const keys = Object.keys(probe[table]);
+    const missing = W.DELIVERY_COUNTERS.filter((n) => !keys.includes(n));
+    const extra = keys.filter((k) => !W.DELIVERY_COUNTERS.includes(k));
+    if (missing.length) fail(`World.${table} has no counter for: ${missing.join(', ')}`);
+    if (extra.length) fail(`World.${table} counts deliveries weapons.ts does not declare: ${extra.join(', ')}`);
+  }
+  /*
+   * EVERY DECLARED DELIVERY MUST HAVE A DRAFTABLE CARRIER. A shape only a
+   * fusion can wear is one most runs never see, which is the same assertion
+   * the property axis makes one screen up — and it is what would catch a
+   * delivery quietly losing its last base weapon while the routine, the
+   * counters and this whole section stayed green on a fusion nobody builds.
+   */
+  for (const shape of DELIVERY_SHAPES) {
+    const bases = W.INSTRUMENTS.filter((d) => !d.fused && d.shape === shape).map((d) => d.id);
+    console.log(`  ${shape.padEnd(10)} counters [${DELIVERIES[shape].join(', ')}]   bases: ${bases.join(', ') || 'NONE'}`);
+    if (!bases.length) fail(`delivery '${shape}' is declared and no draftable weapon wears it`);
+  }
+  if (DELIVERY_SHAPES.length === 0) fail('no deliveries are declared — this section proved nothing');
+}
+
+console.log(
+  `\n  ${'delivery'.padEnd(12)} ${'weapon'.padEnd(12)} ${'counter'.padEnd(12)} ${'fired'.padStart(9)} /${'chances'.padStart(9)}   ${'rate'.padStart(7)}`,
+);
+console.log(`  ${'-'.repeat(12)} ${'-'.repeat(12)} ${'-'.repeat(12)} ${'-'.repeat(9)}  ${'-'.repeat(9)}   ${'-'.repeat(7)}`);
+
+const deliveryRuns = new Map();
+let deliveryCells = 0;
+for (const shape of DELIVERY_SHAPES) {
+  const bases = W.INSTRUMENTS.filter((d) => !d.fused && d.shape === shape).map((d) => d.id);
+  if (!bases.length) continue;
+  const ids = bases.slice(0, 2);
+  /*
+   * The `wake` run parks the ship for one second in four. See `run`'s `park`
+   * option: the weaving brain never stops, and the stopped half of that
+   * weapon cannot exist in a run that never stops.
+   */
+  const w = run(ids, SECS, shape === 'wake' ? { park: 1 } : {});
+  deliveryRuns.set(shape, { w, ids });
+  for (const counter of DELIVERIES[shape]) {
+    /*
+     * THE BOOMERANG'S FIRE COUNT IS READ OFF THE POOL, exactly as `accel`'s
+     * is. The reversal happens inside `BulletPool.update`'s own integration —
+     * that is the whole implementation — so the honest place to count it is
+     * the pool, and a `World` counter would be a second copy of the same
+     * event that could agree with the card while the pool did nothing.
+     */
+    const fired = counter === 'boomerang' ? w.playerBullets.returned : w.deliveryFires[counter];
+    const chances = w.deliveryChances[counter];
+    const rate = chances ? `${((fired / chances) * 100).toFixed(1)}%` : '    n/a';
+    console.log(
+      `  ${shape.padEnd(12)} ${ids.join('+').padEnd(12)} ${counter.padEnd(12)} ${String(fired).padStart(9)} /${String(chances).padStart(9)}   ${rate.padStart(7)}`,
+    );
+    deliveryCells++;
+    if (chances === 0) {
+      fail(`${shape}/${counter}: ${SECS}s holding ${ids.join('+')} never produced the moment it waits for — nothing was measured`);
+    } else if (fired === 0) {
+      fail(`${shape}/${counter}: ${chances} chances and it delivered 0 times — the card describes a behaviour the simulation does not produce`);
+    }
+  }
+}
+console.log(`\n  ${deliveryCells} delivery counters measured across ${DELIVERY_SHAPES.length} shapes`);
+if (deliveryCells === 0) fail('no delivery was measured — this section proved nothing');
+
+/*
+ * AND THE ONE ASSERTION THAT IS NOT "IT FIRED".
+ *
+ * `compass`' claim is not that it shoots — every weapon shoots — it is that
+ * WHERE THE PLAYER IS POINTING IS NOT AN INPUT. So its fire counter is
+ * incremented on the ANGLE (a bolt that left within the stat block's own
+ * jitter of a world axis) rather than on the spawn, and the rate must be
+ * 100%: a future edit that quietly folded `p.aim` back in would leave the
+ * bolts firing and this number under 100.
+ */
+{
+  const r = deliveryRuns.get('compass');
+  if (!r) fail('no run measured the compass delivery');
+  else {
+    const fired = r.w.deliveryFires.compass;
+    const chances = r.w.deliveryChances.compass;
+    console.log(
+      `  compass, against its own denominator: ${fired} of ${chances} bolts left on a fixed world axis` +
+        ` (${chances ? ((fired / chances) * 100).toFixed(1) : ' n/a'}%)`,
+    );
+    if (chances === 0) fail('compass: no bolt was fired at all, so the axis claim was never tested');
+    else if (fired !== chances) {
+      fail(`compass: ${chances - fired} of ${chances} bolts left on a bearing that is not a world axis — the aim is an input after all`);
+    }
+  }
+}
+
 /* ------------------------------------------- 6. the control, which is the point */
 
 /*
@@ -507,6 +659,22 @@ console.log('\nCONTROL — the same harness holding SNAP, which carries nothing'
     }
   }
   console.log(`  bolt bounces ${String(w.playerBullets.bounced).padStart(12)}`);
+  /*
+   * THE CONTROL COVERS THE DELIVERY AXIS TOO, and it has to for the same
+   * reason it covers the property axis: a counter incremented one line too
+   * high — outside its own `if`, or in a routine every shape reaches — passes
+   * the DELIVERIES section above for free and is measuring the run rather than
+   * the delivery. SNAP is a plain `seek` bolt, so every one of these must be a
+   * hard zero while the moment counts above are large.
+   */
+  for (const k of W.DELIVERY_COUNTERS) {
+    const f = k === 'boomerang' ? w.playerBullets.returned : w.deliveryFires[k];
+    const c = w.deliveryChances[k];
+    if (f !== 0 || c !== 0) {
+      clean = false;
+      fail(`a delivery counted with nothing wearing that shape — ${k} fires=${f} chances=${c}`);
+    }
+  }
   for (const h of hot) fail(`a property fired with nothing installing it — ${h}`);
   if (w.propOverflow !== 0) fail(`${w.propOverflow} property sets could not be interned — bolts silently lost their properties`);
   if (clean) pass('no property fires when no weapon carries one, and every moment still occurred');
@@ -591,6 +759,52 @@ console.log('PROPFIRE HOLDS — every property is installed, wired, applies, tic
  *   J  added 'burn' to `FUSION_ONLY_PROPERTIES`, which EMBER carries
  *      -> exit 1, "property 'burn' is declared FUSION_ONLY and base weapon(s)
  *         ember carry it — the list is stale"
+ *
+ * TEN MORE FOR THE DELIVERY AXIS, one per assertion in the DELIVERIES section
+ * and one for its half of the control. Each was planted, the check run at
+ * SECS=25, the named message SEEN, and the edit undone by its inverse:
+ *
+ *   K  guarded the `BulletFlag.Returning` reversal in `BulletPool.update`
+ *      with `false`
+ *      -> exit 1, "boomerang/boomerang: 112 chances and it delivered 0 times"
+ *   L  wrote `const axis = p.aim + k * (Math.PI / 2)` in `fireCompass`
+ *      -> exit 1, "compass: 592 of 1008 bolts left on a bearing that is not a
+ *         world axis — the aim is an input after all", rate 100% -> 41.3%
+ *      SEE BELOW. THIS ONE FAILED ITS FIRST FAIL-TEST.
+ *   M  made `fireWake`'s `moving` unconditionally true
+ *      -> exit 1, "wake/wakestrike: 25s holding ostinato never produced the
+ *         moment it waits for — nothing was measured"
+ *   N  zeroed `deliveryFires.wake`'s increment
+ *      -> exit 1, "wake/wake: 126 chances and it delivered 0 times"
+ *   O  made `fireRiposte` return before answering
+ *      -> exit 1, "riposte/riposte: 11 chances and it delivered 0 times"
+ *   P  made `fireErase` deal 0 to every body it reached
+ *      -> exit 1, "erase/erase: 260 chances and it delivered 0 times"
+ *   Q  guarded `Player.takeHit`'s `this.guard > 0` branch with `false`
+ *      -> exit 1, "guard/guard: 11 chances and it delivered 0 times"
+ *   R  made `fireGuard` return before refilling
+ *      -> exit 1, "guard/guardrefill: 4 chances and it delivered 0 times",
+ *         and "guard/guard ... nothing was measured" behind it, which is the
+ *         honest cascade: no charges refilled means no charges to spend
+ *   S  incremented `deliveryFires.erase` at the top of `fireSeek`, where every
+ *      shape in the game reaches it
+ *      -> exit 1, "a delivery counted with nothing wearing that shape — erase
+ *         fires=22 chances=0". This is the assertion the whole DELIVERIES
+ *      section rests on; without it every row above passes for free.
+ *   T  moved DAMPER from `shape: 'guard'` to `shape: 'aura'`
+ *      -> exit 1, "delivery 'guard' is declared and no draftable weapon wears
+ *         it"
+ *
+ * AND ONE OF THE TEN CAUGHT A VACUOUS ASSERTION IN THIS FILE'S OWN SUBJECT,
+ * which is the entire reason AGENTS.md §3 asks for a fail-test per assertion.
+ * L was planted and the check STAYED GREEN. `fireCompass` counted a bolt as
+ * axis-aligned by comparing its angle against the local `axis` variable the
+ * angle had just been computed from, so folding `p.aim` into `axis` shifted
+ * both sides of the comparison together: the weapon had silently become an
+ * aimed one and the gate that exists to say so read 100%. It is written
+ * against the world now — the fired angle is snapped to the nearest multiple
+ * of 90 degrees and the residual measured — and re-planting L takes it to
+ * 41.3%.
  *
  * TWO MORE WERE SEEN RED WITHOUT BEING PLANTED, which is better evidence than
  * a plant because neither was anticipated:

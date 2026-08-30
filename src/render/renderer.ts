@@ -575,6 +575,7 @@ export class Renderer {
     this.drawBullets(g, alpha);
     this.drawPlayer(g, alpha);
     this.drawDrones(g);
+    this.drawGuard(g);
 
     g.restore();
 
@@ -1591,6 +1592,66 @@ export class Renderer {
         g.globalCompositeOperation = 'source-over';
       }
     }
+  }
+
+  /**
+   * DAMPER'S CHARGES, AND THIS IS THE WHOLE OF WHAT THE PLAYER CAN SEE OF IT.
+   *
+   * Every other weapon in the roster announces itself by putting something in
+   * the world — a bolt, a ring, a pool, a line. A `guard` puts nothing
+   * anywhere: it deals no damage, spawns no object and its entire output is a
+   * hit that did not happen. Without this arc the player holding it has no way
+   * to tell a charged shield from a spent one, or from a card that does
+   * nothing at all.
+   *
+   * That is the defect `dadbaad` recorded at length and fixed for the status
+   * effects — "a burning body, a poisoned one, a frozen one and an untouched
+   * one were the same orange teardrop, the simulation delivering and the
+   * screen not". A shield with no readout is the same failure with a smaller
+   * denominator, and it is the one weapon where the readout IS the feedback.
+   *
+   * Drawn as `guardMax` arc segments around the ship, filled for the charges
+   * in hand and hollow for the ones refilling, so the count and the refill are
+   * one picture. Deliberately a different radius and hue from the drone ring
+   * above it — two rings of the same colour would read as one broken one.
+   */
+  private drawGuard(g: CanvasRenderingContext2D): void {
+    const p = this.world.player;
+    const max = Math.max(0, Math.round(p.guardMax));
+    if (!max || p.dead) return;
+    /*
+     * 27px AND A WIDE GAP, BOTH FROM LOOKING AT IT. At 21px with a 0.24 gap
+     * the three segments closed up into a solid ring sitting on top of the
+     * ship's own teal outline, so a full shield and an empty one were the same
+     * picture — which is the whole defect this method exists to avoid, drawn
+     * one radius too small. Out past the hull and visibly segmented, the count
+     * is readable at a glance and the spent slots are readable beside it.
+     */
+    const r = 27;
+    const gap = 0.4;
+    const seg = Math.max(0.12, TAU / max - gap);
+    g.save();
+    g.translate(p.x, p.y);
+    g.lineCap = 'round';
+    for (let i = 0; i < max; i++) {
+      const from = -Math.PI / 2 + i * (TAU / max) + gap / 2;
+      const live = i < p.guard;
+      // A spent slot is drawn, not omitted: "two of three" and "two of two"
+      // are different states and the player is choosing between them.
+      /*
+       * NEAR-WHITE, AND THE FIRST TRY WAS AMBER. Photographed at wave 16 the
+       * amber segments sat in a field of amber enemies and read as three more
+       * of them; the drones already own violet and the hull owns teal, so the
+       * only unclaimed value in the frame is white. It also says the right
+       * thing — this is the ship's own shell, not something in the world.
+       */
+      g.strokeStyle = live ? 'hsla(188, 95%, 93%, 0.98)' : 'hsla(188, 35%, 68%, 0.35)';
+      g.lineWidth = live ? 3.4 : 1.8;
+      g.beginPath();
+      g.arc(0, 0, r, from, from + seg);
+      g.stroke();
+    }
+    g.restore();
   }
 
   private drawParticles(g: CanvasRenderingContext2D): void {
