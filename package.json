@@ -13,7 +13,7 @@
     "smoke": "node tools/smoke.mjs",
     "levelshot": "node tools/levelshot.mjs",
     "audiocheck": "node tools/audiocheck.mjs",
-    "levelup": "node tools/levelup.mjs",
+    "levelup": "node --experimental-transform-types tools/levelup.mjs",
     "levelupdraw": "node --experimental-transform-types tools/levelupdraw.mjs",
     "effectsdraw": "node --experimental-transform-types tools/effectsdraw.mjs",
     "arena": "node --experimental-transform-types tools/arena.mjs",
@@ -176,6 +176,7 @@
     "gridview": "node --experimental-transform-types tools/gridview.mjs",
     "spawnring": "node --experimental-transform-types tools/spawnring.mjs",
     "pursuit": "node --experimental-transform-types tools/pursuit.mjs",
+    "warp": "node --experimental-transform-types tools/warp.mjs",
     "beatlock": "node --experimental-transform-types tools/beatlock.mjs"
   },
   "dependencies": {

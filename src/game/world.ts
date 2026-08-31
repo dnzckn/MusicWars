@@ -20,6 +20,7 @@ import {
   type MusicalState,
   type SilenceableStem,
 } from '../core/events';
+import { WARP_STICK } from '../core/input';
 import { clamp, clamp01, damp, dist2, TAU } from '../core/math';
 import { Rng } from '../core/rng';
 import { BEATS_PER_BAR, Transport } from '../core/transport';
@@ -195,6 +196,179 @@ const CULL_MARGIN = 320;
  * because bodies die first. A cap counts a thing that actually happens.
  */
 const RECYCLE_LIMIT = 3;
+
+/* ------------------------------------------------------------------------ *
+ * WARP
+ *
+ * "holding down W should enable you to engage warp, where monsters start
+ * spawning much faster ... if a player is so strong they might want to do this
+ * to finish up the game, but it should be a lot harder".
+ *
+ * WHAT IT IS, IN ONE SENTENCE: warp runs the WAVE'S OWN CLOCK fast. That is the
+ * whole mechanism — one block in `updateWave`, twelve extra bars of schedule
+ * for every bar of real time — and everything the mode does follows from it,
+ * because the wave's groups, its top-up window and its deadline
+ * (`plan.lengthBeats`) are all denominated in beats. Multiply the clock and the
+ * arrival rate, the density and the end of the wave all move together, with
+ * nothing to keep in step.
+ *
+ * TWO MORE MECHANISMS WERE WRITTEN AND MEASURED OUT: a doubled population floor
+ * and a twelve-times-faster top-up cadence. Each survived its own fail-test and
+ * each was worth about 5% of warp's effect against the clock's 900%; both are
+ * recorded where they used to be, at `WARP_RATE`'s old floor constant and at
+ * the `topUp` call in `updateWave`. The instinct that a spawn mode must change
+ * the spawner is wrong here: the spawner was already right, it was just slow.
+ *
+ * THE CONSEQUENCE THAT MAKES IT A TRADE RATHER THAN FREE SPEED. Because the
+ * clock is what moves and not the CONTENT, a wave still pays out the same
+ * kills — so the XP a wave is worth is unchanged, while the wave index (and
+ * with it `difficulty`, `escalation` and every hp scale that reads them)
+ * advances several times faster per minute. The player is not made weaker; the
+ * stage is made to arrive sooner. And nothing caps the field: the crowd only
+ * stays bounded while the player is killing at the rate the stage is
+ * delivering. A player who cannot is buried, which is the "a lot harder" half,
+ * and it is enforced by arithmetic rather than by a penalty.
+ *
+ * `docs/research-density.md` §6 records a case where MORE BODIES made the game
+ * EASIER, because the player out-killed them and levelled faster. That failure
+ * needs the extra bodies to be extra XP. Here they are the same wave's bodies
+ * arriving sooner, so the per-wave payout is held constant by construction —
+ * and `tools/warp.mjs` measures level-at-wave anyway, because "by construction"
+ * is exactly the kind of claim this repository has been wrong about before. It
+ * is not idle: with the clock removed and the two deleted mechanisms restored,
+ * that assertion goes RED — warp reaches wave 3 at level 17 against cruise's
+ * 13.5, which is §6 happening again, in this feature, on this build.
+ *
+ * WARP DOES NOT RAISE `CRUISE_SPEED`, AND THAT IS MEASURED RATHER THAN CAUTIOUS.
+ * It is the obvious thing for a mode called warp to do, and it is a no-op on the
+ * fight — because `carryStage` advances the whole world at the same constant the
+ * ship is advanced by, so in the stage's frame nothing changes at all. Measured
+ * over 3 seeds x 4 minutes at 430 against 860, same bot, same seeds:
+ *
+ *                          430      860
+ *   wave reached           5.3      5.3
+ *   on screen p50 / p90    9.7/25.0 9.7/24.3
+ *   threatDistance         0.672    0.680
+ *   closest approach p50   394px    404px
+ *   arrivals reaching 120px 3.4%    4.1%
+ *
+ * Every one of those is inside run-to-run noise. What DOES change is the
+ * control invariant commit 2d5e783 exists for: full back is `-CRUISE + TRIM`,
+ * which is exactly 0 today and -430 at 860 — the ship could no longer be held
+ * still in the stage's frame, and "the worst the stick can do is stop you"
+ * would stop being true, in the mode where the crowd is thickest. So warp buys
+ * nothing from the constant and would spend the one property of the throttle
+ * that a player learns first. The SENSE of speed is delivered where it belongs
+ * instead, in `renderer.drawBackground`: the star streak takes a warp term, so
+ * warp at cruise looks about as fast as full throttle does at rest.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Seconds the throttle must sit at its forward stop before warp engages.
+ *
+ * MEASURED, NOT CHOSEN. The one thing warp must not do is engage while the
+ * player is dodging. `tools/warp.mjs` §1 runs the arena bot — which is doing
+ * nothing but dodging — and records every continuous run of "forward axis at
+ * or past `WARP_STICK`": across 32 simulated minutes, 230,400 steps and 1,739
+ * such runs, the median is 0.05 s, the 99th percentile 0.35 s and THE LONGEST
+ * IS 0.60 s. 1.4 s is 2.3x that longest hold and 4x the p99.
+ *
+ * The threshold is not the only defence and is not asked to be: the charge is
+ * drawn as it fills (`renderer.drawThrottle`), so the mode announces itself for
+ * a second and a half before it arrives and can be abandoned by letting go.
+ * A threshold long enough to be safe on its own would be a threshold too long
+ * to use on purpose.
+ */
+export const WARP_ARM = 1.4;
+
+/**
+ * Seconds at the AFT stop before an engaged warp drops. Warp is a LATCH.
+ *
+ * THIS WAS HOLD-TO-SUSTAIN AND THE MEASUREMENT KILLED IT. The obvious reading
+ * of "holding down W" is that letting go of W leaves warp, and `tools/warp.mjs`
+ * runs that arm — the bot's forward axis pinned at the stop for the whole run,
+ * steering only sideways — against the ordinary dodge:
+ *
+ *                       cruise    pinned forward
+ *   kills / second        5.63              0.49
+ *   level reached         16.0               1.0
+ *   wave reached           4.5               3.0
+ *   enemies alive p50     21.5             406.0
+ *
+ * A ship at the forward stop is doing 430 px/s against the stage and
+ * `SPEED_CEILING` is 285, so it outruns EVERY body in the game by 145 px/s.
+ * Hold-to-sustain therefore means "warp is a mode you can only be in while
+ * running away from the fight it just summoned": nothing is in range, nothing
+ * dies, no XP arrives, the boss wave never clears, and 406 bodies trail behind
+ * uncatchable. That is not a hard mode, it is a stalled one — the ninth
+ * rediscovery in this repo of `docs/research-density.md` §6's finding that
+ * bodies the player is running away from are scenery.
+ *
+ * So warp LATCHES. Push the throttle to its forward stop and hold to engage;
+ * pull it to its AFT stop and hold to leave. The two stops of one axis are the
+ * two ends of one mode, which is a thing a player can be told in one sentence,
+ * and in between them the whole stick is theirs — they can fly, turn, brake to
+ * cruise and fight the crowd warp is delivering. The literal ask ("holding down
+ * W should enable you to engage warp") is met by the entry; the exit is a
+ * decision rather than an accident of letting go.
+ *
+ * THE SAME HOLD AS THE ARM, and written as `= WARP_ARM` rather than as a second
+ * number so it cannot drift. One rule the player has to learn — a second and a
+ * half at either stop — instead of two.
+ *
+ * It was 0.35 s for one draft, on the argument that leaving should be cheap.
+ * `tools/warp.mjs` §1 measures the aft stop on exactly the same footing as the
+ * forward one and killed it: the dodge bot holds full aft for up to 1.08 s
+ * without meaning anything by it, which at 0.35 s is a mode dropping out from
+ * under the player about once a minute. At 1.4 s, zero of 548 measured aft
+ * holds reach it.
+ *
+ * That the exit is a hard brake is a cost and is meant to be. Full aft holds
+ * the ship still in the stage's frame while a crowd closing at up to
+ * `SPEED_CEILING` keeps coming, so bailing out of warp is 1.4 s of standing in
+ * traffic. Warp should not be a thing to flick on and off between groups.
+ */
+export const WARP_DROP = WARP_ARM;
+
+/**
+ * How many times faster the wave's clock runs while warp is engaged.
+ *
+ * The owner asked for "10x or more". Twelve, and it is measured at the output
+ * rather than asserted from the constant: `tools/warp.mjs` times a wave's own
+ * spawn schedule from `wave:start` to the last group, paired wave index against
+ * wave index, and reads 9.1x — 7.7x to 11.6x across the individual waves. It is
+ * short of twelve because a wave's clock cannot advance past the bar boundary
+ * the bias moves in, and because the cruise arm it is measured against is
+ * already sliding its own schedule forward when the stage empties.
+ *
+ * TWELVE AND NOT TEN because the bias is committed in WHOLE BARS (see
+ * `warpBeatDebt`): twelve is three whole bars for every beat of a four-four
+ * bar, so the accumulator lands on the grid the wave schedule is quantised to
+ * instead of carrying a permanent fractional remainder.
+ */
+export const WARP_RATE = 12;
+
+/*
+ * THERE IS NO WARP POPULATION FLOOR, AND THAT IS A MEASURED DELETION.
+ *
+ * `WARP_FLOOR = 2` stood here for a draft: warp doubled `targetOnScreen()` on
+ * the argument that otherwise the crowd would settle at the same size as at
+ * cruise and only arrive sooner. Measured at 4 seeds x 6 minutes per arm, it
+ * bought nothing the clock was not already buying and cost the frame:
+ *
+ *                        cruise    warp x1    warp x2
+ *   schedule drain         1.00       9.2x       9.1x
+ *   waves / minute         1.29       2.54       2.58
+ *   on screen p90          26.3      237.8      321.5
+ *
+ * The same multiplier, the same wave rate, a third more bodies on the screen.
+ * The floor is not what makes warp dense — the CLOCK is, because a wave's whole
+ * schedule now lands in three seconds — and `topUp` never manufactures past the
+ * floor anyway, so doubling it only raises the ceiling the accumulation runs
+ * into. Recorded rather than left at 1, because a constant whose value makes it
+ * a no-op is worse than no constant: it reads live and does nothing, which is
+ * this repository's most-recorded defect.
+ */
 
 /**
  * The ground a pickup has to be caught across because the ship only passes it
@@ -1389,6 +1563,26 @@ export class World {
   /** Beats the spawn schedule has been slid forward because the stage emptied. */
   private waveBeatBias = 0;
 
+  /* -- warp; see the constant block at the head of this file -------------- */
+  /** Seconds the throttle has been held at its forward stop. */
+  private warpHold = 0;
+  /** Seconds it has been held at its AFT stop. The way out. */
+  private warpBrake = 0;
+  /** Whether the stage is running fast right now. */
+  private warpOn = false;
+  /**
+   * Warp beats owed to `waveBeatBias` that do not yet make a whole bar.
+   *
+   * The bias MUST move in whole bars. `beginWave` anchors `waveStartBeat` to a
+   * bar line and every entry's `atBeat` is a multiple of four, so groups land
+   * on bar lines exactly while the bias is a whole number of bars — and the
+   * slide fifty lines below records what happens when that is broken: on-grid
+   * spawns fell 98% -> 22% and the arrivals stopped agreeing with the kick.
+   * Warp advances the clock by twelve bars for every bar of real time, and it
+   * does it a bar at a time with the remainder parked here.
+   */
+  private warpBeatDebt = 0;
+
   /**
    * Impulses for the warping grid, drained by the renderer each frame.
    * The simulation does not know what a grid is; it just reports that
@@ -2054,6 +2248,10 @@ export class World {
       });
     }
     this.waveBeatBias = 0;
+    // The warp remainder belongs to the wave whose clock it was accelerating.
+    // Carried across a wave boundary it would dump a bar of schedule into the
+    // first frame of the next one, which is a spawn nobody asked for.
+    this.warpBeatDebt = 0;
     this.movement = this.plan.isBoss ? null : this.movementFor(index);
     this.waveHasLunger = false;
     /*
@@ -2186,6 +2384,15 @@ export class World {
       banish?: number;
       reroll?: boolean;
       skip?: boolean;
+      /**
+       * The throttle's position on its own axis: +1 hard forward, -1 hard back.
+       * Hold the forward stop to engage warp, the aft stop to leave it.
+       *
+       * OPTIONAL, and `undefined` falls back to the normalised `y`, for exactly
+       * the reason `openOffers` below is optional: forty headless tools build
+       * their own input literal. See the fallback at the call site.
+       */
+      throttle?: number;
       /*
        * "Show me the level-ups I have banked." Space, in the shipping game.
        *
@@ -2269,6 +2476,33 @@ export class World {
     // Hitstop freezes the simulation but never the transport: the music must
     // keep time through an explosion or the whole illusion falls apart.
     this.transport.advance(dt);
+    /*
+     * WARP'S CLOCK ACCRUES HERE, ABOVE THE HITSTOP RETURN, and that placement
+     * was a measured bug fix rather than a preference.
+     *
+     * The wave schedule is denominated in TRANSPORT beats, and the transport
+     * does not stop for an explosion — the line above says so. So during
+     * hitstop the schedule keeps advancing at 1x while everything else holds.
+     * With the accrual inside `updateWave`, which sits below `if (simDt <= 0)
+     * return`, warp's eleven extra beats did NOT accrue on those frames, and
+     * warp got slower the better the player was at killing: `tools/warp.mjs`
+     * measured a wave's schedule emptying 5.9x faster instead of the 12x the
+     * constant says, at a bot killing 20 bodies a second. A multiplier that
+     * quietly halves itself under exactly the player the mode is FOR is the
+     * kind of defect this repository names "a property nobody measures".
+     *
+     * THE BANK IS CAPPED AT TWO BARS. `updateWave` only commits the debt on a
+     * live step, so a level-up offer — the world stopped, the transport still
+     * running — would otherwise bank its whole duration and dump a wave's worth
+     * of schedule on the frame the cards close. Two bars is comfortably more
+     * than any hitstop (a few frames) and far less than any pause.
+     */
+    if (this.warpOn && this.phase === 'spawning') {
+      this.warpBeatDebt = Math.min(
+        BEATS_PER_BAR * 2,
+        this.warpBeatDebt + this.transport.lastStep * (WARP_RATE - 1),
+      );
+    }
     this.camera.update(dt);
     /*
      * The camera tracks the ship.
@@ -2454,6 +2688,20 @@ export class World {
        * `TRACK_BEHIND` at -130, touches the back, and is carried at 300 with
        * the crowd closing.
        */
+      /*
+       * WARP READS THE STICK HERE, one line before the ship does, so the mode
+       * and the throttle can never disagree about what the player is holding.
+       *
+       * `input.throttle` is `InputState`'s pre-normalise fore-and-aft axis; the
+       * `??` is for the forty headless harnesses, which build their own input
+       * literal and know nothing about the field. They get the NORMALISED `y`,
+       * which is strictly harder to push to either stop — so a harness can
+       * under-report a stop but can never invent one, and no existing
+       * measurement can be re-baselined by a bot that started warping without
+       * being asked to.
+       */
+      this.throttle = input.throttle ?? -input.y;
+      this.updateWarp(simDt);
       this.trackY -= CRUISE_SPEED * simDt;
       this.carryStage(simDt);
       const expired = this.player.update(
@@ -3937,7 +4185,184 @@ export class World {
     push('minor', split.minor);
   }
 
+  /* ---------------------------------------------------------------------- *
+   * WARP
+   * ---------------------------------------------------------------------- */
+
+  /** True while the stage is running fast. Read by the renderer and by tools. */
+  get warping(): boolean {
+    return this.warpOn;
+  }
+
+  /**
+   * 0 at rest, 1 the instant warp engages, and 1 for as long as it holds.
+   *
+   * This is the fill the throttle gauge draws. It is the ONLY warning the
+   * player gets before a mode change, so it is published as a fraction rather
+   * than as a boolean and a timer: a bar that visibly fills is a thing you can
+   * decide to abandon, and `WARP_ARM` is chosen on the assumption that it will
+   * be drawn (see the constant).
+   */
+  get warpCharge(): number {
+    return this.warpOn ? 1 : clamp01(this.warpHold / WARP_ARM);
+  }
+
+  /**
+   * How far through the aft hold that LEAVES warp, 0..1. 0 unless warping.
+   *
+   * Published for the same reason `warpCharge` is: the exit is a hold too, and
+   * a hold whose end the player cannot see is a key they do not know is
+   * working. The gauge draws this one draining the bar it filled.
+   */
+  get warpRelease(): number {
+    return this.warpOn ? clamp01(this.warpBrake / WARP_DROP) : 0;
+  }
+
+  /**
+   * The two stops. One state machine, called once per step.
+   *
+   * ON `simDt`, like everything else inside the `phase !== 'over'` block: the
+   * level-up offer stops the world, and a charge that kept filling behind four
+   * cards would put the player in warp for a decision they made with the game
+   * paused. It also means hitstop does not steal charge.
+   *
+   * THE CHARGE IS SPENT, NOT PARKED, at both ends: leaving either stop zeroes
+   * that stop's timer. A player who taps forward eleven times while dodging
+   * must not accumulate a warp out of eleven dodges, and the same argument runs
+   * backwards for the brake.
+   *
+   * DEATH DROPS IT, and `player.dead` is the right test rather than a harsh
+   * one: it is only set when the LAST life goes (`Player.takeHit` refills hp
+   * and hands out invulnerability on every other one), so this is the end of
+   * the run and not a per-hit penalty nobody was told about. `over` is not
+   * tested alongside it because the only caller already sits inside
+   * `if (this.phase !== 'over')` and a condition that cannot be true is what
+   * `tools/deadconditions.mjs` exists to find.
+   *
+   * `idle` is the TUNING UP runway, where the ship is under throttle for four
+   * bars before there is any wave to accelerate.
+   */
+  private updateWarp(dt: number): void {
+    if (this.player.dead || this.phase === 'idle') {
+      this.warpOn = false;
+      this.warpHold = 0;
+      this.warpBrake = 0;
+      return;
+    }
+    this.warpHold = this.throttle >= WARP_STICK ? this.warpHold + dt : 0;
+    this.warpBrake = this.throttle <= -WARP_STICK ? this.warpBrake + dt : 0;
+    if (!this.warpOn && this.warpHold >= WARP_ARM) {
+      this.warpOn = true;
+      this.warpBeatDebt = 0;
+      this.warpBrake = 0;
+      this.announce('WARP ENGAGED', 'PULL BACK TO DROP OUT', 'phase');
+    } else if (this.warpOn && this.warpBrake >= WARP_DROP) {
+      this.warpOn = false;
+      this.warpHold = 0;
+      this.announce('WARP OFF', '', 'phase');
+    }
+  }
+
+  /**
+   * The throttle position this step: +1 hard forward, -1 hard back.
+   *
+   * Set from the input at the top of `update` so `updateWarp` has no parameter
+   * to thread, and PUBLISHED because the renderer's gauge wants the stick
+   * position rather than the resulting ground speed — the two differ whenever
+   * the station-keeping `settle` term is pushing.
+   */
+  throttle = 0;
+
+  /* ---------------------------------------------------------------------- *
+   * HOW FAR TO THE NEXT BOSS
+   *
+   * The unit is WAVES, and that is a finding rather than a convenience.
+   *
+   * The owner asked for "how far away until the next boss", and on a treadmill
+   * the obvious reading — distance — is the one quantity that carries no
+   * information at all: the ship travels at `CRUISE_SPEED` for ever, the world
+   * is carried with it (`carryStage`), and nothing in the boss schedule reads a
+   * coordinate. A metre counter would tick up smoothly and correlate with
+   * nothing the player can change.
+   *
+   * What actually summons a boss is `planWave`: `index % BOSS_EVERY === 3`. So
+   * the distance to the next boss is three waves, or two, or one, and the only
+   * continuous part of it is how far through the current wave the player is.
+   * The bar therefore has `BOSS_EVERY` segments and fills one per wave.
+   *
+   * WITHIN a wave it reads `entryCursor / entries.length` — the wave's own
+   * spawn schedule, which is the same number `snapshot.waveProgress` has always
+   * published. It is monotone by construction, which a progress bar has to be:
+   * the alternative candidate, "how much of the crowd is left", moves BACKWARDS
+   * every time the stage tops up, and a progress bar that retreats is a bug
+   * report. It saturates while the last group is still being cleared, and that
+   * is honest — at that point the stage has delivered everything it owes and
+   * only the killing is left.
+   * ---------------------------------------------------------------------- */
+
+  /** 0 at the start of a boss cycle, 1 when the boss is on the field. */
+  get bossProgress(): number {
+    if (this.plan.isBoss) {
+      // The boss wave is the last segment. Inside it, progress is the escort
+      // then the fight; `phase` is the honest cursor because a boss wave's
+      // `entries` are only the escort before it.
+      const into = this.phase === 'conductor' || this.phase === 'awaiting-boss' ? 1 : this.waveFraction();
+      return clamp01((BOSS_EVERY - 1 + into) / BOSS_EVERY);
+    }
+    return clamp01(((this.waveIndex % BOSS_EVERY) + this.waveFraction()) / BOSS_EVERY);
+  }
+
+  /**
+   * Which part of the wave cycle the stage is in.
+   *
+   * PUBLISHED FOR THE TOOLS, like `trackFront` and `wayOut` above it. Warp only
+   * accelerates `spawning`, so "how many bodies per second" is a question about
+   * that phase and not about the run — a boss fight is a hundred seconds of a
+   * denominator warp does not touch, and averaging over it would report a mode
+   * as weaker than it is. `tools/warp.mjs` needs to bucket by this, and the
+   * alternative is a tool holding its own model of a five-state machine, which
+   * is the defect `docs/research-camera.md` §7b is a list of.
+   */
+  get stagePhase(): Phase {
+    return this.phase;
+  }
+
+  /** Whole waves still to clear before the boss wave. 0 during the boss wave. */
+  get wavesToBoss(): number {
+    return this.plan.isBoss ? 0 : BOSS_EVERY - 1 - (this.waveIndex % BOSS_EVERY);
+  }
+
+  /** How far through this wave's own spawn schedule the stage has got, 0..1. */
+  private waveFraction(): number {
+    const n = this.plan.entries.length;
+    return n > 0 ? clamp01(this.entryCursor / n) : 1;
+  }
+
   private updateWave(dt: number): void {
+    /*
+     * WARP, IN THE ONLY PLACE IT TOUCHES THE STAGE: the wave's clock runs fast.
+     *
+     * `beatsIn` one line below is what the entry schedule, the top-up window
+     * and the wave's deadline are all measured in, so adding bars to the bias
+     * accelerates all three together with no third quantity to keep in step.
+     *
+     * THE DEBT IS BANKED IN `update`, above the hitstop return, and only SPENT
+     * here — see the long note there. `dt > 0` is what keeps it from being
+     * spent behind a level-up offer, which stops the world and leaves this
+     * method running on a zero step.
+     *
+     * WHOLE BARS ONLY — see `warpBeatDebt`. And only in `spawning`: a boss's
+     * four-bar telegraph is tied to the riser the director is playing over it
+     * (`boss:telegraph` carries `etaSeconds`), the interlude is one bar of air
+     * after a wave grade, and warping past either would be warping past the
+     * thing warp is travelling towards.
+     */
+    if (dt > 0 && this.warpOn && this.phase === 'spawning') {
+      while (this.warpBeatDebt >= BEATS_PER_BAR) {
+        this.warpBeatDebt -= BEATS_PER_BAR;
+        this.waveBeatBias += BEATS_PER_BAR;
+      }
+    }
     const beatsIn = this.transport.beat - this.waveStartBeat + this.waveBeatBias;
 
     switch (this.phase) {
@@ -4063,6 +4488,33 @@ export class World {
          * wave gives up waiting", which is exactly the bound this needs: top up
          * until then, and after that let the wave end. Without a bound the floor
          * would keep manufacturing enemies and `settled` would never be true.
+         */
+        /*
+         * WARP DOES NOT TOUCH THIS LINE, AND THAT IS A MEASURED DELETION.
+         *
+         * Two more warp mechanisms stood here for a draft. The feed ran from
+         * the wave's first beat instead of waiting for `done` (`|| this.warpOn`)
+         * and it ran twelve times as often (`BOSS_ESCORT_BARS / WARP_RATE`), on
+         * the argument that otherwise the first half of a warped wave would be
+         * quieter than the cruise it replaced. Both were fail-tested, both
+         * survived their own break, and an A/B at 3 seeds x 3 minutes says why:
+         *
+         *                          clock + feed + cadence     clock alone
+         *   schedule drain                       9.0x            9.1x
+         *   waves / minute                       2.2x            2.2x
+         *   spawns / s in phase                 27.86           26.90
+         *   hp / s in phase                      1787            1745
+         *   on screen p90                         157             139
+         *
+         * The clock is doing all of it. Once a wave's entire schedule lands in
+         * two seconds there is no "first half of the wave" left to fill, so the
+         * feed was topping up a stage that was already over its floor and
+         * declining on the very next line. Deleted rather than shipped, on the
+         * same rule the `mid-charge >= 1` assertion went out under: a mechanism
+         * that survives its own fail-test is decoration, and decoration in a
+         * spawn loop is a thing the next balance pass will tune for hours.
+         *
+         * WARP IS ONE LEVER NOW: the wave clock, in `updateWave`'s first block.
          */
         if (done && beatsIn <= this.plan.lengthBeats) this.topUp(this.targetOnScreen());
         /*
@@ -4600,6 +5052,10 @@ export class World {
    * Two callers with two different floors: a boss fight asks for
    * `BOSS_ESCORT_FLOOR`, and an ordinary wave past its last group asks for the
    * full `targetOnScreen()` until its deadline.
+   *
+   * WARP DOES NOT COME THROUGH HERE. A draft gave this a cadence argument so a
+   * warped wave could top up twelve times as often; it was measured to be worth
+   * about 5% of warp's effect and removed. See the call site in `updateWave`.
    *
    * Spawns at most one group every `BOSS_ESCORT_BARS` bars, and only while the
    * population is under the floor, so a player who is clearing it gets nothing

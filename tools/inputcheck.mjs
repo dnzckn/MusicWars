@@ -347,6 +347,80 @@ console.log('\nC. held keys stay held across every step of every frame');
 }
 
 // ---------------------------------------------------------------------------
+// C2. The throttle axis, which is the input warp is entered on.
+//
+//     `InputState.throttle` is the fore-and-aft component BEFORE the diagonal
+//     normalise, and `World` turns "held at a stop for 1.4s" into a mode. Two
+//     things about it have to hold or the mode is unreachable or unstoppable,
+//     and NEITHER is visible from `y`:
+//
+//       1. It is LEVEL-TRIGGERED, like shoot and focus. If it were one-shot the
+//          hold could never accumulate and warp would be unenterable.
+//       2. STEERING MUST NOT REDUCE IT. `y` is divided by `hypot(x, y)`, so
+//          W+A gives y = -0.707 — under the 0.92 stop. Read off `y`, "hold W"
+//          would silently mean "hold W and do not steer", in a mode whose whole
+//          premise is more bodies to steer through. This is the assertion that
+//          catches someone deleting the field and pointing `World` back at `y`.
+// ---------------------------------------------------------------------------
+console.log('\nC2. the throttle axis survives the diagonal normalise');
+{
+  const { WARP_STICK } = await import('../src/core/input.ts');
+  const input = new Input(win);
+  const SAMPLES = 240;
+
+  keydown('KeyW');
+  let fwd = 0;
+  let yUnderStop = 0;
+  for (let i = 0; i < SAMPLES; i++) {
+    const st = input.sample();
+    if (st.throttle >= WARP_STICK) fwd++;
+    if (-st.y < WARP_STICK) yUnderStop++;
+    if (i % 4 === 3) frameBoundary(input);
+  }
+  check(fwd === SAMPLES, `W held: throttle at the forward stop on ${fwd}/${SAMPLES} samples`);
+  check(yUnderStop === 0, `W alone: y also reaches the stop on ${SAMPLES - yUnderStop}/${SAMPLES} (the control — W alone is not a diagonal)`);
+
+  // Now steer while holding it. This is the case `y` cannot answer.
+  keydown('KeyA');
+  let fwdDiag = 0;
+  let yDiag = 0;
+  let steered = 0;
+  for (let i = 0; i < SAMPLES; i++) {
+    const st = input.sample();
+    if (st.throttle >= WARP_STICK) fwdDiag++;
+    if (-st.y >= WARP_STICK) yDiag++;
+    if (st.x < -0.5) steered++;
+    if (i % 4 === 3) frameBoundary(input);
+  }
+  check(steered === SAMPLES, `W+A: the ship is actually steering on ${steered}/${SAMPLES} samples (denominator)`);
+  check(fwdDiag === SAMPLES, `W+A held: throttle STILL at the forward stop on ${fwdDiag}/${SAMPLES} samples`);
+  check(
+    yDiag === 0,
+    `W+A: the normalised y reaches the stop on ${yDiag}/${SAMPLES} samples (want 0 — this is why throttle exists)`,
+  );
+  keyup('KeyW');
+  keyup('KeyA');
+
+  keydown('KeyS');
+  let aft = 0;
+  for (let i = 0; i < SAMPLES; i++) {
+    const st = input.sample();
+    if (st.throttle <= -WARP_STICK) aft++;
+    if (i % 4 === 3) frameBoundary(input);
+  }
+  check(aft === SAMPLES, `S held: throttle at the AFT stop on ${aft}/${SAMPLES} samples (the way out of warp)`);
+  keyup('KeyS');
+
+  let idle = 0;
+  for (let i = 0; i < SAMPLES; i++) {
+    const st = input.sample();
+    if (Math.abs(st.throttle) < 1e-9) idle++;
+    if (i % 4 === 3) frameBoundary(input);
+  }
+  check(idle === SAMPLES, `nothing held: throttle is 0 on ${idle}/${SAMPLES} samples`);
+}
+
+// ---------------------------------------------------------------------------
 // D. The other edge paths: the offer cards, and the gamepad.
 // ---------------------------------------------------------------------------
 console.log('\nD. the remaining edge actions, 2 steps per frame (the 60 Hz case)');

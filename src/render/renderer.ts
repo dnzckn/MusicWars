@@ -15,6 +15,7 @@
  */
 
 import { clamp01, lerp, TAU } from '../core/math';
+import { BOSS_EVERY } from '../game/waves';
 import type { Transport } from '../core/transport';
 import type { Effect, World } from '../game/world';
 import { beatsUntilLunge } from '../game/enemies';
@@ -86,6 +87,15 @@ export class Renderer {
   private vignettes = new Map<number, CanvasGradient>();
   /** Ground speed along the track, px/s. Set once a frame; see `render`. */
   private groundSpeed = CRUISE_SPEED;
+  /**
+   * How far into warp the screen is, smoothed. 0 at cruise, 1 fully warped.
+   *
+   * SMOOTHED AND NOT THE BOOLEAN, because everything it drives is a length or
+   * an alpha and a mode that snaps on in one frame reads as a glitch rather
+   * than as a change of state. `World.warping` is the truth; this is how fast
+   * the picture agrees with it.
+   */
+  private warpShown = 0;
   /** Stick position on the throttle axis: 0 stopped, 0.5 cruise, 1 flat out. */
   private trim = 0.5;
   /** Smoothed `trim`, so the gauge and the plume do not twitch on a tap. */
@@ -562,6 +572,12 @@ export class Renderer {
     // Smoothed for the things that would otherwise twitch on a tap. `trim`
     // itself stays raw for anything that wants the instantaneous value.
     this.trimShown += (this.trim - this.trimShown) * Math.min(1, dt * 7);
+    // Faster in than out (0.35s to arrive, 0.9s to fade), so engaging warp is
+    // an event and leaving it is a settle. Both are well inside the 1.4s hold
+    // at either stop, so neither transition is still moving when the next
+    // decision is available.
+    const warpTarget = w.warping ? 1 : 0;
+    this.warpShown += (warpTarget - this.warpShown) * Math.min(1, dt * (w.warping ? 8 : 3));
     // Shortest way round the colour wheel, so 8 -> 282 goes down through 0
     // rather than sweeping through every hue in between.
     let d = ((this.targetHue - this.hue + 540) % 360) - 180;
@@ -950,7 +966,19 @@ export class Renderer {
        * more pixels at the same alpha is a DIMMER star, which would have
        * cancelled half of what the length is trying to say.
        */
-      const streak = this.trimShown * this.trimShown * 5.5 + tension * 0.6;
+      /*
+       * WARP ADDS TO THE STREAK, and it has to, because the throttle term
+       * cannot say it. Warp LATCHES (see `world.ts`), so a warping player is
+       * usually NOT at the forward stop — they are flying, and `trimShown` is
+       * wherever they left the stick. Without this term the one visual that
+       * most obviously means "going faster" would be at its cruise value in the
+       * mode called warp.
+       *
+       * +4.0 is roughly the top of the throttle's own range, so warp at cruise
+       * looks about as fast as full throttle does at rest, and warp at full
+       * throttle is off the end of anything the game shows otherwise.
+       */
+      const streak = this.trimShown * this.trimShown * 5.5 + tension * 0.6 + this.warpShown * 4;
       g.globalAlpha = (0.16 + s.z * 0.4) * (1 + Math.min(0.55, streak * 0.12));
       const size = s.z * 1.9;
       g.fillRect(px, py, size, size * (1 + streak));
@@ -2235,6 +2263,198 @@ export class Renderer {
     g.closePath();
     g.fill();
 
+    /*
+     * WARP LIVES ON THE THROTTLE, because warp IS the throttle held at its stop
+     * and a mode belongs on the control that produces it. Three states, drawn
+     * on the same 96px track so the eye never has to look anywhere else:
+     *
+     *   ARMING     a magenta sleeve grows up the outside of the track as the
+     *              1.4s hold accumulates. This is the only warning the player
+     *              gets before a mode change, and `WARP_ARM` is chosen on the
+     *              assumption that it is drawn — see the constant.
+     *   ENGAGED    the sleeve is full, breathing, and captioned WARP. A mode
+     *              with no persistent indicator is a mode you can forget you
+     *              are in, which for this one means forgetting why the screen
+     *              is full.
+     *   RELEASING  the sleeve DRAINS as the aft stop is held, so the way out is
+     *              as visible as the way in was.
+     *
+     * A SLEEVE RATHER THAN A SECOND BAR. The track already carries a length
+     * (the stick) and a datum (cruise); a second length inside it would be two
+     * numbers in one shape. The sleeve is outside the track and reads as a
+     * property OF it.
+     */
+    const charge = w.warpCharge;
+    if (charge > 0.001) {
+      const lit = w.warping ? 1 - w.warpRelease : charge;
+      const h = (H + 6) * clamp01(lit);
+      // Breathing only while engaged: an arming sleeve must read as filling,
+      // and a pulse on top of a fill makes the fill harder to judge.
+      const pulse = w.warping ? 0.78 + Math.sin(w.snapshot.time * 5.4) * 0.18 : 0.9;
+      g.fillStyle = `hsla(305, 100%, 66%, ${pulse})`;
+      g.fillRect(cx + 6, top + 3 + (H + 6 - h), 3, h);
+      g.fillRect(cx - 9, top + 3 + (H + 6 - h), 3, h);
+    }
+    if (w.warping) {
+      g.strokeStyle = `hsla(305, 100%, 72%, ${0.55 + Math.sin(w.snapshot.time * 5.4) * 0.25})`;
+      g.lineWidth = 1;
+      g.strokeRect(cx - 9.5, top - 3.5, 19, H + 7);
+      g.font = '700 9px ui-monospace, monospace';
+      g.textAlign = 'center';
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = 'hsl(305, 100%, 84%)';
+      g.fillText('WARP', cx - 1, top - 9);
+    }
+
+    g.restore();
+  }
+
+  /**
+   * How far to the next boss, as a vertical bar up the left edge.
+   *
+   * THE UNIT IS WAVES AND THAT IS THE FINDING, not a shortcut. The owner asked
+   * for "how far away until the next boss", and on a treadmill the obvious
+   * reading — distance — is the one quantity that carries no information: the
+   * ship travels at `CRUISE_SPEED` for ever, the world is carried with it, and
+   * nothing in the boss schedule reads a coordinate. A metre counter would tick
+   * up smoothly and correlate with nothing the player can change. What summons
+   * a boss is `planWave`'s `index % BOSS_EVERY === 3`, so the honest answer is
+   * three waves, or two, or one — and `World.bossProgress` says so.
+   *
+   * SO IT IS SEGMENTED, one segment per wave, rather than a smooth tube. The
+   * segment boundaries ARE the information: a player glancing at it should read
+   * "one more wave", not "about three quarters". Inside a segment it advances
+   * with that wave's own spawn schedule, which is monotone by construction.
+   *
+   * WHY THE LEFT EDGE. The throttle took the right edge because `.hud-tl` runs
+   * about 200px deep with a full band and eight slot tiles, which reaches the
+   * ship's station line at a 720-tall window. This bar is BELOW that: it starts
+   * at 0.42 of the view and ends at 0.86, so it clears the tiles above and the
+   * XP strip and resume line below, and it is the tallest thing on the screen
+   * that is not the field — which is what a progress bar should be when the
+   * thing it measures is the only long-term goal the game has.
+   *
+   * DRAWN ON THE OVERLAY CANVAS rather than added to the DOM HUD. The three
+   * corner groups are what `tools/panelshot.mjs` asserts do not collide, and a
+   * fourth absolutely-positioned element down the left edge would be a fourth
+   * thing to collide. The canvas is measured against the view and cannot push
+   * anything.
+   */
+  private drawBossBar(g: CanvasRenderingContext2D): void {
+    const w = this.world;
+    if (w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
+    const x = 26;
+    const top = w.viewH * 0.42;
+    const bot = w.viewH * 0.86;
+    const H = bot - top;
+    if (H < 60) return;
+    /*
+     * GUARDED THE SAME WAY `vy` AND `tension` ARE AT THE TOP OF `render`, and
+     * for the same reason, which `tools/effectsdraw.mjs` demonstrated rather
+     * than predicted: a non-finite fraction reaches `hsl(352, NaN%, NaN%)`,
+     * which throws inside the colour parser and kills the frame AFTER the
+     * background has been cleared — a black screen with no error. It caught
+     * this bar on its first run, drawing 128 NaNs, because that harness builds
+     * its own world shape and a field it does not know about is `undefined`.
+     * The bar simply does not draw rather than drawing wrong: it is a readout,
+     * and a readout with nothing behind it should be absent, not zero.
+     */
+    const frac = Number.isFinite(w.bossProgress) ? clamp01(w.bossProgress) : -1;
+    const left = w.wavesToBoss;
+    if (frac < 0 || !Number.isFinite(left)) return;
+    /*
+     * TWO STATES, NOT ONE, and the split was found by photographing it.
+     *
+     * `wavesToBoss === 0` is "this IS the boss wave" — the escort is on the
+     * field and BOSS INCOMING is on the banner. `snapshot.bossActive` is "the
+     * boss is here". The first version keyed both the label and the marker to
+     * the second, so through the whole four-bar telegraph the bar read
+     * `0 WAVES`, which is a countdown that has finished and not an event that
+     * has arrived. The label reads the wave and the diamond reads the boss.
+     */
+    const onBossWave = left === 0;
+    const onBoss = w.snapshot.bossActive === true;
+
+    g.save();
+    // Track, in the same ink as the throttle's so the two read as one family.
+    g.fillStyle = 'rgba(6,8,15,0.82)';
+    g.fillRect(x - 4, top - 3, 8, H + 6);
+    g.strokeStyle = 'rgba(150,175,215,0.42)';
+    g.lineWidth = 1;
+    g.strokeRect(x - 3.5, top - 2.5, 7, H + 5);
+
+    /*
+     * Fill from the BOTTOM UP, because the boss is drawn at the top and a bar
+     * that grows toward its own target is the only arrangement that does not
+     * need a legend.
+     *
+     * ONE HUE, AND IT IS THE BOSS'S OWN. The first version ramped steel blue to
+     * red, which looked right in isolation and was wrong on the screen: the
+     * ramp passes through magenta at about 0.7, and magenta is WARP — so a bar
+     * three quarters of the way to a boss and the warp sleeve on the opposite
+     * edge came out the same colour, in the one mode where both are on at once.
+     * Photographed, not reasoned about; `tools/_warpshots/b3` is the frame that
+     * showed it.
+     *
+     * So the hue is 352 throughout, which is the boss HP bar's own red, and the
+     * fill is carried by SATURATION and LIGHTNESS instead. That also makes the
+     * one continuously-varying channel a brightness rather than a hue, which is
+     * the channel a colourblind player still has — and the discrete part of the
+     * reading (which band, how many waves) was never colour at all: it is the
+     * height, the ticks and the numeral.
+     */
+    const fh = H * frac;
+    g.fillStyle = `hsl(352, ${lerp(40, 95, frac)}%, ${lerp(44, 62, frac)}%)`;
+    g.fillRect(x - 3, bot - fh, 6, fh);
+
+    // One tick per wave in the cycle. These are the readout: three lines mean
+    // four waves, and which band the fill has reached is the answer.
+    g.strokeStyle = 'rgba(226,234,250,0.30)';
+    g.beginPath();
+    for (let i = 1; i < BOSS_EVERY; i++) {
+      const ty = Math.round(bot - (H * i) / BOSS_EVERY) + 0.5;
+      g.moveTo(x - 7, ty);
+      g.lineTo(x + 5, ty);
+    }
+    g.stroke();
+
+    /*
+     * The boss, as a diamond at the top of the climb. Hollow while it is still
+     * ahead, filled and breathing once it is on the field — the same two states
+     * the bar's own fill has, said again in a shape, because colour alone is
+     * not a state a colourblind player can read (`tools/colourblind.mjs`).
+     */
+    const my = top - 11;
+    g.beginPath();
+    g.moveTo(x, my - 6);
+    g.lineTo(x + 5, my);
+    g.lineTo(x, my + 6);
+    g.lineTo(x - 5, my);
+    g.closePath();
+    if (onBoss) {
+      g.fillStyle = `hsla(352, 95%, 62%, ${0.7 + Math.sin(w.snapshot.time * 4.2) * 0.28})`;
+      g.fill();
+    } else {
+      g.strokeStyle = 'rgba(226,234,250,0.55)';
+      g.lineWidth = 1.2;
+      g.stroke();
+    }
+
+    /*
+     * How many waves are left, under the bar. A numeral rather than a word:
+     * the bar carries the shape of the answer and this carries its size, and at
+     * 10px in the corner of the eye a digit survives where a sentence does not.
+     */
+    g.font = '700 13px ui-monospace, monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'top';
+    g.fillStyle = onBossWave ? 'hsl(352, 95%, 72%)' : 'rgba(226,234,250,0.78)';
+    g.fillText(onBossWave ? 'BOSS' : String(left), x, bot + 8);
+    if (!onBossWave) {
+      g.font = '600 8px ui-monospace, monospace';
+      g.fillStyle = 'rgba(190,205,235,0.6)';
+      g.fillText(left === 1 ? 'WAVE' : 'WAVES', x, bot + 23);
+    }
     g.restore();
   }
 
@@ -2300,7 +2520,46 @@ export class Renderer {
      * being under the vignette because it sits across the top middle, where
      * the gradient has barely started.
      */
+    /*
+     * WARP, AS A FRAME AROUND THE WHOLE PICTURE.
+     *
+     * The gauge says warp is on and the banner said it once; neither is enough
+     * on its own, because the gauge is 20px wide at the far right and the
+     * banner is gone in two seconds. An invisible mode is a bug, and the mode
+     * this one is easiest to forget being in is the one where the screen is
+     * already full of things to look at.
+     *
+     * A RIM RATHER THAN A TINT. A wash over the field would fight the vignette
+     * (which is at its darkest exactly here), would recolour every enemy the
+     * player is reading, and would collide with `camera.flash`. The rim is at
+     * the edge where nothing is happening, it is the only magenta on the screen
+     * outside the gauge, and it breathes so it cannot be mistaken for part of
+     * the cabinet. It is drawn from `warpShown`, so it arrives over about a
+     * third of a second and leaves over a second — the mode change is an event
+     * and the exit is a settle.
+     *
+     * AFTER the vignette, for the throttle's reason: under 0.75 alpha of
+     * near-black a magenta line at the edge is a grey one.
+     */
+    if (this.warpShown > 0.01) {
+      const beat = 0.72 + Math.sin(w.snapshot.time * 5.4) * 0.28;
+      g.save();
+      g.strokeStyle = `hsla(305, 100%, 68%, ${this.warpShown * beat * 0.5})`;
+      g.lineWidth = 3;
+      g.strokeRect(2.5, 2.5, w.viewW - 5, w.viewH - 5);
+      g.strokeStyle = `hsla(305, 100%, 82%, ${this.warpShown * beat * 0.3})`;
+      g.lineWidth = 1;
+      g.strokeRect(6.5, 6.5, w.viewW - 13, w.viewH - 13);
+      g.restore();
+    }
+
     this.drawThrottle(g);
+    /*
+     * The boss bar shares the throttle's argument for being drawn after the
+     * vignette: it lives at the left EDGE, where the gradient is darkest, and a
+     * dark-red bar under 0.75 alpha of near-black is a bar nobody can see.
+     */
+    this.drawBossBar(g);
 
     /*
      * THE XP BAR MOVED OUT OF THE CANVAS.

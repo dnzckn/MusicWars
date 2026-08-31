@@ -51,7 +51,45 @@ export interface InputState {
    * the shape the world receives is one type.
    */
   autoPick: boolean;
+
+  /**
+   * The throttle's position on its own axis: +1 hard forward, -1 hard back.
+   *
+   * WHY THIS EXISTS WHEN THERE IS ALREADY A `y`.
+   *
+   * `y` is NORMALISED — the block at the bottom of `sample()` divides by
+   * `hypot(x, y)` so a diagonal is not faster than a cardinal. W alone gives
+   * y = -1; W and A together give y = -0.707. Anything that asks "is the
+   * throttle at its stop" off the normalised axis is really asking "is the
+   * throttle at its stop AND is the player not steering", which is the wrong
+   * question for a mode whose whole premise is more bodies to steer through.
+   *
+   * So this is the fore-and-aft component BEFORE the normalise, sign-flipped so
+   * that forward is positive and it reads like a throttle rather than like a
+   * screen coordinate. `y` is untouched and still drives the ship; nothing in
+   * the flight model reads this.
+   *
+   * Deliberately an AXIS reading rather than "is KeyW down". The pad's stick,
+   * the d-pad and the touch layer's steering vector all push this axis and all
+   * should be able to warp; a key-code test would have made warp a
+   * keyboard-only feature by accident.
+   */
+  throttle: number;
 }
+
+/**
+ * How far along the throttle axis counts as "at a stop", before normalisation.
+ *
+ * Not 1.0. A gamepad stick that reads 0.97 at the top of its travel is a
+ * common and boring hardware fact, and a mode that a worn pad cannot enter is
+ * a mode that does not exist for that player. 0.92 is comfortably past the
+ * 0.22 deadzone and past anything a player produces without meaning to — see
+ * the hold measurement in `World`'s warp block for the evidence that the
+ * threshold does not have to carry the accident case on its own.
+ *
+ * Used for BOTH stops: forward engages warp, aft leaves it.
+ */
+export const WARP_STICK = 0.92;
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
@@ -193,6 +231,7 @@ export class Input {
     skip: false,
     openOffers: false,
     autoPick: false,
+    throttle: 0,
   };
 
   /** Set by the HUD when a card is clicked or tapped; drained by `sample()`. */
@@ -372,6 +411,18 @@ export class Input {
       this.padDown.clear();
     }
 
+    /*
+     * READ BEFORE THE NORMALISE, and that is the whole point of the field.
+     *
+     * See `InputState.warp`. Every source that can push the ship forward has
+     * added into `y` by this line — keys, d-pad, stick, and the touch layer's
+     * steering vector — and none of them has been scaled down yet by a lateral
+     * component the player is also holding. Clamped, because two sources can
+     * push the same axis at once — a d-pad and a stick, or a key and a finger —
+     * and the throttle is a position, not a sum.
+     */
+    const throttle = Math.max(-1, Math.min(1, -y));
+
     // Normalise so diagonals are not faster than cardinals.
     const len = Math.hypot(x, y);
     if (len > 1) {
@@ -381,6 +432,7 @@ export class Input {
 
     this.state.x = x;
     this.state.y = y;
+    this.state.throttle = throttle;
     this.state.shoot = shoot;
     this.state.bomb = bomb;
     this.state.focus = focus;

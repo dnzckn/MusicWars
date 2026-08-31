@@ -277,6 +277,29 @@ function makeWorld(effects, novas = [], wells = []) {
       instrumentSlots: 3, rigSlots: 3, time: 12, pendingOffers: 0,
     },
     isOver: false,
+    /*
+     * The warp meter and the boss bar, which the overlay draws every frame from
+     * `World`'s accessors rather than from the snapshot.
+     *
+     * ADDED BECAUSE THIS FILE CAUGHT THEM. On the boss bar's first run here the
+     * stub had neither, so `clamp01(undefined)` produced
+     * `hsl(352, NaN%, NaN%)` and this tool reported 128 NaN ops — a real find:
+     * a NaN in a colour string throws inside the parser and kills the frame
+     * after the background has been cleared, which is a black screen with no
+     * error. `renderer.drawBossBar` now bails on a non-finite fraction, and
+     * these fields are here so the bar is DRAWN and its ops counted rather
+     * than being permanently skipped by that new guard.
+     *
+     * `warping: false` and `warpCharge: 0` keep the warp sleeve off, for the
+     * same reason `pendingOffers: 0` keeps the plate off: this file measures
+     * whether an EFFECT drew, and a magenta sleeve in every frame would add
+     * ops to every comparison.
+     */
+    warping: false,
+    warpCharge: 0,
+    warpRelease: 0,
+    bossProgress: 0.4,
+    wavesToBoss: 2,
     bus: { on() {} },
   };
 }
