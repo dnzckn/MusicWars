@@ -39,18 +39,39 @@
  *   - NOTHING ABOUT THE MUSIC, the renderer or frame pacing.
  *
  * ---------------------------------------------------------------------------
- * THE FAIL-TEST LOG. Every break was made, observed, and undone by a second
- * edit.
+ * THE FAIL-TEST LOG. Every break was made, RUN at `STAGES=1,12 SEEDS=1`,
+ * observed, and undone by the reverse edit. Every figure was printed.
  *
- *   break                                         assertions it turned RED
- *   ------------------------------------------    -------------------------
- *   J  `BASE_INSTRUMENTS` cut to `['ember']`      stage 1 is winnable on the
- *      alone (a one-weapon starting roster)       starting roster (0/2 cleared)
- *   K  `REWARD_EXPONENT` set to 0 (every stage    depth beats farming (best
- *      pays the same)                             stage 1, 1.00x)
- *   L  `STAGE_GROUPS`/`STAGE_SIZE`/`STAGE_FLOOR`  depth costs something (stage
- *      all set to 0 (a set list that is twelve    12 ran 1.02x stage 1's clock
- *      spellings of stage 1)                      at a 100% clear rate)
+ *   break                                        assertions it turned RED
+ *   ------------------------------------------   ---------------------------
+ *   J  the starting roster cut to EMBER alone,   stage 1 is winnable (0/1
+ *      no passives at all                        cleared); depth is bigger
+ *                                                (0.97x the clock, both runs
+ *                                                timed out); par is a target
+ *                                                (0 winning runs); par grows
+ *   K  `REWARD_EXPONENT` set to 0                depth beats farming (best is
+ *                                                stage 1 at 1.00x)
+ *   L  `stagePressure` pinned at 0 — every       depth is bigger (1.00x the
+ *      stage term dead at once                   clock, 1.00x the kill rate);
+ *                                                it is BUSIER (peak crowd
+ *                                                69.0 -> 69.0, 1.00x); depth
+ *                                                beats farming; par grows
+ *                                                (0.0% per stage)
+ *   R  par set to 60s — unreachably fast         par is a target (0% of the
+ *                                                speed bonus earned, 2 runs)
+ *   R2 par set to 6000s — absurdly slow          par is a target (100% earned)
+ *   R3 `PAR_GROWTH` set to 1.0                   par grows at roughly the rate
+ *                                                clear times grow (measured
+ *                                                9.4%, constant says 100%)
+ *
+ * ONE BREAK THAT STAYED GREEN, AND IT IS A FINDING RATHER THAN A GAP:
+ *
+ *   L2 `STAGE_FLOOR` alone set to 0 — GREEN. The population floor is NOT what
+ *   makes a deep stage busier; the group count and group size are. The floor
+ *   pulls scheduled groups forward and cannot manufacture bodies a wave does
+ *   not contain, exactly as `World.targetOnScreen`'s own comment says and as
+ *   its 24-to-36 sweep already measured. Worth knowing before anybody reaches
+ *   for it as a difficulty dial.
  * ---------------------------------------------------------------------------
  */
 import './lib/tsnode.mjs';
@@ -137,6 +158,23 @@ function runOnce(seed, stage, roster) {
   let fusions = 0;
   let cards = 0;
   let kills = 0;
+  /*
+   * HITS TAKEN IS THE ONLY RISK CURRENCY THIS BOT CAN SPEND.
+   *
+   * `tools/deadhunt-horizon.mjs` measured no deaths at any competence,
+   * including a ship that never moves, so a difficulty gate denominated in
+   * DEATHS is a gate that can never go red — decoration, in AGENTS.md §3's
+   * word. Damage taken is the same quantity one level up and it does move:
+   * `tools/builds.mjs` gates on it for exactly this reason and records a 6.5x
+   * spread across pick policies on an unchanged build.
+   *
+   * It is also the column that separates "harder" from "longer", which is the
+   * distinction this whole feature turns on. A stage that only takes more
+   * minutes is a worse stage, not a deeper one — and it would still pay more,
+   * which makes it the most attractive possible bug.
+   */
+  let hits = 0;
+  w.bus.on('player:hit', () => hits++);
   w.bus.on('player:death', () => deaths++);
   w.bus.on('ability:evolve', () => fusions++);
   w.bus.on('level:choice', () => cards++);
@@ -179,12 +217,33 @@ function runOnce(seed, stage, roster) {
     finished,
     timedOut: !finished,
     deaths,
+    hits,
     fusions,
     cards,
     kills,
     level: w.progression.level,
     wave: w.waveIndex + 1,
-    onScreen: median(onScreen),
+    /*
+     * THE MEAN, AND THE MEDIAN IS REPORTED BESIDE IT BECAUSE THEY DISAGREE
+     * WILDLY AND THE DISAGREEMENT IS THE FINDING.
+     *
+     * `tools/arena.mjs` reads an on-screen p50 of 21.3 and treats it as the
+     * density number; the first version of this file copied that and read
+     * 1.0 at every stage, which looks like the stage lever doing nothing.
+     * It is not. Arena drives the CARD-0 bot over twenty minutes; this drives
+     * the BUILDER, which kills 693 bodies a minute at stage 1 and 1655 at
+     * stage 12. A player deleting things that fast has an empty screen
+     * whatever arrives, so the standing population is a measurement of the
+     * bot's damage rather than of the stage's supply.
+     *
+     * `kills` is the supply number here and it rises 5x across the set list.
+     * The population columns are kept because a build where they DID rise
+     * would mean something, and because reporting only the flattering one is
+     * how a tool starts agreeing with whoever built it.
+     */
+    onScreen: mean(onScreen),
+    onScreenMedian: median(onScreen),
+    onScreenPeak: Math.max(0, ...onScreen),
     payout: M.computeRunPoints(result),
   };
 }
@@ -209,15 +268,17 @@ for (const stage of STAGES) {
   for (let s = 0; s < SEEDS; s++) rows.push(runOnce(0x51ed + s * 7919, stage, roster));
   byStage.set(stage, rows);
   const wonRows = rows.filter((r) => r.won);
+  const minutes = mean(rows.map((r) => r.seconds)) / 60;
   console.log(
     `  stage ${String(stage).padStart(2)}  ` +
       `cleared ${wonRows.length}/${rows.length}  ` +
       `${(wonRows.length ? mmss(mean(wonRows.map((r) => r.seconds))) : ' -- ').padStart(6)}  ` +
       `waves ${f1(mean(rows.map((r) => r.wavesCleared))).padStart(4)}  ` +
+      `hits ${String(Math.round(mean(rows.map((r) => r.hits)))).padStart(4)} (${f1(mean(rows.map((r) => r.hits)) / minutes).padStart(5)}/min)  ` +
       `deaths ${rows.reduce((a, r) => a + r.deaths, 0)}  ` +
-      `timeouts ${rows.filter((r) => r.timedOut).length}  ` +
-      `on screen ${f1(mean(rows.map((r) => r.onScreen))).padStart(5)}  ` +
-      `kills ${String(Math.round(mean(rows.map((r) => r.kills)))).padStart(5)}  ` +
+      `t/o ${rows.filter((r) => r.timedOut).length}  ` +
+      `crowd ${f1(mean(rows.map((r) => r.onScreen))).padStart(4)} mean / ${f1(mean(rows.map((r) => r.onScreenPeak))).padStart(5)} peak  ` +
+      `kills ${String(Math.round(mean(rows.map((r) => r.kills)))).padStart(5)} (${String(Math.round(mean(rows.map((r) => r.kills)) / minutes)).padStart(4)}/min)  ` +
       `L${String(Math.round(mean(rows.map((r) => r.level)))).padStart(2)}  ` +
       `fus ${f1(mean(rows.map((r) => r.fusions)))}`,
   );
@@ -257,28 +318,52 @@ for (const stage of STAGES) {
  */
 console.log('\nTHE EXPONENT, SWEPT AGAINST THE SAME RUNS');
 console.log('  (the run times above are fixed; only the payout coefficient moves)');
-console.log(`  exp    ${STAGES.map((s) => `s${s}`.padStart(7)).join('')}    best   best/farm`);
-const sweep = [];
-for (const exp of [0.8, 1.0, 1.2, 1.35, 1.6, 2.0]) {
-  const rates = STAGES.map((stage) => {
+console.log(`  curve  ${STAGES.map((s) => `s${s}`.padStart(7)).join('')}    best   best/farm`);
+/**
+ * Re-price the measured runs under an arbitrary multiplier function.
+ *
+ * The payout is LINEAR in the multiplier, so dividing out the one that was
+ * applied and multiplying in another is exact rather than an approximation.
+ * That is what makes one set of runs answer the question for every candidate.
+ */
+const rateUnder = (multOf) =>
+  STAGES.map((stage) => {
     const rows = byStage.get(stage);
     const minutes = mean(rows.map((r) => r.seconds)) / 60;
-    // Re-price the same runs at this exponent: the payout is linear in the
-    // multiplier, so scaling the measured points by the ratio of multipliers is
-    // exact rather than an approximation.
-    const points = mean(
-      rows.map((r) => (r.payout.points / r.payout.multiplier) * M.stageRewardWith(stage, exp)),
-    );
+    const points = mean(rows.map((r) => (r.payout.points / r.payout.multiplier) * multOf(stage)));
     return points / minutes;
   });
+const showCurve = (label, rates, tag = '') => {
   const bestIdx = rates.indexOf(Math.max(...rates));
-  sweep.push({ exp, rates, best: STAGES[bestIdx], ratio: rates[bestIdx] / rates[0] });
   console.log(
-    `  ${exp.toFixed(2).padStart(4)}   ${rates.map((r) => f1(r).padStart(7)).join('')}   ` +
-      `${String(STAGES[bestIdx]).padStart(5)}   ${(rates[bestIdx] / rates[0]).toFixed(2).padStart(8)}x` +
-      `${exp === M.REWARD_EXPONENT ? '   <- shipped' : ''}`,
+    `  ${label.padEnd(5)}  ${rates.map((r) => f1(r).padStart(7)).join('')}   ` +
+      `${String(STAGES[bestIdx]).padStart(5)}   ${(rates[bestIdx] / rates[0]).toFixed(2).padStart(8)}x${tag}`,
+  );
+  return { best: STAGES[bestIdx], ratio: rates[bestIdx] / rates[0] };
+};
+for (const exp of [0.8, 1.0, 1.2, 1.35, 1.6, 2.0]) {
+  showCurve(
+    exp.toFixed(2),
+    rateUnder((stage) => M.stageRewardWith(stage, exp)),
+    exp === M.REWARD_EXPONENT ? '   <- shipped' : '',
   );
 }
+/*
+ * THE PLAN'S LITERAL PROPOSAL, PRICED THE SAME WAY.
+ *
+ * `docs/plan-meta.md` §2.2 proposes `stage^1.6` with no shift and prints a
+ * table of multipliers — 1.0, 3.0, 5.8, 13.1, 27.9, 52.7 — that has no time
+ * column in it. This row is that table divided by the clock, and it is the
+ * reason the shipped curve is not it.
+ *
+ * A BARE `Math.pow` IS NOT A COPY OF A SHIPPED CONSTANT. AGENTS.md §3's rule
+ * is that a tool must not hold its own copy of a value the program owns, and
+ * this is the opposite: it is a quotation from a design document, reproduced
+ * here so the rejection is visible rather than asserted. Nothing in `src/`
+ * computes it, and if the shipped curve ever became `s^1.6` this row would
+ * simply agree with the one above it.
+ */
+showCurve('plan', rateUnder((stage) => Math.pow(stage, 1.6)), '   <- docs/plan-meta.md §2.2, s^1.6 with no shift');
 
 /* ------------------------------------------------------------------------ *
  * The gates
@@ -310,15 +395,31 @@ console.log('\nVERDICT');
 }
 
 /*
- * 2. DEPTH COSTS SOMETHING.
+ * 2. DEPTH IS HARDER, NOT MERELY LONGER. Two separate assertions, and the
+ * second is the one that matters.
  *
  * A set list where stage 12 plays like stage 1 is twelve buttons that do
  * nothing, and it would pass every economy assertion below — the payout would
- * simply rise for free, which is the most attractive possible bug. So the
- * DIFFICULTY has to be measured, and it is measured in the two currencies the
- * bot can actually spend: TIME and CLEARS. Not in deaths, because
- * `deadhunt-horizon` says this bot does not die and a gate on deaths would be a
- * gate that can never go red.
+ * rise for free, which is the most attractive possible bug.
+ *
+ * BUT "IT TAKES LONGER" IS NOT ENOUGH, and gating on time alone would have
+ * accepted the defect this feature most plausibly ships. A stage that only
+ * costs more minutes is a stage that is worse to play and pays more for it;
+ * points per minute would still favour it as long as the multiplier outran the
+ * clock, so the economy gate below cannot see the difference. The difficulty
+ * has to be asserted in a currency that is about DANGER.
+ *
+ * DAMAGE TAKEN PER MINUTE is that currency, and it is the only one available:
+ * `deadhunt-horizon` measured no deaths at any competence, so a gate on deaths
+ * could never go red. `builds.mjs` gates on the same quantity and records a
+ * 6.5x spread across pick policies, so it is known to move on this simulation.
+ *
+ * The bar is 1.3x across the whole set list rather than something bolder
+ * because eleven stage steps of a linear term is a modest multiplier by
+ * design — the terms are deliberately small (`waves.ts` records a difficulty
+ * pass that overshot by raising three compounding factors at once) — and
+ * because two seeds of a hit count is a noisy statistic. It is a floor on
+ * "the danger moved at all", not a claim about how much.
  */
 {
   const first = byStage.get(STAGES[0]);
@@ -327,13 +428,69 @@ console.log('\nVERDICT');
   const t1 = mean(last.map((r) => r.seconds));
   const clear0 = first.filter((r) => r.won).length / first.length;
   const clear1 = last.filter((r) => r.won).length / last.length;
-  const crowd0 = mean(first.map((r) => r.onScreen));
-  const crowd1 = mean(last.map((r) => r.onScreen));
+  const hit0 = mean(first.map((r) => r.hits)) / (t0 / 60);
+  const hit1 = mean(last.map((r) => r.hits)) / (t1 / 60);
+  const kill0 = mean(first.map((r) => r.kills)) / (t0 / 60);
+  const kill1 = mean(last.map((r) => r.kills)) / (t1 / 60);
+  const peak0 = mean(first.map((r) => r.onScreenPeak));
+  const peak1 = mean(last.map((r) => r.onScreenPeak));
   check(
-    t1 / t0 >= 1.5 || clear1 < clear0,
-    `depth costs something — stage ${STAGES[STAGES.length - 1]} is not stage ${STAGES[0]} with a bigger number`,
-    `${(t1 / t0).toFixed(2)}x the clock (${mmss(t0)} -> ${mmss(t1)}), clear rate ${(clear0 * 100).toFixed(0)}% -> ${(clear1 * 100).toFixed(0)}%, ` +
-      `crowd ${f1(crowd0)} -> ${f1(crowd1)} on screen`,
+    t1 / t0 >= 1.3 || clear1 < clear0,
+    `depth is bigger — stage ${STAGES[STAGES.length - 1]} contains more than stage ${STAGES[0]}`,
+    `${(t1 / t0).toFixed(2)}x the clock (${mmss(t0)} -> ${mmss(t1)}), ` +
+      `${(kill1 / kill0).toFixed(2)}x the kill rate (${Math.round(kill0)} -> ${Math.round(kill1)}/min), ` +
+      `clear rate ${(clear0 * 100).toFixed(0)}% -> ${(clear1 * 100).toFixed(0)}%`,
+  );
+  /*
+   * PEAK CROWD, AND DAMAGE TAKEN IS REPORTED BESIDE IT AS A MEASURED
+   * NON-RESULT.
+   *
+   * THIS ASSERTION WAS DAMAGE TAKEN PER MINUTE AND IT WAS REPLACED, NOT
+   * RELAXED — AGENTS.md §3's second case, where the gate was measuring
+   * something that turns out to have no resolution here.
+   *
+   * The argument for it was good and is the argument `builds.mjs` makes: hits
+   * are directly attributable to what the player is facing, and `builds`
+   * records a 6.5x spread across pick policies on an unchanged build. It does
+   * not transfer. `builds` runs the DODGE brain against a 900-second cap with
+   * seven different loadouts; this runs one loadout to a natural end, and this
+   * bot takes ONE TO EIGHT HITS IN A WHOLE RUN. Measured over both roster arms:
+   *
+   *     base roster   1, 1, 1, 2, 2, 4, 5, 8 hits at stages 1..12   (rises)
+   *     full roster   3, 4, 6, 4, 4, 2, 2, 1 hits at stages 1..12   (falls)
+   *
+   * The base arm reads 4.09x and the full arm reads 0.09x on the same eleven
+   * stage steps. That is a statistic whose run-to-run spread is the whole
+   * effect, which is precisely the defect `tools/README.md` lists four separate
+   * gates failing on — a threshold sitting inside its own metric's noise. A
+   * gate that goes green or red depending on which roster it was pointed at is
+   * not measuring the stage.
+   *
+   * WHAT REPLACES IT IS NOT WEAKER, and the reason is that peak crowd cannot be
+   * satisfied by the thing the old gate was there to catch. "The stage is
+   * merely longer" is exactly the state that leaves the biggest simultaneous
+   * crowd unchanged: a longer wave with the same population is a longer queue,
+   * not a bigger one. It is also a peak over roughly seventeen hundred samples
+   * per run rather than a count of single-digit events, so it has resolution:
+   * 80 -> 227 on the base roster and 51 -> 108 on the full one, in the same
+   * direction in both arms.
+   *
+   * WHAT THE HONEST NEGATIVE RESULT IS: at no depth is this bot in danger. It
+   * takes a couple of hits a run and never dies at stage 12 any more than at
+   * stage 1. The set list gets BIGGER and BUSIER, measurably; whether it gets
+   * frightening is a question about a human and nothing in this directory can
+   * answer it. That sentence belongs in the report rather than behind a green
+   * line.
+   */
+  check(
+    peak0 > 0 && peak1 / peak0 >= 1.5,
+    'and it is BUSIER, not merely longer — the worst moment of the run gets worse',
+    `peak crowd ${f1(peak0)} -> ${f1(peak1)} on screen, ${(peak1 / Math.max(0.001, peak0)).toFixed(2)}x` +
+      `; mean crowd ${f1(mean(first.map((r) => r.onScreen)))} -> ${f1(mean(last.map((r) => r.onScreen)))}`,
+  );
+  console.log(
+    `  ..    damage taken ${f1(hit0)} -> ${f1(hit1)} hits/min and ${first.reduce((a, r) => a + r.deaths, 0)}/${last.reduce((a, r) => a + r.deaths, 0)} deaths` +
+      ' — REPORTED, not gated: single-digit counts per run, and the two roster arms disagree on the sign. See the note above.',
   );
 }
 

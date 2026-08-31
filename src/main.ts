@@ -49,6 +49,21 @@ import { themeForWave } from './audio/layers';
 import { Hud } from './render/hud';
 import { combinationPlan } from './render/levelup';
 import { STARTERS, STARTING_INSTRUMENT } from './game/progression';
+import {
+  STAGE_COUNT,
+  buy,
+  defaultMeta,
+  deepestOffered,
+  loadMeta,
+  nextPrice,
+  recordRun,
+  saveMeta,
+  shopRows,
+  stageReward,
+  stageUnlocked,
+  unlockedRoster,
+  type MetaState,
+} from './game/meta';
 import { codex, discoveryLine, loadDiscovered, record, saveDiscovered, summary } from './game/discovery';
 import { abilityLevels } from './game/progression';
 import { instrumentDef, labelOf } from './game/weapons';
@@ -77,6 +92,62 @@ const pauseStats = {
 };
 const titleBest = document.getElementById('title-best')!;
 const uiBest = document.getElementById('ui-best')!;
+
+/* ------------------------------------------------------------------------ *
+ * The between-runs layer
+ *
+ * The save, the set list and the shop. Everything about the ECONOMY lives in
+ * `game/meta.ts` — this file only paints it and wires the buttons, which is the
+ * same split `progression.ts` has with the level-up card: the rules are pure
+ * and testable headless, and the DOM is a view of them.
+ * ------------------------------------------------------------------------ */
+
+const menuScreen = document.getElementById('menu-screen')!;
+const shopScreen = document.getElementById('shop-screen')!;
+const stageGrid = document.getElementById('stage-grid')!;
+const shopGrid = document.getElementById('shop-grid')!;
+const newgameConfirm = document.getElementById('newgame-confirm')!;
+
+/**
+ * The save, loaded once.
+ *
+ * `loadMeta` cannot throw and cannot fail a boot — see its own note, and the
+ * two guards it needs to make that true on two different platforms. A player
+ * with no save, a corrupt save or a browser that refuses storage all arrive
+ * here with a usable default and no error path to handle.
+ */
+let meta: MetaState = loadMeta();
+
+/**
+ * WHICH STAGE THE NEXT RUN WILL BE, and where it comes from.
+ *
+ * Not persisted separately. `deepestOffered` is everything cleared plus one, so
+ * on boot this is the frontier — the stage a returning player is most likely to
+ * want and, for a fresh save, simply stage 1. Persisting a "last played" would
+ * be a second source of truth for the same intent and would need its own
+ * sanitising; deriving it costs nothing and cannot rot.
+ */
+let selectedStage = deepestOffered(meta);
+
+/**
+ * FULL ROSTER FOR MEASUREMENT, off a query parameter, exactly like `?seed=`.
+ *
+ * THIS EXISTS BECAUSE THE META LAYER SILENTLY RE-BASELINED 128 CHECKS. Every
+ * browser tool in `tools/` does `page.click('#start-button')` against a fresh
+ * Playwright context, which means empty storage, which means a default save,
+ * which means the gated eight-and-eight roster. Those tools were all
+ * calibrated against thirty instruments and twelve passives, and the change
+ * that moved them is invisible in their output — the numbers simply describe a
+ * different game.
+ *
+ * Being honest about that is worth more than hiding it. The DEFAULT is the
+ * shipped game, because a check that measures a configuration no player has is
+ * not measuring the product; and `?roster=full` is the opt-out for a check that
+ * genuinely wants the whole table, so re-baselining is a decision somebody
+ * makes per tool rather than a thing that happened to them.
+ */
+const rosterParam = new URLSearchParams(location.search).get('roster');
+const forceFullRoster = rosterParam === 'full';
 
 /**
  * Personal best.
@@ -654,6 +725,50 @@ world.bus.on('run:over', (e) => {
     }
   }
 
+  /*
+   * WHAT THE RUN PAID, banked and shown.
+   *
+   * `recordRun` does the arithmetic, the stage unlock and the best-time record;
+   * this only paints it. The stage comes off `world.stage` rather than off the
+   * event because `run:over` carries the WAVE the run ended on and nothing
+   * about which stage it was — and `world.stage` cannot have moved since
+   * `start()` clamped it, since nothing else writes it during a run.
+   *
+   * `saveMeta` is called here and NOT at any point during play. A run in
+   * progress has earned nothing yet, and writing the save on every level-up
+   * would be a storage write per twenty seconds for no gain. Its return value
+   * is deliberately ignored: a browser that refuses storage still played the
+   * run and still shows the points, it just will not remember them, and there
+   * is nothing useful to say about that at this moment.
+   */
+  const payout = recordRun(meta, {
+    stage: world.stage,
+    wavesCleared: world.totals.wavesCleared,
+    seconds: world.snapshot.time,
+    won,
+  });
+  saveMeta(meta);
+  selectedStage = Math.min(Math.max(selectedStage, world.stage), deepestOffered(meta));
+  const pts = document.getElementById('final-points')!;
+  pts.replaceChildren();
+  const total = document.createElement('b');
+  total.textContent = `+${num(payout.points)}`;
+  const terms = document.createElement('span');
+  /*
+   * THE BREAKDOWN, in the order the terms are worth arguing about: how deep the
+   * stage was, how far the run got, whether it finished, and how fast. A player
+   * who cannot see that depth and speed paid separately has no reason to
+   * attempt a deeper stage or to finish a faster one — the breakdown is the
+   * only place the economy explains itself.
+   */
+  terms.textContent =
+    `stage ${world.stage} x${payout.multiplier.toFixed(2)}` +
+    ` · ${Math.round(payout.depth * 100)}% of the set` +
+    (won ? ` · cleared · ${Math.round(payout.speedFraction * 100)}% speed` : ' · did not finish') +
+    ` · ${num(meta.points)} banked`;
+  pts.append(total, document.createTextNode(' POINTS'), terms);
+  paintTitleStage();
+
   const beaten = e.score > bestScore;
   if (beaten) {
     bestScore = e.score;
@@ -901,6 +1016,7 @@ function paintDiscovered(): void {
   }
 }
 paintDiscovered();
+paintTitleStage();
 
 world.isFirstDiscovery = (id) => !discovered.has(id);
 
@@ -913,35 +1029,213 @@ try {
   // Private browsing. The default opener is a fine answer.
 }
 
-const starterRow = document.querySelector('#starters .starter-row')!;
+/*
+ * EVERY `.starter-row` ON THE PAGE, not one element.
+ *
+ * There are two now — the title screen's and the set list's — because the
+ * opening pick and the stage pick are the same decision made at the same
+ * moment, and a returning player who goes straight to the set list should not
+ * have to walk back to the title to change their gun.
+ *
+ * TWO COPIES OF THE MARKUP, ONE COPY OF THE STATE AND ONE COPY OF THE CODE.
+ * The alternative — a second, different control on the menu — is the shape this
+ * repository keeps getting burned by: `src/render/levelup.ts` re-implements the
+ * fusion rules and has drifted three times. A `querySelectorAll` costs nothing
+ * and makes the drift impossible rather than merely unlikely.
+ */
+const starterRows = document.querySelectorAll('.starter-row');
 function paintOpeners(): void {
-  starterRow.replaceChildren();
-  for (const id of STARTERS) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'starter';
-    b.setAttribute('role', 'radio');
-    b.setAttribute('aria-checked', String(id === chosenOpener));
-    const name = document.createElement('b');
-    name.textContent = labelOf(id);
-    const desc = document.createElement('em');
-    desc.textContent = instrumentDef(id)?.blurb ?? '';
-    b.append(name, desc);
-    b.addEventListener('click', () => {
-      chosenOpener = id;
-      try { localStorage.setItem(OPENER_KEY, id); } catch { /* see above */ }
-      paintOpeners();
-    });
-    starterRow.append(b);
+  for (const row of starterRows) {
+    row.replaceChildren();
+    for (const id of STARTERS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'starter';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(id === chosenOpener));
+      const name = document.createElement('b');
+      name.textContent = labelOf(id);
+      const desc = document.createElement('em');
+      desc.textContent = instrumentDef(id)?.blurb ?? '';
+      b.append(name, desc);
+      b.addEventListener('click', () => {
+        chosenOpener = id;
+        try { localStorage.setItem(OPENER_KEY, id); } catch { /* see above */ }
+        paintOpeners();
+      });
+      row.append(b);
+    }
   }
 }
 paintOpeners();
 
+/* ------------------------------------------------------------------------ *
+ * Painting the set list and the shop
+ * ------------------------------------------------------------------------ */
+
+const num = (n: number): string => Math.round(n).toLocaleString('en-US');
+
+/** Which screen BACK goes to. See `showMenu`. */
+let menuReturn: 'title' | 'gameover' = 'title';
+
+function paintTitleStage(): void {
+  const deepest = deepestOffered(meta);
+  document.getElementById('title-stage')!.textContent =
+    deepest > 1 || meta.points > 0
+      ? `STAGE ${selectedStage} · x${stageReward(selectedStage).toFixed(2)} REWARD`
+      : '';
+}
+
+function paintMenu(): void {
+  document.getElementById('menu-points')!.textContent = num(meta.points);
+  const owned = meta.unlocked.length;
+  document.getElementById('menu-cleared')!.textContent =
+    `${meta.highestCleared > 0 ? `deepest cleared ${meta.highestCleared}` : 'nothing cleared yet'} · ${owned} unlocked`;
+
+  const deepest = deepestOffered(meta);
+  stageGrid.replaceChildren();
+  for (let s = 1; s <= STAGE_COUNT; s++) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'stage';
+    const open = stageUnlocked(meta, s);
+    const cleared = s <= meta.highestCleared;
+    if (!open) b.classList.add('locked');
+    else if (cleared) b.classList.add('cleared');
+    else b.classList.add('next');
+    b.disabled = !open;
+
+    const n = document.createElement('b');
+    n.textContent = String(s);
+    const mult = document.createElement('i');
+    mult.textContent = `x${stageReward(s).toFixed(2)}`;
+    const note = document.createElement('em');
+    const best = meta.best[String(s)];
+    /*
+     * The tile says the ONE thing that is true of it. A locked stage says what
+     * would open it — a padlock with no instruction is a dead end — and a
+     * cleared one says the time to beat, which is what the speed bonus is
+     * measured against and therefore the only number that makes replaying a
+     * finished stage interesting.
+     */
+    note.textContent = !open
+      ? `clear ${s - 1}`
+      : best
+        ? `${Math.floor(best / 60)}:${String(Math.floor(best % 60)).padStart(2, '0')}`
+        : cleared
+          ? 'cleared'
+          : 'NEW';
+    b.append(n, mult, note);
+    b.title = open
+      ? `Stage ${s} — every point this run earns is multiplied by ${stageReward(s).toFixed(2)}`
+      : `Stage ${s} — locked. Clear stage ${s - 1} to open it.`;
+    if (open) {
+      b.addEventListener('click', () => {
+        selectedStage = s;
+        void startRun();
+      });
+    }
+    li.append(b);
+    stageGrid.append(li);
+  }
+
+  document.getElementById('stage-hint')!.textContent =
+    deepest >= STAGE_COUNT
+      ? 'every stage is open — the deepest pays the most per minute'
+      : `stage ${deepest} has never been cleared. Beating it opens ${deepest + 1}.`;
+
+  document.getElementById('newgame-warning')!.textContent =
+    `This erases ${owned} unlock${owned === 1 ? '' : 's'}, ${num(meta.points)} banked points and every stage you have cleared. There is no undo.`;
+  paintTitleStage();
+}
+
+function paintShop(): void {
+  document.getElementById('shop-points')!.textContent = num(meta.points);
+  const price = nextPrice(meta);
+  const rows = shopRows(meta);
+  const left = rows.filter((r) => !r.owned).length;
+  document.getElementById('shop-next')!.textContent =
+    left === 0 ? 'everything is yours' : `next unlock ${num(price)} · ${left} left`;
+
+  shopGrid.replaceChildren();
+  for (const row of rows) {
+    const li = document.createElement('li');
+    li.className = 'shop-row';
+    if (row.owned) li.classList.add('owned');
+
+    const h = document.createElement('h4');
+    h.textContent = row.label;
+    const kind = document.createElement('span');
+    kind.textContent = row.slot === 'rig' ? 'PASSIVE' : 'WEAPON';
+    h.append(kind);
+
+    const buyCell = document.createElement(row.owned ? 'span' : 'button');
+    if (row.owned) {
+      buyCell.className = 'price owned';
+      buyCell.textContent = 'OWNED';
+    } else {
+      const btn = buyCell as HTMLButtonElement;
+      btn.className = 'ghost';
+      btn.type = 'button';
+      btn.textContent = `${num(price)} pts`;
+      btn.disabled = meta.points < price;
+      btn.addEventListener('click', () => {
+        if (!buy(meta, row.id)) return;
+        saveMeta(meta);
+        paintShop();
+        paintMenu();
+      });
+    }
+
+    /*
+     * The mechanics line, straight off `stepNote(id, 1)` via `shopRows`. It is
+     * the same string the level-up card will show the first time this thing is
+     * offered — see the note on `ShopRow.note`, and `tools/roster8.mjs`, which
+     * asserts the two are byte-identical row by row.
+     */
+    const p = document.createElement('p');
+    p.textContent = row.note;
+
+    li.append(h, buyCell, p);
+    shopGrid.append(li);
+  }
+}
+
+function hideScreens(): void {
+  titleScreen.classList.add('hidden');
+  gameoverScreen.classList.add('hidden');
+  menuScreen.classList.add('hidden');
+  shopScreen.classList.add('hidden');
+}
+
+function showMenu(from: 'title' | 'gameover'): void {
+  menuReturn = from;
+  selectedStage = Math.min(selectedStage, deepestOffered(meta));
+  newgameConfirm.classList.add('hidden');
+  paintMenu();
+  hideScreens();
+  menuScreen.classList.remove('hidden');
+}
+
+function showShop(): void {
+  paintShop();
+  hideScreens();
+  shopScreen.classList.remove('hidden');
+}
+
 async function startRun(): Promise<void> {
   // Set before `start()`, which is also the retry path — see `World.starter`.
   world.starter = chosenOpener;
-  titleScreen.classList.add('hidden');
-  gameoverScreen.classList.add('hidden');
+  /*
+   * The stage and the roster, both set before `start()` and both for the same
+   * reason `starter` is: AGAIN calls this function, and a player who chose
+   * stage 6 and bought three weapons must get stage 6 and three weapons back.
+   * `World.start()` clamps the stage; `resetProgression` re-reads the roster.
+   */
+  world.stage = selectedStage;
+  world.unlocked = forceFullRoster ? null : unlockedRoster(meta);
+  hideScreens();
   // Drop the victory treatment with the screen. It is re-decided on the next
   // `run:over` either way, but a hidden element carrying the previous run's
   // state is how a screenshot tool ends up photographing a win that is not
@@ -967,6 +1261,48 @@ async function startRun(): Promise<void> {
 
 startButton.addEventListener('click', () => void startRun());
 retryButton.addEventListener('click', () => void startRun());
+
+/* ------------------------------------------------------------------------ *
+ * The set list's buttons
+ * ------------------------------------------------------------------------ */
+
+document.getElementById('setlist-button')!.addEventListener('click', () => showMenu('title'));
+document.getElementById('gameover-menu')!.addEventListener('click', () => showMenu('gameover'));
+document.getElementById('shop-button')!.addEventListener('click', showShop);
+document.getElementById('shop-back')!.addEventListener('click', () => showMenu(menuReturn));
+document.getElementById('menu-back')!.addEventListener('click', () => {
+  hideScreens();
+  (menuReturn === 'gameover' ? gameoverScreen : titleScreen).classList.remove('hidden');
+});
+
+/*
+ * NEW GAME, behind a confirmation that names what it destroys.
+ *
+ * Two clicks, and the second one is the only irreversible control in the game:
+ * it discards every unlock the shop sold, every point banked and every stage
+ * cleared. `docs/plan-meta.md` §4 asks for the confirmation; the wording is in
+ * `paintMenu`, in the player's own units, because "are you sure" is a question
+ * nobody reads.
+ *
+ * It deliberately does NOT clear the best score, the opener preference or the
+ * discovery codex. Those are records of things that happened rather than
+ * progress that can be spent — a player wiping their set list has not un-played
+ * the runs they played, and the codex in particular is described in its own
+ * source as "the only thing in the game that persists past one run".
+ */
+document.getElementById('newgame-button')!.addEventListener('click', () => {
+  newgameConfirm.classList.toggle('hidden');
+});
+document.getElementById('newgame-no')!.addEventListener('click', () => {
+  newgameConfirm.classList.add('hidden');
+});
+document.getElementById('newgame-yes')!.addEventListener('click', () => {
+  meta = defaultMeta();
+  saveMeta(meta);
+  selectedStage = 1;
+  newgameConfirm.classList.add('hidden');
+  paintMenu();
+});
 
 window.addEventListener('keydown', (e) => {
   // Volume from the keyboard, so a player mid-run never has to reach for a

@@ -3131,3 +3131,115 @@ measures where the band edges are.
 writing one. A Hann-windowed partial spans about three bins, so that misses
 narrow peaks while sampling broadband content uniformly — it reported a clean
 electric guitar with 43% of its energy above 8 kHz.
+
+### What is actually enabled, and why the section above outlived it
+
+The paragraphs above were written when all seven roles played their instruments.
+That build was heard — *"sounds so whack like carnival, its got beats in the
+background, then a foreground melody offa funny instrument it's just no"* — and
+`SAMPLED_ROLES` in `src/audio/soundfonts.ts` is now `{ bass }`. Six instruments
+stay mapped, measured and switched off; re-enabling one is a single entry.
+
+Two things follow for these tools and both are asserted rather than assumed.
+
+**The loader must not fetch a font no lane plays.** With one role enabled the
+warm-up is one file and 9,694 bytes; warming the whole table would have spent
+333 KB and three quarters of a second of the player's connection on instruments
+that are never scheduled. `fontcheck` compares the count of files that crossed
+the socket against the count of enabled instruments.
+
+**A disabled role's lane still has to be counted.** "The lane went silent" and
+"the lane went back to its oscillator" look identical if nobody counts the
+oscillator haps, so `fontlanes` requires a disabled role to emit its fallback
+waveform in BOTH modes, in equal numbers, and to emit its font in neither.
+
+`registermap`'s `~` marker and its "N of M printed groups are SAMPLED" line
+track the same set: it reads one row now, not six.
+
+## The meta layer: three new checks, and one silent re-baseline
+
+The between-runs layer gates the draft pool from thirty instruments and twelve
+passives to eight and eight, adds a twelve-stage set list, and adds a points
+economy. Three checks cover it and they are deliberately split by cost:
+
+- `roster8` (`node tools/roster8.mjs`) — **the fast one, run it in a loop.**
+  Pure arithmetic and offer generation, a couple of seconds. The starting eight
+  are legal and complete, every opener is in them, every one of them can reach
+  its designed evolution with a starting passive, and the eight cover eight
+  DISTINCT properties — which is a machine-checkable statement of "different
+  mechanical roles", because twenty of the thirty instruments own exactly one
+  entry of `PROPERTY_NAMES`. It also measures the GATE off the dealer rather
+  than off the source (27,200 of 27,200 dealt cards legal across 6,800 offers),
+  asserts every shop row is byte-identical to the level-up card's own note, and
+  throws nine kinds of corrupt save at `sanitiseMeta`.
+
+  **Two of its assertions were passing for the wrong reason and its own
+  fail-test found both.** "A failed attempt still pays something" probed a run
+  that had cleared ONE wave, so the depth term paid 4 points and setting
+  `LOSS_FLOOR = 0` left it green — the probe is `wavesCleared: 0` now, which is
+  the only state where the floor is the whole payout. And the two `buy`
+  refusals ran on a wallet the previous purchase had emptied, so removing the
+  duplicate guard AND the base-roster guard both left them green: the
+  affordability check was refusing every call before either rule was consulted.
+  The wallet is funded first now.
+
+- `stages` (`node tools/stages.mjs`, `STAGES=1,4,8,12 SEEDS=3 ROSTER=full CAP=60`)
+  — **the slow one, minutes.** Plays whole runs to their own end at eight stage
+  depths and answers the question the multiplier table cannot: POINTS PER
+  MINUTE. A deeper stage contains ~6x the bodies and takes ~2x the clock, so
+  "stage 12 pays 10x" is not an answer — 10x the points for 2x the minutes is
+  the only arithmetic that decides whether anyone should ever farm stage 1.
+
+  Its exponent sweep re-prices ONE set of runs under every candidate curve,
+  which is exact because the payout is linear in the multiplier, and includes
+  `docs/plan-meta.md`'s literal `s^1.6` proposal as a labelled row so the
+  rejection is visible rather than asserted: that curve measures **27.8x** the
+  points per minute at stage 12 against stage 1.
+
+  **Its difficulty gate was DAMAGE TAKEN and had to be replaced.** The argument
+  was `builds`' argument and it does not transfer: this bot takes one to eight
+  hits in a WHOLE RUN, and across the two roster arms the same eleven stage
+  steps read 4.09x and 0.09x — a statistic whose spread is the entire effect.
+  Peak crowd replaced it (80 -> 227 base, 51 -> 108 full, same sign in both
+  arms) because it cannot be satisfied by a stage that is merely longer: a
+  longer wave with the same population is a longer queue, not a bigger one.
+
+- `setlist` (`node tools/setlist.mjs`, needs a dev server) — **the loop,
+  clicked.** The other two would both pass on a game whose menu does not open;
+  neither of them clicks anything. This walks menu -> stage tile -> run ->
+  ending -> points -> shop -> unlock -> next run's draft pool -> NEW GAME, and
+  forces both endings through the world's own paths rather than playing
+  fourteen minutes to reach them. Screenshots land in `tools/_setlist/`.
+
+  One of its assertions demanded a digit in every shop description and read
+  21/26 on a correct build: four passives and CAESURA describe themselves
+  entirely in words. It asserts length and DISTINCTNESS now, which catches the
+  failure the digit test could not see at all — a template giving every row the
+  same sentence.
+
+**THE SILENT RE-BASELINE, stated plainly.** A fresh Playwright context has empty
+storage, which means a default save, which means the gated eight-and-eight
+roster — so **every one of the 128 browser tools that click `#start-button` is
+now measuring a different game from the one it was calibrated against.** The
+default is deliberately the shipped game rather than the historical one, because
+a check that measures a configuration no player has is not measuring the
+product. `?roster=full` is the opt-out, wired next to `?seed=`, so re-baselining
+is a decision made per tool instead of something that happened to everybody.
+
+`builds` takes the same decision the other way and for a stated reason: its
+recorded baselines (0.73, 0.37, 0.29, 0.12, 0.22) are all full-roster, so
+`ROSTER=full` stays the default there and `ROSTER=base` is the opt-in. Measured
+at both: divergence **2.01 at thirty instruments, 0.85 at eight**, against a bar
+of 0.25. Read the decomposition rather than the headline — the policy spread in
+WAVE REACHED roughly tripled (0.27 -> 0.79) while the damage spread compressed
+(6.5x -> 2.2x), because a sixteen-id pool has no super-safe corner in it. The
+pick decides progress more and punishment less; it has not gone cosmetic.
+
+`offerpool` grew a fourth arm for the same question and it came out the other
+way from the worry: **30 -> 8 draftable moves designed fusions per run 3.62 ->
+3.81, UP 5.0%**, over 400 model runs of 34 offers per arm, with grace cards at
+0.9% of 54,400 dealt. AGENTS.md §5's zero-sum warning is about cards ADDED to a
+fixed-size offer; removing them concentrates a builder's picks rather than
+starving them. That arm uses `ProgressionState.unlocked` — the shipped filter —
+where the three historical arms use the banish list, because measuring the
+feature through a stand-in for the feature is not measuring the feature.

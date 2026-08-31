@@ -25,6 +25,33 @@ import './lib/headless-audio.mjs';
 import { makeBrain } from './lib/bot-brain.mjs';
 const R = new URL('../src/', import.meta.url).href;
 const { World } = await import(`${R}game/world.ts`);
+const META = await import(`${R}game/meta.ts`);
+
+/*
+ * WHICH ROSTER THE PICK IS BEING MADE FROM.
+ *
+ * `docs/plan-meta.md` §6 names "if 8 weapons makes runs samey" as the thing
+ * that would falsify the whole unlock design, and it names THIS file as the
+ * instrument: 28 pairs is arithmetic, and whether the pick still changes the
+ * run is a measurement.
+ *
+ * THE DEFAULT IS `full` AND THE SHIPPED GAME IS `base`, which is an
+ * uncomfortable pair and is deliberate. Every baseline recorded at the foot of
+ * this file — 0.73, 0.37, 0.29, 0.12, 0.22 and the 2.4x -> 1.5x damage spread —
+ * was measured against thirty instruments and twelve passives. Flipping the
+ * default would silently re-baseline all of them, which is the exact failure
+ * AGENTS.md §6 opens with: compare against the same code, not a remembered
+ * number. So the historical arm stays reproducible by running this file with no
+ * environment at all, and `ROSTER=base` measures what a new player actually
+ * holds. Both numbers belong in the record; neither replaces the other.
+ *
+ * One arm per invocation rather than both in one, unlike `tools/offerpool.mjs`:
+ * this file plays 56 real runs of 900 simulated seconds and doubling that is
+ * minutes of wall clock, where offerpool's arms are a model of the dealer and
+ * cost nothing.
+ */
+const ROSTER = (process.env.ROSTER ?? 'full').toLowerCase();
+const UNLOCKED = ROSTER === 'base' ? META.unlockedRoster(META.defaultMeta()) : null;
 
 const DT = 1 / 120;
 /*
@@ -90,7 +117,7 @@ const results = {};
 for (const policy of POLICIES) {
   const per = [];
   for (const seed of SEEDS) {
-    const w = new World(seed); w.start();
+    const w = new World(seed); w.unlocked = UNLOCKED; w.start();
     const drive = makeBrain('dodge');
     const inp = { x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: -1, banish: -1, reroll: false, skip: false };
     let hits = 0, offers = 0, press = 0, pn = 0;
@@ -127,7 +154,12 @@ for (const policy of POLICIES) {
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m) ** 2))); };
 
-console.log(`\nbuilds — ${SECS}s, ${SEEDS.length} seeds x ${POLICIES.length} pick policies\n`);
+console.log(`\nbuilds — ${SECS}s, ${SEEDS.length} seeds x ${POLICIES.length} pick policies`);
+console.log(
+  `  roster ${ROSTER.toUpperCase()} — ` +
+    `${UNLOCKED ? `${UNLOCKED.size} ids draftable, the shipped starting roster` : 'the whole table'}` +
+    '.  ROSTER=base|full\n',
+);
 console.log('  policy   mean wave  mean score  mean level  mean hits');
 console.log('  -------  ---------  ----------  ----------  ---------');
 for (const p of POLICIES) {

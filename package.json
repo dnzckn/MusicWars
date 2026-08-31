@@ -180,7 +180,10 @@
     "finale": "node --experimental-transform-types tools/finale.mjs",
     "beatlock": "node --experimental-transform-types tools/beatlock.mjs",
     "fontlanes": "node --experimental-transform-types tools/fontlanes.mjs",
-    "fontcheck": "node tools/fontcheck.mjs"
+    "fontcheck": "node tools/fontcheck.mjs",
+    "roster8": "node --experimental-transform-types tools/roster8.mjs",
+    "stages": "node --experimental-transform-types tools/stages.mjs",
+    "setlist": "node tools/setlist.mjs"
   },
   "dependencies": {
     "@strudel/core": "^1.2.6",

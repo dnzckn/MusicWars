@@ -158,3 +158,135 @@ Continue / New Game / Weapon Shop, plus stage select.
 - **If points make the run feel like a means rather than an end.** The run
   should still be the game. A meta layer that turns twenty minutes of play into
   a currency-farming chore is a worse game than the endless one it replaced.
+
+---
+
+## 7. What the measurement said — and where it contradicted this plan
+
+Written after building it. Everything above is preserved as it was proposed;
+this section is what happened when the proposals were measured, and it
+contradicts three of them.
+
+### 7.1 `stage^1.6` is far too steep, and the reason is the column §2.2 has not got
+
+§2.2's table has no TIME in it, and time is what decides the question §2.3
+actually asks. A deeper stage contains about six times the bodies (6,925
+scheduled across a stage-1 run against 43,849 at stage 12) and takes about twice
+the clock (14:00 against 27:21, builder bot, starting roster, 3 seeds). So the
+per-run multiplier is only half the fraction.
+
+`tools/stages.mjs` re-prices one set of measured runs under every candidate
+curve — exact, because the payout is linear in the multiplier — and prints the
+best stage and its points-per-minute advantage over farming the shallowest:
+
+| curve | best stage | best / farm |
+|---|---|---|
+| `s^0.8` shifted | 6 | 2.3x |
+| `s^1.0` shifted | 6 | 2.9x |
+| `s^1.2` shifted | 12 | 4.1x |
+| **`s^1.35` shifted (shipped)** | **12** | **5.3x** |
+| `s^1.6` shifted | 12 | 8.2x |
+| `s^2.0` shifted | 12 | 16.3x |
+| **`s^1.6` bare — this document's §2.2 proposal** | **12** | **27.8x** |
+
+At the plan's number a stage-12 hour is worth **twenty-eight** stage-1 hours.
+That is not "exponentially more, not too exponential"; it is the second failure
+mode §2.2 names, arriving at the value §2.2 proposed.
+
+**The measurement did not pick a single exponent. It excluded a region and
+bounded the rest.** At 1.0 and below the optimum sits at stage 6 and everything
+deeper is a LOSS per minute — the deep half of the set list becomes dead
+content, which is the failure mode from the other side. At 1.2 and above the
+optimum is the deepest stage. Anywhere in 1.2-1.6 is defensible; 1.35 was chosen
+inside that band because it keeps a real gradient across the deep stages
+(stage 6 to 12 is 1.23x rather than 1.43x at 1.6), so pushing further still pays
+without making stage 6 pointless.
+
+### 7.2 A bare power law has its steepest step where the player is weakest
+
+`s^E` has its largest RELATIVE step between stage 1 and stage 2 and flattens
+after: at E=1.35 that first step is 2.55x while stage 11 to 12 is 1.03x. That is
+backwards — the one step every new player must take, taken with the weakest
+roster they will ever have.
+
+The shipped curve is `((s + 1.4) / 2.4) ^ 1.35`, normalised so stage 1 is exactly
+1.0. Worst neighbour ratio 1.60x, whole set list 10.2x. `tools/roster8.mjs`
+asserts a ceiling of 2.0 on the largest neighbour ratio, which is "not too
+exponential" written as arithmetic rather than as a feeling, and the bare curve
+fails it.
+
+### 7.3 The zero-sum offer worry (§5, AGENTS.md §5) did not materialise
+
+It went the other way. `tools/offerpool.mjs` grew a fourth arm at the shipped
+starting roster, 400 model runs of 34 offers each:
+
+    30 draftable (as shipped)   3.62 designed fusions per run, builder
+     8 draftable (the gate)     3.81                          — UP 5.0%
+
+AGENTS.md §5's finding is about cards ADDED to a fixed-size offer taking slots
+from the others. Removing cards is the opposite operation and it CONCENTRATES a
+builder's picks onto the two things they are feeding. Grace cards — the way a
+thin pool actually goes wrong — sit at 0.9% of 54,400 dealt, so sixteen ids
+against four cards is not running dry.
+
+`tools/builds.mjs` at the gated roster: divergence **0.85 against 2.01** at the
+full table, on a bar of 0.25. Read the decomposition: the policy spread in wave
+reached roughly TRIPLED (0.27 -> 0.79) while the damage spread compressed
+(6.5x -> 2.2x), because a sixteen-id pool contains no super-safe corner. The
+pick decides progress more and punishment less. §6's "if 8 weapons makes runs
+samey" is not what happened.
+
+### 7.4 §6's other falsifier: stage 1 IS winnable on eight weapons
+
+3/3 cleared, 14:00 mean, on the starting roster with a builder bot. Faster than
+the full-roster baseline (`finale` reads 16:26 card-0 / 14:19 builder at thirty
+instruments), which is consistent with the fusion rate going up rather than
+down. The gate is a pacing device, not a wall.
+
+### 7.5 The honest negative: depth is BIGGER and BUSIER, and not measurably more
+dangerous
+
+Stage 12 against stage 1: 1.95x the clock, 2.55x the kill rate, 2.8x the mean
+crowd on screen, 3.3x the PEAK crowd. Those all move, in both roster arms.
+
+Damage taken does not. This bot takes one to eight hits in a whole run at every
+depth and never dies at any of them — `tools/deadhunt-horizon.mjs` explains why
+(score extends plus the last-life auto-bomb refund make survival an absorbing
+state). The first version of the difficulty gate asserted on hits per minute and
+it read 4.09x on one roster arm and 0.09x on the other: the metric's spread is
+the whole effect. It was replaced with peak crowd.
+
+So: **the set list demonstrably delivers more, and whether it is frightening is
+a question about a human that nothing in `tools/` can answer.**
+
+### 7.6 §3's open questions, decided
+
+- **Price shape.** Rising, linearly, uniform across items: `150 + 50n`, ending
+  at 1,400 for the 26th unlock and 20,150 for all of them. Rising because the
+  reward curve rises and a flat price empties the shop in one evening; linearly
+  rather than geometrically because a power-law reward against a geometric price
+  is a wall; uniform because pricing ANVIL above EMBER is a balance claim and
+  there is no measurement behind one.
+- **Anything else purchasable?** No. The ask was weapons and passives.
+- **Does the shop show what a weapon does?** Yes, and it is
+  `stepNote(id, 1)` — byte-identical to the note `availableOptions` puts on the
+  card the first time that thing is offered, asserted row by row rather than
+  claimed.
+
+### 7.7 Which eight, and what the choice cost
+
+The roster is organised on ONE axis: twenty of the thirty instruments own
+exactly one entry of `PROPERTY_NAMES` and the other ten re-deliver a property
+somebody else owns. So "distinct mechanical roles" has a machine-readable
+meaning, and the starting eight are eight different properties —
+**ember/burn, bow/lance, timpani/quake, chime/freeze, feedback/chain,
+drones/brood, siphon/leech, anvil/heavy**. The three openers are forced by
+`STARTERS`; seven of the eight passives are then forced by those weapons'
+evolution recipes, because a locked catalyst is a designed reward the player can
+never reach. `rapid` takes the one free chair.
+
+It is not the maximum of either objective it was chosen against. The
+lattice-densest legal eight (`ember bow timpani chime tremolo anvil gravel harp`)
+has **sixteen** authored pair recipes among its twenty-eight pairs against this
+set's **nine** — but it is four damage shapes and two damage-over-times with no
+chain, no summon and no sustain: a richer fusion tree over a narrower game.
