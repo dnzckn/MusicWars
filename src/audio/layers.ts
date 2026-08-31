@@ -3563,43 +3563,26 @@ export function buildLead(m: MusicalState): Pattern {
   const vibRate = m.boss ? 5.6 + m.bossPhase * 0.4 : 5.1;
 
   /*
-   * THE BOSS LEAD IS LAVENDER TOWN, and the whole point is that it is WRONG.
+   * THE LAVENDER TOWN BOSS TREATMENT IS GONE, at the owner's word: "lol the
+   * lavendar town boss fight is so awful lets just forget about that spec".
    *
-   * Asked for by name, on tzwaan's cover: "the lavender town example on there
-   * would be sick for a boss fight". Its source is four voices, every one of
-   * them `pulse` — no warmth anywhere — over a single filtered white-noise hit
-   * for percussion. The character is not "heavier", it is THINNER and out of
-   * tune:
+   * It was asked for by name and built faithfully — a slow 2.5 Hz wobble half a
+   * semitone deep, deepening to 0.89 through the phases, with a tremolo under
+   * it, taken from tzwaan's cover. Every number was measured and the gate that
+   * watched it was strengthened rather than relaxed.
    *
-   *     note("...").s("pulse").vib("2.5:.2").adsr("0:.7:.4:.1").clip(.93)
-   *     ...  .s("pulse").fm(15).tremsync("24").tremdepth(.4)
-   *     .when("<0!4[1!3 0]>/4", x => x.vib("8:.2").tremdepth(.7)
-   *                                   .gain(saw.range(.3, .8).slow(4)))
+   * And it sounded bad, which no measurement here could have told anyone. The
+   * cover works because it is a LULLABY made wrong: sparse, slow, four thin
+   * pulse voices and one noise hit. Dropped onto a lane that is doubling a
+   * melody across three oscillators over an eleven-lane arrangement at fighting
+   * tempo, "deliberately out of tune" is just out of tune. The reference was
+   * right about itself and wrong about here, and the only instrument that could
+   * detect that is an ear.
    *
-   * Read what makes it unsettling rather than the notes, which are Junichi
-   * Masuda's. `vib("2.5:.2")` is a SLOW two-and-a-half hertz wobble half a
-   * semitone deep — deep enough that the pitch stops being one note, which is
-   * the thing the ordinary lead's comment above is careful to stay under
-   * ("past about 0.5 the pitch stops reading as one note and the melody goes
-   * out of tune with the harmony under it"). That defect is the effect here.
-   * And `.when(...)` swaps in EIGHT hertz for one phrase in five: the track
-   * periodically gets worse, and periodically recovering is what makes it
-   * frightening rather than merely dissonant.
-   *
-   * So the boss lead inverts three of this file's own rules on purpose, and
-   * they are inverted here rather than relaxed there: the vibrato goes past the
-   * in-tune ceiling, the rate drops to something audible as an effect, and a
-   * tremolo runs under it. `bossPhase` drives all three, so the last act is the
-   * most out of tune — the boss does not get louder, it gets sicker.
-   *
-   * `tremolodepth`, `tremolosync` and `tremolophase` are real superdough
-   * controls (superdough.mjs:199, :598, :796) with `tremdepth`/`tremsync` as
-   * the Strudel aliases; checked before writing rather than assumed, because
-   * this file is full of controls that silently do nothing.
+   * Worth keeping as a note rather than a silent deletion: this is the clearest
+   * case this session of a change that was correct at every step of its
+   * reasoning and still wrong. `leadcheck`'s boss assertion goes with it.
    */
-  const bossSick = m.boss ? 0.45 + m.bossPhase * 0.35 : 0;
-  const bossVibRate = 2.5 + m.bossPhase * 2.4;
-  const bossTremDepth = 0.34 + m.bossPhase * 0.3;
 
   /*
    * THE SAWTOOTH DOUBLING HAD THE TRIANGLE'S FILTER.
@@ -3655,24 +3638,8 @@ export function buildLead(m: MusicalState): Pattern {
        * slot instead of all of it. One note still reaches the next; five no
        * longer stack.
        */
-      .vib(m.boss ? bossVibRate : vibRate)
-      /*
-       * ADDED to the sustain-coupled depth, not substituted for it.
-       *
-       * The first version took `Math.max(vibDepth, bossSick)` and `leadcheck`
-       * caught it immediately: "depth does not rise with sustain, 0.55->0.800
-       * 0.62->0.153". Pinning the depth to a constant during a boss breaks the
-       * rule that a longer note gets more vibrato, which is a real musical
-       * coupling and not an artefact of the gate. Adding keeps the coupling
-       * monotonic AND makes the boss deeper, so both hold at once — and the
-       * gate stays exactly as strict as it was.
-       */
-      .vibmod(vibDepth + bossSick)
-      .tremsync(24)
-      // 0 outside a boss. Checked rather than assumed: superdough reads
-      // `tremolodepth` through applyGainCurve and 0 is no modulation, NOT the
-      // silence that `distort(0)` produces.
-      .tremdepth(m.boss ? bossTremDepth : 0)
+      .vib(vibRate)
+      .vibmod(vibDepth)
       /*
        * 4000 rather than 6500. Above about 4kHz a melody gains no pitch
        * information, only edge — the ear locates a note from its fundamental
