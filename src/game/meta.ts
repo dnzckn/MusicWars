@@ -237,22 +237,39 @@ const SPEED_SLOW = 1.6;
  * it cannot silently drift into "nobody ever earns the speed bonus" or "the
  * speed bonus is automatic".
  *
- * The number to beat is not the mean: par is deliberately a little under it, so
- * the bonus is something a good run earns rather than something every run
- * collects.
+ * MEASURED AT 12:49 (769s) for a builder bot on the starting roster, 2 seeds,
+ * both cleared. 780 is that number, and the choice to sit AT the measured mean
+ * rather than under it is deliberate: `speedFraction` runs from 0 at 1.6x par
+ * to 1 at 0.6x par, so par itself is worth 0.6 of the bonus. Putting par at the
+ * bot's own time therefore lands the reference run at 61% of the bonus — which
+ * leaves real room in both directions for a human, who is slower than this bot
+ * and does not have its patience.
+ *
+ * 900 WAS THE FIRST VALUE AND THE MEASUREMENT REJECTED IT: at 900 the bot
+ * collected 74.5% of the bonus at stage 1 and 96-100% from stage 6 down, i.e.
+ * the term had stopped discriminating at exactly the depths it matters most.
+ * A speed bonus every run collects is not a speed bonus.
  */
-export const PAR_BASE_SECONDS = 900;
+export const PAR_BASE_SECONDS = 780;
 
 /**
  * How much longer par gets per stage step, as a fraction of `PAR_BASE_SECONDS`.
  *
- * Also measured. A deep stage is longer because it contains more enemies, and
- * `tools/stages.mjs` reports the slope of clear time against stage depth; this
- * is that slope. Getting it wrong in either direction is a real defect and both
- * are silent: too small and every deep clear reads as slow, too large and every
- * deep clear reads as fast.
+ * Also measured, and the first value was wrong in the direction that flatters
+ * the player. A deep stage is longer because it contains more enemies, and
+ * `tools/stages.mjs` reports the slope of clear time against stage depth.
+ * Measured over eight depths on the starting roster, clear time runs 12:49 at
+ * stage 1 to 26:48 at stage 12 — 2.09x over eleven steps, or **9.9% of the
+ * stage-1 time per step**. This was 0.16 on the first draft, chosen from
+ * nothing; at that value par outran the real clock by 60% and every deep clear
+ * scored as fast.
+ *
+ * Getting it wrong is silent in both directions: too small and every deep clear
+ * reads as slow, too large and every deep clear reads as fast. The tool asserts
+ * the two against each other rather than against a remembered number, so the
+ * day the stage terms move this goes red instead of quietly rotting.
  */
-export const PAR_GROWTH = 0.16;
+export const PAR_GROWTH = 0.1;
 
 /** The par clear time for a stage, in seconds. */
 export function parSeconds(stage: number): number {
@@ -563,14 +580,31 @@ export function sanitiseMeta(raw: unknown): MetaState {
  * Read the save.
  *
  * The one function in this module that touches storage, together with
- * `saveMeta`. Both guard on `typeof localStorage` — which is what makes them
- * safe in Node, where the identifier is not merely empty but ABSENT, so a bare
- * mention is a `ReferenceError` rather than a null — and both then wrap in
- * `try`, which is what makes them safe in private-mode Safari, where the
- * identifier exists and the CALL throws.
+ * `saveMeta`. Both guard on `typeof localStorage` and both then wrap in `try`.
  *
- * Two guards, two different failures. Either one alone is a boot crash on some
- * real platform.
+ * ## THE `try` IS LOAD-BEARING AND THE `typeof` GUARD IS NOT, and this comment
+ * said the opposite until its own fail-test corrected it.
+ *
+ * It claimed "two guards, two different failures — either one alone is a boot
+ * crash on some real platform", which is a good story and is false. Measured,
+ * by breaking each half separately and running `tools/roster8.mjs`:
+ *
+ *   both removed          Node throws `ReferenceError: localStorage is not
+ *                         defined`; the headless assertion goes RED
+ *   `typeof` removed,     GREEN. The `try` catches the ReferenceError just as
+ *   `try` kept            happily as it catches Safari's SecurityError, and
+ *                         `loadMeta` returns a default exactly as intended
+ *
+ * So one mechanism covers both platforms. The guard stays anyway, for two
+ * reasons that are worth less than the one it was credited with and are still
+ * reasons: it states the headless case as a NORMAL condition rather than
+ * leaving it to an exception path, which is the difference between code that
+ * expects Node and code that survives it; and it keeps the common headless
+ * call — every one of the ~200 checks in `tools/` imports this module —
+ * off the throw path entirely.
+ *
+ * If it is ever removed, the `try` must not be. That is the half that is
+ * actually keeping the boot alive, and now there is a measurement saying so.
  */
 export function loadMeta(): MetaState {
   try {

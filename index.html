@@ -254,11 +254,30 @@
           <!-- The opening choice. Every run used to start with the same gun, so
                the first real decision arrived minutes in. Three openers that
                measured as viable AND play least alike; see `prog.STARTERS`. -->
-          <fieldset class="starters" id="starters">
+          <fieldset class="starters">
             <legend>OPEN WITH</legend>
             <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
           </fieldset>
           <button id="start-button" type="button">PRESS TO BEGIN</button>
+          <!--
+            WHICH STAGE THIS BUTTON WILL START, and why the button itself is
+            untouched.
+
+            `#start-button` begins a run IMMEDIATELY, at whatever stage is
+            selected, exactly as it always has. That is not a UX preference, it
+            is a hard constraint: 128 files in `tools/` do
+            `await p.click('#start-button')` and then measure a running game.
+            Making it open a menu would have taken the entire browser suite red
+            in one edit, and every one of those failures would have looked like
+            a game bug.
+
+            So the set list is a SECOND door rather than a gate in front of the
+            first. A new player presses the big button and plays; a returning
+            one has somewhere to spend their points. This line is the only thing
+            that changes about the primary path.
+          -->
+          <p class="best-line" id="title-stage"></p>
+          <button id="setlist-button" type="button" class="ghost">SET LIST &amp; SHOP</button>
           <p class="best-line" id="title-best"></p>
           <!-- What has ever been made, across runs. The fusion tree used to
                vanish with the run; this is the only thing in the game that
@@ -314,6 +333,86 @@
           </dl>
           <p class="touch-hint">On a touchscreen: drag anywhere to fly and fire.</p>
           <p class="warning">Headphones recommended. Nothing is pre-recorded &mdash; the track is generated live from the fight.</p>
+        </div>
+
+        <!--
+          THE SET LIST — the between-runs menu the owner asked for.
+
+          > "that way we have a continue, new game, and weapon shop menu before
+          >  starting up another round, then progressively rounds become
+          >  harder, but the user is selecting which round they would like to
+          >  attempt"
+
+          CONTINUE is the stage grid itself rather than a button. A CONTINUE
+          button would have to mean one of two things — resume the deepest
+          stage, or resume the last one played — and both are guesses about
+          which the player wants, in a menu whose entire purpose is that they
+          choose. The grid IS continuing: the save is loaded, the points are
+          spent, and every stage the player has earned is on it, with the one
+          they last played marked.
+
+          The reward multiplier is printed on every tile because the risk and
+          the reward have to be visible AT THE POINT THE DECISION IS MADE. A
+          set list that showed only which stages were open would be asking the
+          player to gamble without telling them the odds.
+        -->
+        <div id="menu-screen" class="screen hidden">
+          <h2>THE SET LIST</h2>
+          <p class="wallet"><b id="menu-points">0</b><span>POINTS</span><em id="menu-cleared"></em></p>
+
+          <!-- The same three openers as the title screen, rendered by the same
+               function into every `.starter-row` on the page. Two copies of the
+               markup, one copy of the state and one copy of the code — see
+               `paintOpeners` in main.ts. -->
+          <fieldset class="starters" id="menu-starters">
+            <legend>OPEN WITH</legend>
+            <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
+          </fieldset>
+
+          <ul class="stages" id="stage-grid"></ul>
+          <p class="sub" id="stage-hint"></p>
+
+          <div class="menu-actions">
+            <button id="shop-button" type="button" class="ghost">WEAPON SHOP</button>
+            <button id="menu-back" type="button" class="ghost">BACK</button>
+            <button id="newgame-button" type="button" class="ghost danger">NEW GAME</button>
+          </div>
+
+          <!--
+            NEW GAME IS DESTRUCTIVE AND SAYS SO BEFORE IT HAPPENS.
+
+            It discards every unlock the shop sold and every point banked, which
+            is the only irreversible button in the game. The confirmation names
+            what is lost in the player's own units — the count of weapons and
+            the balance — rather than saying "are you sure", because "are you
+            sure" is a question nobody reads.
+          -->
+          <div class="confirm hidden" id="newgame-confirm">
+            <p id="newgame-warning"></p>
+            <button id="newgame-yes" type="button" class="ghost danger">ERASE EVERYTHING</button>
+            <button id="newgame-no" type="button" class="ghost">KEEP MY SET</button>
+          </div>
+        </div>
+
+        <!--
+          THE WEAPON SHOP.
+
+          Every row shows what the thing DOES before it is bought, and the words
+          are the same words the level-up card will use when it is offered —
+          `stepNote(id, 1)`, the exact string `availableOptions` puts on a new
+          card. `docs/plan-meta.md` §3 asks for that and `tools/roster8.mjs`
+          asserts it row by row, because a shop description written separately
+          is a second copy of a string, and this repository has watched two
+          copies of one string drift three separate times.
+        -->
+        <div id="shop-screen" class="screen hidden">
+          <h2>WEAPON SHOP</h2>
+          <p class="wallet"><b id="shop-points">0</b><span>POINTS</span><em id="shop-next"></em></p>
+          <!-- The way out sits ABOVE the list, not under it. Twenty-six rows is
+               two and a half screens; a back button at the bottom is a back button
+               you have to scroll past everything to reach. -->
+          <button id="shop-back" type="button" class="ghost">BACK TO THE SET LIST</button>
+          <ul class="shop-grid" id="shop-grid"></ul>
         </div>
 
         <div id="pause-screen" class="screen hidden">
@@ -388,7 +487,20 @@
                decided; it showed the music you heard and nothing about the
                band you assembled. Populated from `combinationPlan`. -->
           <p class="band" id="final-band"></p>
-          <button id="retry-button" type="button">AGAIN</button>
+          <!--
+            WHAT THE RUN PAID, broken down.
+
+            The four terms are printed rather than summed because the breakdown
+            is the whole teaching: a player who cannot see that depth and speed
+            were worth points separately has no reason to attempt a deeper stage
+            or to finish a faster one. It is the only place the economy explains
+            itself.
+          -->
+          <p class="payout" id="final-points"></p>
+          <div class="endbuttons">
+            <button id="retry-button" type="button">AGAIN</button>
+            <button id="gameover-menu" type="button" class="ghost">SET LIST &amp; SHOP</button>
+          </div>
         </div>
       </main>
 

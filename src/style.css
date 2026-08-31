@@ -670,6 +670,21 @@ body::before {
   background: linear-gradient(180deg, #ffe98a, var(--gold) 55%, #e0b420);
   box-shadow: 0 0 26px rgba(255,209,102,.4), 0 6px 20px rgba(0,0,0,.5);
 }
+/*
+ * ...EXCEPT THE SECONDARY ONE, and it needed saying explicitly because
+ * `#gameover-screen.won button` is (1,1,1) and beats `.screen button.ghost`
+ * at (0,2,1).
+ *
+ * The victory screen has two buttons now — AGAIN and SET LIST & SHOP — and the
+ * rule above painted BOTH of them the gold slab, which put gold `.ghost` text
+ * on a gold gradient. Photographed in `tools/_setlist/victory-payout.png`
+ * before this rule existed: the second button was legible only as a shape. The
+ * whole point of `.ghost` is that one action per screen is the loud one.
+ */
+#gameover-screen.won button.ghost {
+  background: rgba(11, 14, 24, .7);
+  box-shadow: none;
+}
 
 .nowplaying {
   margin: 2px 0 0;
@@ -1446,7 +1461,30 @@ kbd {
   color: rgba(226, 234, 250, .5);
 }
 .starter-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
-.starter {
+/*
+ * `.screen .starter`, NOT `.starter`, AND THE SELECTION WAS RENDERING BACKWARDS
+ * UNTIL IT WAS.
+ *
+ * `.screen button` above is (0,1,1) — one class, one type — and this rule was
+ * (0,1,0), so every declaration the two share went to the primary-button slab:
+ * the cyan gradient, the 26px glow, `padding: 14px 30px`, `font-size: 13px`,
+ * `font-weight: 700`, `color: #04050a`. Everything below about a quiet dark
+ * panel was inert.
+ *
+ * The visible consequence was that the affordance ran INVERTED.
+ * `.starter[aria-checked="true"]` is (0,2,0) and did win, so the SELECTED
+ * opener drew as a dark gold-edged panel while the two you had not chosen drew
+ * as bright cyan slabs — the loudest thing on the title screen was the option
+ * you had rejected. Photographed in `tools/_setlist/title.png` before this
+ * line changed.
+ *
+ * Found while building the set list, which renders a second copy of this same
+ * control (see `paintOpeners`). It is a pre-existing defect rather than a new
+ * one; it is fixed here because the meta layer doubled the number of places it
+ * appears, and because a specificity accident is not a design decision anyone
+ * made.
+ */
+.screen .starter {
   /* Sized so three sit on one row on a narrow phone rather than stacking into
      a list, which would read as a menu instead of a choice between peers. */
   flex: 1 1 8rem;
@@ -1738,3 +1776,243 @@ kbd {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+/* ---------- the set list, the shop, and the payout ---------- */
+
+/*
+ * A SECONDARY BUTTON, because there are now three of them on one screen.
+ *
+ * `.screen button` is a solid cyan slab with a 26px glow, and it is right for
+ * exactly one thing per screen: the action the player came here to take. Three
+ * of those side by side is three primary actions, which is none. `.ghost`
+ * keeps the same shape, the same padding and the same focus ring — so nothing
+ * about the hit target or the keyboard path changes — and drops the fill.
+ */
+.screen button.ghost {
+  color: var(--ink);
+  background: rgba(11, 14, 24, .7);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  font-size: 11px;
+  padding: 10px 20px;
+}
+.screen button.ghost:hover {
+  border-color: rgba(53, 230, 255, .45);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(53, 230, 255, .18);
+  filter: none;
+}
+/* The one irreversible control in the game wears the one colour the rest of the
+   UI uses for damage. Not colour alone: the confirmation spells out what is
+   lost, which is the half a colourblind player reads. */
+.screen button.ghost.danger { color: rgba(255, 46, 110, .85); border-color: rgba(255, 46, 110, .28); }
+.screen button.ghost.danger:hover { border-color: var(--hot); color: #fff; box-shadow: 0 0 18px rgba(255, 46, 110, .22); }
+.screen button.ghost:disabled {
+  opacity: .38;
+  cursor: default;
+  transform: none;
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+
+/* The balance. Tabular digits because this number is watched while it changes. */
+.wallet {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: .18em;
+  color: var(--dim);
+}
+.wallet b {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+.wallet em { font-style: normal; color: var(--ink-2); letter-spacing: .1em; }
+
+/*
+ * THE STAGE GRID.
+ *
+ * `auto-fill` rather than a fixed column count: the set list is twelve tiles
+ * and the screens here are also rendered on a phone, where four across is a
+ * row of unreadable stamps. A minimum tile width lets the same markup be three
+ * across on a handset and six on a desktop with no media query and no second
+ * layout to keep in step.
+ */
+.stages {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+  width: min(620px, 100%);
+}
+.stages li { display: flex; }
+/*
+ * `.screen .stage`, for the same specificity reason the opener buttons needed
+ * (see `.screen .starter` above): `.screen button` is (0,1,1) and a bare
+ * `.stage` is (0,1,0), so a plain class rule loses its background, colour and
+ * padding to the primary-button slab. The stage tile drew as a cyan block with
+ * gold text on it — the reward multiplier, the one number the decision is made
+ * from, at about 1.9:1 contrast.
+ */
+.screen .stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(11, 14, 24, .7);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: border-color .12s ease, transform .12s ease, background .12s ease;
+}
+.screen .stage:hover { border-color: rgba(53, 230, 255, .5); transform: translateY(-1px); }
+.screen .stage:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.screen .stage b { font-size: 15px; font-weight: 700; letter-spacing: .1em; color: #dbe4f7; }
+/* The reward, in the gold everything else in this game pays out in. This is the
+   number the risk decision is made against, so it is the second-loudest thing
+   on the tile after the stage number itself. */
+.screen .stage i {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+.screen .stage em {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: .08em;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  min-height: 1em;
+}
+/* Cleared, and the best time is on the tile. */
+.screen .stage.cleared { border-color: rgba(92, 255, 157, .3); }
+.screen .stage.cleared b { color: var(--green); }
+/* The one that is next: earned but never finished. The tile the player is being
+   invited to gamble on, so it gets the only animated edge on the screen. */
+.screen .stage.next { border-color: var(--gold); background: rgba(255, 215, 60, .07); }
+.screen .stage.next b { color: #fff0c2; }
+.screen .stage.locked {
+  cursor: default;
+  opacity: .34;
+  border-color: var(--line-soft);
+  background: rgba(7, 9, 17, .6);
+}
+.screen .stage.locked:hover { border-color: var(--line-soft); transform: none; }
+.screen .stage.locked i { color: var(--dim); }
+
+.menu-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 4px; }
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 14px 18px;
+  border: 1px solid rgba(255, 46, 110, .32);
+  border-radius: 6px;
+  background: rgba(255, 46, 110, .05);
+  max-width: 46ch;
+}
+.confirm.hidden { display: none; }
+.confirm p { margin: 0; font-size: 11px; line-height: 1.7; color: var(--ink); letter-spacing: .04em; }
+
+/*
+ * THE SHOP.
+ *
+ * One column, not a grid of cards: every row carries a full sentence of
+ * mechanics — "20 dmg · the hit arcs on to 3 more bodies nearby for 9 each" —
+ * and a sentence set in a 140px card is four ragged lines. The thing being sold
+ * here is understanding what the weapon does, so the layout serves the text.
+ */
+.shop-grid {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(680px, 100%);
+  text-align: left;
+}
+.shop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: rgba(11, 14, 24, .6);
+}
+.shop-row h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: #dbe4f7;
+}
+/* Which bank it goes in. Four stand slots and four rig slots are different
+   scarcities, so "is this a weapon or a passive" is part of the decision. */
+.shop-row h4 span {
+  margin-left: 8px;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .16em;
+  color: var(--dim);
+}
+.shop-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.65;
+  letter-spacing: .03em;
+  color: var(--ink-2);
+}
+.shop-row.owned { border-color: rgba(92, 255, 157, .26); background: rgba(92, 255, 157, .04); }
+.shop-row.owned h4 { color: var(--green); }
+.shop-row .price {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shop-row .price.owned { color: var(--green); }
+.shop-row button { margin-top: 0; }
+
+/* What the run just paid, on the game-over screen. */
+.payout {
+  margin: 8px 0 0;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.7;
+}
+.payout b { color: var(--gold); font-weight: 700; font-size: 15px; }
+.payout span { display: block; font-size: 9.5px; color: var(--dim); letter-spacing: .08em; }
+
+.endbuttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+
+/* The opener picker on the set list is the same control as the title screen's,
+   rendered by the same function — but it is a supporting decision here rather
+   than the headline one, so it is tightened up and sits under the balance. */
+#menu-starters { margin: 2px 0 4px; }
+#menu-starters legend { font-size: 8.5px; }
+#menu-starters .starter { padding: 6px 10px; font-size: 9.5px; }

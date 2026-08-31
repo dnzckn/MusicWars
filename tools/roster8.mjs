@@ -31,36 +31,93 @@
  *
  * ---------------------------------------------------------------------------
  * THE FAIL-TEST LOG. AGENTS.md §3: a gate never seen red is not evidence, and
- * the unit is the ASSERTION. Every break below was made, observed, and then
- * undone BY A SECOND EDIT.
+ * the unit is the ASSERTION. Every break below was made, RUN, observed, and
+ * then undone by the reverse edit. Every figure is one that was printed, not
+ * one that was expected.
  *
- *   break                                          assertions it turned RED
- *   -------------------------------------------    -------------------------
- *   A  BASE_INSTRUMENTS drops `bow`                 base roster is 8+8 (7);
- *      (seven weapons)                              every starter is in the
- *                                                   base roster (2/3); base +
- *                                                   locked = the whole table
- *                                                   (39 of 40)
- *   B  BASE_RIG swaps `laser` for `magnet`          every base weapon can reach
- *                                                   its designed evolution
- *                                                   (6/8 — ember and bow)
- *   C  BASE_INSTRUMENTS swaps `chime` for           the eight cover eight
- *      `coda` (freeze again, new delivery)          distinct properties (7 of 8)
- *   D  `availableOptions` loses the                 the gate holds: only base
- *      `draftable(state, def.id)` line in the       ids are dealt (1204 of 1360
- *      INSTRUMENTS loop                             cards legal)
- *   E  `shopRows` uses `def.blurb` for a rig row    the shop reads the card
- *      instead of `stepNote(id, 1)`                 (22 of 26 rows matched)
- *   F  `REWARD_SHIFT` set to 0 (a bare `s^E`)       no neighbour pays more than
- *                                                   2.0x the one before it
- *                                                   (2.55x at stage 1 -> 2)
- *   G  `LOSS_FLOOR` set to 0                        a failed attempt still pays
- *                                                   something (0 points)
- *   H  `sanitiseMeta` returns `raw` when            a corrupt save cannot brick
- *      `o.version === META_VERSION`                 a boot (5 of 9 payloads
- *      without validating the fields                survived unsanitised)
- *   I  `buy` forgets `meta.points -= price`         buying debits exactly the
- *                                                   price (0 spent of 150)
+ *   break                                        assertions it turned RED
+ *   ------------------------------------------   ---------------------------
+ *   A  BASE_INSTRUMENTS drops `bow`              8+8 (read 7 and 8); every
+ *                                                opener is in the base roster
+ *                                                (2/3)
+ *   B  BASE_RIG swaps `laser` for `magnet`       every base weapon reaches its
+ *                                                evolution (6/8); AND four real
+ *                                                cards (grace 2.92%)
+ *   C  `siphon` swapped for `coda` — a SECOND    eight distinct properties
+ *      freeze                                    (7 across 8; freeze shared by
+ *                                                chime+coda)
+ *   C2 `lockedIds` skips one id, so it is in     base + locked is the whole
+ *      neither list                              table (41 of 42, tremolo lost)
+ *   D  the INSTRUMENT loop loses its gate        the gate holds (19,706 of
+ *                                                27,200 cards legal; leaked
+ *                                                rondo coda pizzicato charm...)
+ *   D2 the RIG loop loses its gate               the gate holds (24,214 of
+ *                                                27,200; leaked magnet homing
+ *                                                spread timewarp)
+ *   Q  the base roster cut to two ids            four real cards (85.58% of
+ *                                                27,200 dealt were grace)
+ *   E  `shopRows` uses `blurb` for rig rows      the shop reads the card (22 of
+ *                                                26; spread homing magnet
+ *                                                timewarp differ)
+ *   P  every shop note emptied                   the shop reads the card (0 of
+ *                                                26); and none is blank (0/26)
+ *   F  `REWARD_SHIFT` set to 0 (bare `s^E`)      no step more than doubles
+ *                                                (2.55x at 1 -> 2, set list
+ *                                                spans 28.6x)
+ *   K1 `stageReward` not normalised at stage 1   stage 1 pays exactly 1x
+ *                                                (3.260507)
+ *   J  `REWARD_EXPONENT` set to 0                deeper always pays more (1.00x
+ *                                                to 1.00x); stage 8 worth
+ *                                                attempting (1.0x)
+ *   G  `LOSS_FLOOR` set to 0                     a failed attempt still pays
+ *                                                (0 points)
+ *   O  `PROGRESS_POINTS` set to 0                getting further pays more
+ *                                                (10 -> 10 -> 166)
+ *   N  `SPEED_POINTS` set to 0                   speed is worth something
+ *                                                (200 / 200 / 200)
+ *   Q2 `CLEAR_POINTS` set to -100                no failed run out-earns a
+ *                                                clear (worst clear 0, best
+ *                                                loss 45); and getting further
+ *   H  `sanitiseMeta` returns `raw` when the     a corrupt save cannot brick a
+ *      version matches, unvalidated              boot (5 of 9); and one bad
+ *                                                field costs only that field
+ *   W  `sanitiseMeta` drops the best map         a clean save round-trips ({})
+ *   V  `loadMeta` loses the typeof guard AND     headless has no storage, which
+ *      the try                                   is not an error (it THREW)
+ *   I  `buy` forgets `meta.points -= price`      buying debits exactly the
+ *                                                price (spent 150, left 150)
+ *   S  `buy` allows a duplicate                  you cannot buy twice (2 owned)
+ *   Z  `buy` allows a base-roster id             nor buy what you started with
+ *   T  `unlockPrice` is flat                     the next one costs more
+ *                                                (150 -> 150)
+ *   U  `unlockedRoster` forgets purchases        it is in the next run's pool
+ *                                                (16 ids, tremolo absent)
+ *   K  every stage unlocked from the start       a fresh save offers stage 1
+ *                                                only (12 of 12 offered)
+ *   L  `recordRun` does not open the next stage  clearing one opens the next
+ *                                                (cleared 0)
+ *   X  `recordRun` banks a clear for a LOST run  losing opens nothing
+ *                                                (cleared 2)
+ *
+ * TWO THINGS THE LOG FOUND THAT THE ASSERTIONS DID NOT, and both were gates
+ * passing for the wrong reason:
+ *
+ *   `a failed attempt still pays something` probed a run that had cleared ONE
+ *   wave, so the depth term paid 4 points and break G stayed GREEN. The probe
+ *   is `wavesCleared: 0` now — the only state where the floor is the whole
+ *   payout.
+ *
+ *   the two `buy` refusals ran on a wallet the previous purchase had emptied,
+ *   so breaks S and Z BOTH stayed green: the affordability check was refusing
+ *   every call before either rule was consulted. The wallet is funded first now.
+ *
+ * ONE BREAK THAT STAYED GREEN AND IS RECORDED RATHER THAN FIXED:
+ *
+ *   V2 `loadMeta` keeps the `try` but loses the `typeof` guard — GREEN. The
+ *   `try` catches Node's ReferenceError as happily as it catches Safari's
+ *   SecurityError, so the guard is redundant rather than load-bearing. The
+ *   comment in `meta.ts` claimed the opposite and has been corrected; the guard
+ *   is kept for reasons that are now stated honestly as the smaller ones.
  * ---------------------------------------------------------------------------
  */
 import './lib/tsnode.mjs';
@@ -403,13 +460,32 @@ console.log('\nWHAT A RUN PAYS');
   const slow = row('stage 1, cleared at 1.6x par', { stage: 1, wavesCleared: T, seconds: par1 * 1.6, won: true });
   const half = row('stage 1, died half way', { stage: 1, wavesCleared: T / 2, seconds: 400, won: false });
   const nowhere = row('stage 1, died on wave 1', { stage: 1, wavesCleared: 1, seconds: 40, won: false });
+  /*
+   * THE WORST POSSIBLE RUN, and the probe is `wavesCleared: 0` rather than 1
+   * BECAUSE THE FAIL-TEST SAID SO.
+   *
+   * The floor assertion below used to read the "died on wave 1" row, and
+   * setting `LOSS_FLOOR = 0` LEFT IT GREEN: that row still cleared one wave of
+   * sixteen, so the depth term paid 4 points and the floor was never the thing
+   * being measured. A gate that passes with the constant it is named after set
+   * to zero is decoration — AGENTS.md §3, found exactly the way it says to
+   * find it.
+   *
+   * Zero waves cleared is the only state in which the floor is the ENTIRE
+   * payout, so it is the only probe that can see it.
+   */
+  const nothing = row('stage 1, died before clearing a wave', { stage: 1, wavesCleared: 0, seconds: 20, won: false });
   const deep = row('stage 8, cleared at par', { stage: 8, wavesCleared: T, seconds: M.parSeconds(8), won: true });
 
-  check(nowhere.points > 0, 'a failed attempt still pays something', `${nowhere.points} points for dying on wave 1`);
   check(
-    half.points > nowhere.points && atPar.points > half.points,
+    nothing.points > 0,
+    'a failed attempt still pays something, even the worst one',
+    `${nothing.points} points for dying with nothing cleared`,
+  );
+  check(
+    half.points > nowhere.points && nowhere.points > nothing.points && atPar.points > half.points,
     'and getting further pays more, win or lose',
-    `${nowhere.points} -> ${half.points} -> ${atPar.points}`,
+    `${nothing.points} -> ${nowhere.points} -> ${half.points} -> ${atPar.points}`,
   );
   check(
     fast.points > atPar.points && atPar.points > slow.points,
@@ -550,8 +626,27 @@ console.log('\nBUYING');
     'buying debits exactly the price and grants exactly one thing',
     `spent ${price}, left ${meta.points}, own ${meta.unlocked.length}`,
   );
-  check(!M.buy(meta, id), 'and you cannot buy the same thing twice', `still ${meta.unlocked.length} owned`);
-  check(!M.buy(meta, 'ember'), 'nor buy something you started with', `ember is ${M.BASE_INSTRUMENTS.includes('ember') ? 'base' : 'NOT BASE'}`);
+  /*
+   * FUNDED FIRST, AND THE FAIL-TEST IS WHY.
+   *
+   * These two used to run on a wallet the previous purchase had just emptied,
+   * and removing the duplicate guard AND the base-roster guard from `buy` both
+   * left them GREEN — the affordability check was refusing every call before
+   * either rule was consulted, so two assertions were passing on the wrong
+   * reason. A gate satisfied by an unrelated mechanism is the "gates optimised
+   * against" shape AGENTS.md §3 opens with, and it was hiding here in the
+   * cheapest possible form: an empty wallet.
+   *
+   * With the wallet full, the only thing that can refuse these calls is the
+   * rule each one is named after.
+   */
+  meta.points = 10_000;
+  check(!M.buy(meta, id), 'and you cannot buy the same thing twice', `still ${meta.unlocked.length} owned, ${meta.points} points untouched`);
+  check(
+    !M.buy(meta, 'ember'),
+    'nor buy something you started with',
+    `ember is ${M.BASE_INSTRUMENTS.includes('ember') ? 'base' : 'NOT BASE'}; ${meta.unlocked.length} owned`,
+  );
   check(
     M.nextPrice(meta) === price + M.UNLOCK_STEP,
     'and the next one costs more',
