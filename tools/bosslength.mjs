@@ -6,10 +6,25 @@
  * screen. Nobody has since measured the other half. Sampled during a fight the
  * boss lost 15% of its health in 24 seconds, which extrapolates to something
  * close to three minutes against a single enemy.
+ *
+ * RE-POINTED WHEN THE RUN GAINED A FINAL BOSS. The sample was `[7, 15]` — two
+ * minis — and it now includes `FINAL_BOSS_WAVE`, which is the ONE fight in the
+ * game most likely to break this gate and was the one fight it could not see.
+ * The finale carries 1.9x a mini's HP and five acts instead of three, so it is
+ * both the longest fight and the only one whose length is bounded by a phase
+ * schedule rather than by raw HP. A boss-length gate that skipped it would have
+ * been measuring the cheap cases exactly where the expensive one lives.
+ *
+ * The list is derived from `waves.ts` rather than written out, for the reason
+ * `endgame`'s header gives: a hand-written wave list goes stale silently the
+ * next time `BOSS_COUNT` or `BOSS_EVERY` moves, and this directory has caught
+ * that failure four times.
  */
 import { chromium } from 'playwright';
 import { freezePage } from './lib/frozen.mjs';
 import { installDriver } from './lib/driver.mjs';
+import './lib/tsnode.mjs';
+const { BOSS_EVERY, FINAL_BOSS_WAVE } = await import('../src/game/waves.ts');
 const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required','--mute-audio'] });
 const p = await b.newPage();
 const __reloads = await freezePage(p);
@@ -18,7 +33,9 @@ await p.click('#start-button');
 await p.waitForTimeout(2500);
 await installDriver(p, 'dodge');
 const rows = [];
-for (const wave of [7, 15]) {
+// The second mini, the last mini, and the finale: the cheap case, the
+// expensive mini, and the fight that is a different shape from both.
+for (const wave of [2 * BOSS_EVERY - 1, FINAL_BOSS_WAVE - BOSS_EVERY, FINAL_BOSS_WAVE]) {
   rows.push(await p.evaluate(async (wv) => {
     const w = window.__musicwars.world;
     w.jumpToWave(wv);

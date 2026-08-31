@@ -310,6 +310,15 @@ function runOnce(seed, pickCard) {
     x >= w.camera.viewX && x <= w.camera.viewX + w.viewW && y >= w.camera.viewY && y <= w.camera.viewY + w.viewH;
   let choosingSteps = 0;
   let diedAt = -1;
+  /*
+   * `w.isOver` IS NO LONGER "THE PLAYER DIED". It is "the run ended", and a run
+   * can now end by winning (`World.winRun`). Reading death off the phase would
+   * have reported every victory as a death, in the column this file's own
+   * survival gate is computed from — so death comes off the event that only
+   * fires on a death, and the win comes off `World.victory`.
+   */
+  let deaths = 0;
+  w.bus.on('player:death', () => deaths++);
 
   for (let i = 0; i < steps; i++) {
     // The bot re-plans at 60Hz against a 120Hz sim, which is roughly what the
@@ -347,7 +356,9 @@ function runOnce(seed, pickCard) {
   const elapsed = diedAt >= 0 ? diedAt : MINUTES * 60;
   return {
     elapsed,
-    died: diedAt >= 0,
+    died: deaths > 0,
+    won: w.victory === true,
+    ended: diedAt >= 0,
     kills,
     killsPerMin: (kills / elapsed) * 60,
     hits,
@@ -398,7 +409,8 @@ for (const [i, r] of rows.entries()) {
   console.log(
     `  ${String(i + 1).padStart(3)}   ${f1(r.elapsed).padStart(7)}s  ${String(r.wave).padStart(4)}  ${String(r.level).padStart(3)}   ` +
       `${String(r.kills).padStart(5)}  ${f1(r.killsPerMin).padStart(9)}  ${String(r.hits).padStart(4)}   ` +
-      `${f1(r.dps).padStart(11)}  ${r.instruments}/${r.rig}${r.died ? '   DIED' : ''}`,
+      `${f1(r.dps).padStart(11)}  ${r.instruments}/${r.rig}` +
+      `${r.died ? '   DIED' : r.won ? '   WON' : ''}`,
   );
 }
 
@@ -573,11 +585,39 @@ console.log(`  time paused     ${(mean((r) => r.choosingFraction) * 100).toFixed
  * broken builds against 2.0 on a healthy short run. Shipping it would have
  * been a line that always says ok, which is the definition of decoration.
  *
- * `survived` is kept, and its status is stated rather than implied: it has
- * been seen red exactly once, on the build before the stage carry existed
- * (195s of 360), and it does not separate either fail-test above. It is a
- * cheap backstop against a build that kills the bot in the first minute, not
- * evidence about the geometry.
+ * `survived` IS GONE, AND IT IS REPLACED RATHER THAN RELAXED. This is the
+ * second time this block has had to say that sentence, and the reason is the
+ * same one AGENTS.md gives: the test encoded an assumption the design has
+ * deliberately changed, which in a diff looks identical to deleting a test
+ * that failed.
+ *
+ * IT ASSERTED `elapsed > 300` and printed "1200.0s mean, of 1200s offered".
+ * That was a true statement about an ENDLESS game: `elapsed` was the run's
+ * length only when the player died, and otherwise it was the tool's own
+ * horizon. `waves.ts` now has `BOSS_COUNT`, so a run has an end and `elapsed`
+ * has become two different quantities wearing one name — "how long the player
+ * lasted" and "how long the run took" — with no way to tell them apart. A run
+ * that WON at 320s would satisfy the old gate, and so would a run that DIED at
+ * 320s, and those are opposite outcomes.
+ *
+ * WHAT REPLACES IT IS STRICTLY STRONGER, and it is two assertions because the
+ * old one was quietly making two claims:
+ *
+ *   NOBODY DIED         `player:death` never fires, across every run. This is
+ *                       the survivability half said exactly. `elapsed > 300`
+ *                       passed on a run that died at 301 seconds; this cannot.
+ *   NOTHING ENDS ANY     every run that finishes inside the window finished by
+ *   OTHER WAY            WINNING. There is no third exit, and if one appears —
+ *                        a phase machine wedging into `'over'`, say — this is
+ *                        the line that sees it.
+ *
+ * THE ENDING ITSELF IS NOT ASSERTED HERE and that is deliberate. `arena`'s
+ * window is twenty simulated minutes and a full run measures 20-28 (see
+ * `tools/finale.mjs`), so demanding a victory inside it would be a gate that
+ * goes red when the run gets one wave longer. `finale` plays runs to their own
+ * end with no clock and owns every claim about the ending; this file only has
+ * to be honest that its window is shorter than the game. The counts print
+ * either way, with the number of runs as the denominator.
  *
  * THE OTHER HALF OF THE QUESTION — does what arrives behind you ever GET to
  * you — is not answerable from a population count and has its own file.
@@ -667,8 +707,38 @@ check(mean((r) => r.level) > 2, 'levels arrive', `L${f1(mean((r) => r.level))} r
 // fail-tests, and why `encirclement` is now reported rather than gated.
 const seenP50 = mean((r) => r.onScreen.p50);
 check(seenP50 >= 4, 'there is a crowd on screen, not just a peak', `${f1(seenP50)} enemies at the median`);
+/*
+ * SURVIVAL AND THE ENDING — what replaces `elapsed > 300`. See the long note
+ * at the head of this block for why the old assertion stopped describing the
+ * game and why these two are stronger.
+ *
+ * BOTH HAVE BEEN SEEN RED, per AGENTS.md §3, and one of the two breaks had to
+ * be made in THIS FILE rather than in the game, which is worth saying plainly:
+ *
+ *   `World.winRun` sets `victory = false` while still ending the run
+ *      -> "every run that ends, ends by WINNING" 0 won of 2, "nobody dies" green
+ *   this loop forced the player through `takeHit` at step 60,000
+ *      -> "nobody dies" 2 deaths of 2, and "ends by WINNING" 0 of 2 with it
+ *
+ * The second is a break in the harness, not in the game, and the reason is that
+ * this bot cannot be made to die by any change to the STAGE — `deadhunt-horizon`
+ * measured no deaths at any competence, including a ship that never moves. What
+ * it proves is the wiring: `died` comes off `player:death`, the event fires, and
+ * this assertion sees it. What it does NOT prove is that a lethal build would
+ * be caught, and nothing in this file could.
+ */
+const died = rows.filter((r) => r.died).length;
+const ended = rows.filter((r) => r.ended).length;
+const wonRuns = rows.filter((r) => r.won).length;
+check(died === 0, 'nobody dies', `${died} deaths in ${rows.length} runs of up to ${MINUTES} min`);
+check(
+  ended === wonRuns,
+  'and every run that ends, ends by WINNING',
+  `${wonRuns} won and ${ended - wonRuns} ended some other way, of ${rows.length} runs` +
+    ` (${rows.length - ended} still going at the cap — tools/finale.mjs plays them out)`,
+);
 const lived = mean((r) => r.elapsed);
-check(lived > 300, 'and the run survives it', `${f1(lived)}s mean, of ${MINUTES * 60}s offered`);
+console.log(`  ..    ${f1(lived)}s mean run length against a ${MINUTES * 60}s window — REPORTED, not gated`);
 console.log(
   `  ..    encirclement p90 ${f2(mean((r) => r.enc.p90))}, bodies mid-charge p90 ${f1(mean((r) => r.lunging.p90))}` +
     ' — REPORTED, not gated; see the note above',

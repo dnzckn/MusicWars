@@ -183,6 +183,30 @@ export interface Enemy {
   /** Boss only: which of the two attack variants, and the difficulty it spawned at. */
   bossVariant: number;
   bossDifficulty: number;
+  /**
+   * Boss only: this is THE FINAL BOSS, and clearing it ends the run.
+   *
+   * WHAT IT ACTUALLY CHANGES, because "more HP and more phases" is the version
+   * of a final boss that is only the mini again with a bigger number, and this
+   * repo has a written history of exactly that mistake (`waves.ts` BOSS_EVERY,
+   * `bossLunge`'s own header: "two shapes of problem rather than one shape at
+   * two speeds").
+   *
+   * A MINI IS ONE VARIANT FOR THE WHOLE FIGHT. Variant 0 circles fast and
+   * charges often — you solve it by orbiting with it. Variant 1 circles slowly
+   * and charges rarely and enormously — you solve it by reading one windup and
+   * being elsewhere. Those are two different solutions, and a mini asks for one
+   * of them, three times, harder each act.
+   *
+   * THE FINAL BOSS SWITCHES VARIANT AT EVERY PHASE GATE. Five acts, alternating
+   * rotation / timing / rotation / timing / rotation, each tighter than the
+   * last. The solution that carried you through the phase you are in is the
+   * wrong one for the phase you are about to be in, and the gate announces
+   * itself — `markBossPhasePending` holds the change until a bar line, so the
+   * boss visibly strains for a beat before the problem changes shape. That is a
+   * mechanic no mini has, built entirely out of parts the minis already use.
+   */
+  bossFinal: boolean;
   hue: number;
   /** Leaves the playfield without being killed; no score, no music credit. */
   escaped: boolean;
@@ -1004,6 +1028,7 @@ function blank(): Enemy {
     phaseThresholds: [],
     bossVariant: 0,
     bossDifficulty: 0,
+    bossFinal: false,
     hue: 200,
     escaped: false,
     leaveAt: Infinity,
@@ -1226,10 +1251,63 @@ export function spawnEnemy(
  * Both get faster and more frequent with each phase, which is what the phase
  * gate is for: three acts, each a harder version of the same question.
  */
-function bossLunge(difficulty: number, variant: number, phase: number): LungeSpec {
+/*
+ * ...and the final boss plays BOTH, one per act.
+ *
+ * `variantFor` is the whole of the final boss's extra mechanic, in one line:
+ * a mini keeps the variant it spawned with, and the finale takes its variant
+ * from the phase index, so every gate flips it between the two problems. Kept
+ * here next to `bossLunge` rather than at the call sites because there are two
+ * of them — `spawnBoss` and `commitBossPhase` — and a boss whose opening
+ * pattern disagreed with its phase-0 pattern would be a fight that changes on
+ * its first hit for no reason anybody could see.
+ */
+export function bossVariantFor(e: Enemy, phase: number): number {
+  return e.bossFinal ? phase : e.bossVariant;
+}
+
+/**
+ * How many acts a boss fight has, by kind.
+ *
+ * EXPORTED BECAUSE THE TELEGRAPH FIRES FOUR BARS BEFORE THE BOSS EXISTS.
+ * `World` emits `boss:telegraph` with a `phases` count so the director can size
+ * the riser, and that count was the literal `3` — which was correct for the
+ * only boss the game had and becomes a lie the moment there are two kinds. A
+ * five-phase finale announced as three phases is the "looks implemented, isn't"
+ * shape this project keeps catching: nothing would throw, the riser would just
+ * be built for the wrong fight.
+ */
+export const BOSS_PHASES = 3;
+export const FINAL_BOSS_PHASES = 5;
+export function bossPhaseCount(final: boolean): number {
+  return final ? FINAL_BOSS_PHASES : BOSS_PHASES;
+}
+
+/**
+ * Cadence multipliers per phase, indexed by phase.
+ *
+ * FIVE ENTRIES, NOT THREE, AND THE LAST TWO ARE WHY THE TABLE MOVED. It was
+ * `[1, 0.82, 0.68][Math.min(2, phase)]`, which is correct for a three-phase
+ * mini and silently wrong for a five-phase finale: phases 2, 3 and 4 would all
+ * have read 0.68, so the last three acts of the fight would tighten not at all
+ * and the finale's back half would be flat. The clamp is kept — a boss with
+ * more phases than this table has entries should hold the tightest cadence
+ * rather than read `undefined` and produce `NaN` beats, which is a boss that
+ * never charges again.
+ *
+ * The first three entries are NOT the old three. A mini reads 0, 1, 2 out of
+ * this table and would have been handed 1 / 0.88 / 0.76 against the 1 / 0.82 /
+ * 0.68 it was tuned at, which is a stealth nerf to every mini in the run
+ * wearing a refactor's clothes. `MINI_TIGHTEN` keeps the measured mini curve
+ * exactly; `FINAL_TIGHTEN` is the five-act one.
+ */
+const MINI_TIGHTEN = [1, 0.82, 0.68];
+const FINAL_TIGHTEN = [1, 0.88, 0.76, 0.64, 0.52];
+
+function bossLunge(difficulty: number, variant: number, phase: number, final = false): LungeSpec {
   const d = difficulty;
-  // Phase 0/1/2 -> 1 / 0.82 / 0.68 of the written cadence.
-  const tighten = [1, 0.82, 0.68][Math.min(2, phase)];
+  const table = final ? FINAL_TIGHTEN : MINI_TIGHTEN;
+  const tighten = table[Math.min(table.length - 1, Math.max(0, phase))];
   if (variant % 2 === 1) {
     return {
       everyBeats: 6 * tighten,
@@ -1265,7 +1343,7 @@ function bossLunge(difficulty: number, variant: number, phase: number): LungeSpe
  * `homeX`/`homeY` are the ENTRY POINT now. `homeY` was previously the anchor
  * and before that the entry height, read by nothing either time.
  */
-export function spawnBoss(x: number, y: number, difficulty: number, variant = 0): Enemy {
+export function spawnBoss(x: number, y: number, difficulty: number, variant = 0, final = false): Enemy {
   const e = blank();
   e.id = nextId++;
   e.archetype = 'conductor';
@@ -1305,11 +1383,51 @@ export function spawnBoss(x: number, y: number, difficulty: number, variant = 0)
   e.dropChance = 1;
   e.hue = variant % 2 === 1 ? 15 : 340;
   e.move = bossMove;
-  e.phases = 3;
+  e.phases = BOSS_PHASES;
   e.phaseThresholds = [0.66, 0.33];
   e.bossVariant = variant;
   e.bossDifficulty = difficulty;
-  e.lunge = bossLunge(difficulty, variant, 0);
+  e.bossFinal = final;
+
+  /*
+   * THE FINAL BOSS, and every line of it is a re-parameterisation rather than
+   * a new shape. `bossMove`, the lunge, the phase gate and its invulnerability
+   * are untouched; what changes is how many acts there are, what each act is,
+   * and how big the thing is.
+   *
+   * FIVE PHASES ON EVENLY SPACED THRESHOLDS, against a mini's three at .66/.33.
+   * Even spacing is deliberate and it is not the same curve stretched: the mini
+   * splits its bar in thirds, so its acts are equal in HP; the finale splits in
+   * fifths for the same reason, and the alternation in `bossVariantFor` is what
+   * makes the fifths unequal in FEEL. Uneven thresholds on top of an alternating
+   * pattern would be two variables moving at once, which is how this repo's
+   * difficulty passes have overshot before.
+   *
+   * HP IS 1.9x THE MINI'S AND THAT IS THE NUMBER MOST LIKELY TO BE WRONG. Five
+   * phases out of a three-phase pool would give each act 60% of a mini act,
+   * which reads as a boss that is dying faster than it is changing; 1.9 puts a
+   * finale act at about 1.14 minis' worth. `tools/bosslength.mjs` gates a boss
+   * at 120s and the finale is deliberately allowed to be the longest fight in
+   * the run — it is the last one — so `tools/finale.mjs` prints its length
+   * separately rather than letting it hide inside a mean.
+   *
+   * VIOLET AND BIGGER, because the two minis already own red (340) and orange
+   * (15) and a player must be able to tell at a glance that this one is the
+   * last. Radius 58 against 46 is a 60% larger area, which also makes it an
+   * easier target — that is intended and paid for in HP, since the alternative
+   * is a five-act fight against something the player cannot reliably hit, and
+   * `tools/README.md` records that boss length is dominated by exactly that.
+   */
+  if (final) {
+    e.hp = e.maxHp = Math.round(430 * (1 + difficulty * 0.25) * 1.9);
+    e.radius = 58;
+    e.score = 25000;
+    e.hue = 275;
+    e.phases = FINAL_BOSS_PHASES;
+    e.phaseThresholds = [0.8, 0.6, 0.4, 0.2];
+  }
+
+  e.lunge = bossLunge(difficulty, bossVariantFor(e, 0), 0, final);
   return e;
 }
 
@@ -1338,7 +1456,9 @@ export function commitBossPhase(e: Enemy): number {
   const next = e.phase + 1;
   if (next >= e.phases) return -1;
   e.phase = next;
-  e.lunge = bossLunge(e.bossDifficulty, e.bossVariant, next);
+  // `bossVariantFor`, not `e.bossVariant`: on the finale the act IS the
+  // variant, so this line is where rotation becomes timing becomes rotation.
+  e.lunge = bossLunge(e.bossDifficulty, bossVariantFor(e, next), next, e.bossFinal);
   // Re-schedule from scratch so the new phase's first charge lands after the
   // transition rather than inheriting the old phase's next due beat.
   e.lungeBeat = -1;

@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
+const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+await p.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
+await p.click('#start-button');
+await p.waitForTimeout(2500);
+const { installDriver } = await import('file:///E:/GitHub/MusicWars/tools/lib/driver.mjs');
+await installDriver(p, 'dodge');
+await p.waitForTimeout(9000);
+await p.screenshot({ path: 'E:/GitHub/MusicWars/tools/_warpshots/rim-off.png' });
+await p.evaluate(() => { window.__t = 1; setInterval(() => { if (window.__botInput) window.__botInput.throttle = window.__t; }, 8); });
+await p.waitForTimeout(2200);
+await p.evaluate(() => { window.__t = 0; });
+await p.waitForTimeout(6000);
+await p.screenshot({ path: 'E:/GitHub/MusicWars/tools/_warpshots/rim-on.png' });
+console.log(JSON.stringify(await p.evaluate(() => { const w = window.__musicwars.world; return { warp: w.warping, frac: +w.bossProgress.toFixed(2), left: w.wavesToBoss, n: w.enemies.length }; })));
+await b.close();

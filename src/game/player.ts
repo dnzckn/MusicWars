@@ -111,6 +111,7 @@ export const CRUISE_SPEED = 430;
  */
 export const TRIM_SPEED = 430;
 
+
 /*
  * How hard the ship settles back to its station in the track window, and over
  * what distance, when the throttle is released.

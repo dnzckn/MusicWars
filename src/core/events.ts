@@ -408,7 +408,31 @@ export type SilenceableStem = (typeof SILENCEABLE_STEMS)[number];
 
 export type GameEvents = {
   'run:start': { seed: number };
-  'run:over': { score: number; wave: number };
+  /**
+   * The run ended, either way. `outcome` says which.
+   *
+   * THE FIELD IS ADDED RATHER THAN THE EVENT SPLIT, and the reason is the
+   * consumers. `run:over` is what closes out a run everywhere — the summary
+   * screen, the best-score write, `tools/retry.mjs`, `tools/summarycheck.mjs` —
+   * and a separate win event would have meant every one of those either
+   * learning about victory or quietly not firing on a winning run. Adding a
+   * word is the change that cannot silently skip a consumer.
+   *
+   * `run:won` fires as WELL, immediately before, for the listeners that only
+   * care about the win — chiefly the music, which must not hear the death
+   * collapse's cue on a victory.
+   */
+  'run:over': { score: number; wave: number; outcome: 'won' | 'lost' };
+  /**
+   * The final boss is down and the run is finished. Fires once, ever, per run.
+   *
+   * FOR THE MUSIC FIRST. `docs/TURNAROUND.md` records "no musical unit longer
+   * than 80 seconds" as the score's deepest open fault, and the cause was that
+   * the game had no form to read: waves all the way down, forever. There is a
+   * form now — `BOSS_COUNT` acts and a resolution — and this is its final
+   * cadence. Nothing in `src/audio` listens yet; the event exists so it can.
+   */
+  'run:won': { score: number; seconds: number; bosses: number };
 
   'wave:start': { index: number; difficulty: number };
   /**
@@ -689,6 +713,58 @@ export interface GameSnapshot {
   /** Boss HP fraction, 1 -> 0. */
   bossHp: number;
 
+  /* ---------------------------------------------------------------------- *
+   * THE RUN'S FORM — six fields published for the music, and unwired.
+   *
+   * `docs/TURNAROUND.md` records the score's deepest open fault as "no musical
+   * unit longer than 80 seconds". That was never a failure of the writing: the
+   * director could not build a longer unit because the game had no longer unit
+   * to build one on. The run was endless, so every quantity in this snapshot
+   * was either instantaneous (tension, energy, threat) or a sawtooth that reset
+   * every wave (`waveProgress`). Nothing here described a WHOLE.
+   *
+   * There is a whole now. A run is `acts` boss cycles ending in a final boss,
+   * and these six fields are that form, in the terms a director would want:
+   *
+   *   act / acts       where in the piece we are, and how many movements it has
+   *   runProgress      one monotone 0..1 for the entire run — the first quantity
+   *                    in this snapshot that spans more than eighty seconds
+   *   bossKind         'mini' is a set piece; 'final' is THE set piece
+   *   runOutcome       'running' | 'won' | 'lost' — a cadence or a collapse
+   *   bossesBeaten     how many acts are already behind us
+   *
+   * NOTHING IN `src/audio` READS THESE YET AND THAT IS DELIBERATE — this change
+   * does not touch the score. They are published so the music director can pick
+   * them up without the game having to change again. If they are still unread
+   * in a month, `tools/deadconditions.mjs` is the thing that should say so.
+   * ---------------------------------------------------------------------- */
+  /** Which act of the run, 1-based. Always `<= acts`. */
+  act: number;
+  /** How many acts a run has. Constant for a build; published so nothing hard-codes it. */
+  acts: number;
+  /**
+   * 0..1 through the WHOLE run, monotone, 1 at the moment the finale dies.
+   *
+   * Monotone matters for the same reason it does on the boss bar: the
+   * alternative reading — how much of the field is left — retreats every time
+   * the stage tops up. This counts acts completed plus progress through the
+   * current one, and the only thing that can move it backwards is a retry.
+   */
+  runProgress: number;
+  /** What is on the field right now: nothing, a mini, or the final boss. */
+  bossKind: 'none' | 'mini' | 'final';
+  /** Boss encounters cleared this run, 0..acts. */
+  bossesBeaten: number;
+  /**
+   * How the run stands. `'won'` is the ONLY state `gameOver` does not describe.
+   *
+   * `gameOver` stays true for both endings — the run really is over either way,
+   * and every consumer that reads it means exactly that. This is the field that
+   * separates a cadence from a collapse, and it is the one the music must read
+   * before playing the death arrangement.
+   */
+  runOutcome: 'running' | 'won' | 'lost';
+
   wave: number;
   /** 0..1 progress through the current wave. */
   waveProgress: number;
@@ -845,6 +921,16 @@ export function emptySnapshot(): GameSnapshot {
     bossPhase: 0,
     bossPhases: 0,
     bossHp: 1,
+    act: 1,
+    // 4, mirroring BOSS_COUNT in game/waves.ts — `core` cannot import from
+    // `game` without a cycle, the same reason `instrumentSlots` carries a 4
+    // here. The live value is written every frame by `World.writeSnapshot`;
+    // this only has to be right for a director built with no game attached.
+    acts: 4,
+    runProgress: 0,
+    bossKind: 'none',
+    bossesBeaten: 0,
+    runOutcome: 'running',
     wave: 0,
     waveProgress: 0,
     difficulty: 0,

@@ -37,6 +37,7 @@ import {
 } from './field';
 import {
   ARCHETYPE_INFO,
+  bossPhaseCount,
   commitBossPhase,
   SPEED_CEILING,
   lungeChance,
@@ -80,8 +81,11 @@ import {
   type Rules,
 } from './weapons';
 import {
+  actOf,
   arenaSpawnPositions,
+  bossesClearedBefore,
   edgePoint,
+  BOSS_COUNT,
   BOSS_EVERY,
   formationWidth,
   planWave,
@@ -176,6 +180,14 @@ const OFFER_TIMEOUT = 45;
  * inside the wave that produced it.
  */
 const OFFER_MIN_GAP = 6;
+
+/**
+ * Seconds after warp ends during which the bomb stays locked. See the note at
+ * the bomb trigger — without a tail, pulling back and bombing on the same frame
+ * deletes the crowd warp summoned at no cost, which is the exploit the lock
+ * exists to close.
+ */
+const BOMB_LOCK_AFTER_WARP = 1;
 const CULL_MARGIN = 320;
 
 /**
@@ -1554,6 +1566,42 @@ export class World {
    */
   frozen = false;
 
+  /* ---------------------------------------------------------------------- *
+   * THE RUN ENDS, AND IT CAN END TWO WAYS
+   *
+   * `Phase` has one terminal state, `'over'`, and roughly twenty guards across
+   * this file read `this.phase !== 'over'` to mean "the simulation is live".
+   * A win is a second way to stop, and the tempting move — a sixth `Phase`
+   * value, `'won'` — would have required finding and widening every one of
+   * those twenty. Miss one and the world keeps firing instruments, spawning
+   * groups or accruing warp debt underneath a victory screen, silently, in the
+   * branch nobody plays to.
+   *
+   * So a win is `phase = 'over'` PLUS this flag. Every existing guard is
+   * correct unchanged — the run really is over — and the flag carries the one
+   * bit they do not need to know about. `isOver` stays true for both, which is
+   * what `main.ts` and the HUD already mean by it.
+   *
+   * The DISTINCTION is published rather than inferred: `snapshot.runOutcome` is
+   * a three-valued word, `run:over` carries it, and `run:won` fires only on the
+   * win. A consumer that wants "did the run end" reads `gameOver`; one that
+   * wants "did they WIN" reads `runOutcome`, and neither has to know that the
+   * two share a phase.
+   * ---------------------------------------------------------------------- */
+  /** True once the final boss has been cleared. Only ever set with `phase = 'over'`. */
+  victory = false;
+
+  /**
+   * Boss encounters CLEARED this run, 0..BOSS_COUNT.
+   *
+   * Counted rather than derived from `waveIndex`, because the two disagree in
+   * the case that matters: `jumpToWave(19)` puts the world on the finale having
+   * beaten nothing, and a run-progress readout that claimed four minis were
+   * down would be lying on the one screen a developer uses to look at the
+   * ending. It is also what the act pips on the boss bar fill from.
+   */
+  bossesBeaten = 0;
+
   /** Whether this wave has produced an armed enemy yet; see spawnGroup. */
   private waveHasLunger = false;
   /** Beat the next boss-fight top-up is allowed at, and which entry it takes. */
@@ -1570,6 +1618,11 @@ export class World {
   private warpBrake = 0;
   /** Whether the stage is running fast right now. */
   private warpOn = false;
+  /**
+   * `time` at which warp last dropped out, so the bomb lock can outlast the
+   * mode. Starts far in the past so a fresh run is not born locked.
+   */
+  private lastWarpEnd = -999;
   /**
    * Warp beats owed to `waveBeatBias` that do not yet make a whole bar.
    *
@@ -2159,6 +2212,15 @@ export class World {
     this.warpedBeat = 0;
     this.lastBeat = 0;
     this.boss = null;
+    /*
+     * A NEW RUN IS NOT A WON RUN, and `start()` is the retry path as well as
+     * the first-play path (`main.ts` wires both buttons to it). Leaving these
+     * set would put the second run of a session on a victory screen at wave 1
+     * and, worse, would make `runProgress` start at 1 — `tools/retry.mjs` is a
+     * gate about exactly this class of state surviving a restart.
+     */
+    this.victory = false;
+    this.bossesBeaten = 0;
     this.phase = 'idle';
     /*
      * Four bars of runway, not six.
@@ -2300,12 +2362,28 @@ export class World {
           hush: 'NO FIRE — BUT THEY PRESS CLOSER',
         }[move];
         this.announce(label, sub, 'wave');
+      } else if (this.plan.isFinalBoss) {
+        /*
+         * THE FINALE HAS TO ANNOUNCE ITSELF AS THE FINALE.
+         *
+         * Every boss wave in the run has read BOSS INCOMING, so a fifth one
+         * reading the same thing would make the last fight in the game
+         * indistinguishable from the four before it at the one moment the
+         * player is being told what is happening. The subtitle carries the
+         * stake — this is the wave the run ends on — because the banner is the
+         * only place the game ever says the run has an end at all.
+         */
+        this.announce('THE FINAL SET', 'PLAY IT OUT', 'boss');
+      } else if (this.plan.isBoss) {
+        /*
+         * Minis are NUMBERED, and the numeral is the whole point: "BOSS 2 / 4"
+         * is a run with a shape and "BOSS INCOMING" is a run without one. This
+         * is the cheapest possible statement of the Ball x Pit cycle the owner
+         * asked for, and it costs one string.
+         */
+        this.announce('MINI BOSS', `${actOf(index)} OF ${BOSS_COUNT - 1}`, 'boss');
       } else {
-        this.announce(
-          this.plan.isBoss ? 'BOSS INCOMING' : `WAVE ${index + 1}`,
-          '',
-          this.plan.isBoss ? 'boss' : 'wave',
-        );
+        this.announce(`WAVE ${index + 1}`, '', 'wave');
       }
     }
   }
@@ -2713,7 +2791,31 @@ export class World {
       this.trackY = Math.min(this.trackY, this.player.y - VIEW_H * TRACK_AHEAD);
       for (const kind of expired) this.bus.emit('powerup:expire', { kind });
 
-      if (input.bomb && this.player.bombs > 0 && this.player.invuln <= 0) this.detonateBomb();
+      /*
+       * NO BOMB WHILE WARPING, and for a full second after dropping out.
+       *
+       * "if you warp, your bomb needs to be disabled for a while too" — and it
+       * closes a real hole rather than adding a tax. Warp's whole proposition
+       * is that you trade safety for pace: the wave clock folds 9x, the crowd
+       * arrives faster than you can comfortably clear it, and the intended
+       * decision is "stay and be overwhelmed, or pull back". A bomb clears the
+       * screen. With one in hand there is no decision at all — you warp until
+       * it hurts, bomb, and warp again, which turns the mode's cost into a
+       * cooldown you were carrying anyway.
+       *
+       * The one-second tail after dropping out is the part that matters. Cut it
+       * at the instant warp ends and the exploit survives intact: pull back,
+       * bomb on the frame the mode clears, and the crowd warp summoned is
+       * deleted with no exposure at all. The tail means leaving warp costs you
+       * the same second of vulnerability that entering it did.
+       *
+       * It does NOT consume the bomb or block the pickup — you keep it, you
+       * simply cannot spend it here. Losing a held bomb to a mode you chose
+       * would be a punishment; being unable to spend it is a constraint, and
+       * only the second one is a design.
+       */
+      const bombLocked = this.warping || this.time - this.lastWarpEnd < BOMB_LOCK_AFTER_WARP;
+      if (input.bomb && this.player.bombs > 0 && this.player.invuln <= 0 && !bombLocked) this.detonateBomb();
       /*
        * Black holes are placed, not spent on pickup.
        *
@@ -3721,7 +3823,6 @@ export class World {
       if (well.age >= well.life) {
         this.wells.splice(w, 1);
         if (well.swallows) {
-          this.camera.shake(0.5);
           this.camera.strike(well.hue, 0.5);
           this.shock(well.x, well.y, radius * 2.2, 4200);
           this.particles.burst(this.rng, well.x, well.y, 60, 460, well.hue, 0.8, 5);
@@ -4244,6 +4345,7 @@ export class World {
    */
   private updateWarp(dt: number): void {
     if (this.player.dead || this.phase === 'idle') {
+      if (this.warpOn) this.lastWarpEnd = this.time;
       this.warpOn = false;
       this.warpHold = 0;
       this.warpBrake = 0;
@@ -4257,6 +4359,7 @@ export class World {
       this.warpBrake = 0;
       this.announce('WARP ENGAGED', 'PULL BACK TO DROP OUT', 'phase');
     } else if (this.warpOn && this.warpBrake >= WARP_DROP) {
+      if (this.warpOn) this.lastWarpEnd = this.time;
       this.warpOn = false;
       this.warpHold = 0;
       this.announce('WARP OFF', '', 'phase');
@@ -4325,6 +4428,78 @@ export class World {
    */
   get stagePhase(): Phase {
     return this.phase;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * HOW FAR TO THE END OF THE RUN
+   *
+   * A SECOND UNIT, AND IT MUST NOT CONTRADICT THE FIRST. `bossProgress` above
+   * is denominated in WAVES within one boss cycle and that unit was a finding
+   * (see its block): on a treadmill, distance carries no information. This is
+   * the same reading zoomed out one level — cycles within the run instead of
+   * waves within a cycle — so the two nest exactly rather than competing, and
+   * the renderer draws them as one widget: the bar is the cycle, the pips above
+   * it are the run.
+   *
+   * THE ACT TERM COMES FROM THE WAVE INDEX AND NOT FROM `bossesBeaten`, AND
+   * THAT IS A DEFECT THE NEW GATE FOUND RATHER THAN A PREFERENCE.
+   *
+   * The first version was `(bossesBeaten + bossProgress) / BOSS_COUNT`, which
+   * reads correctly and is wrong for about one wave in four. The two terms
+   * overlap: `bossesBeaten` increments the instant the boss dies, while
+   * `bossProgress` stays saturated at 1 for the rest of that boss wave — the
+   * interlude — because the wave's schedule is spent. So the act is counted
+   * twice for a second and a half and then once, and the bar RETREATS. Measured
+   * by `tools/finale.mjs`: 62,270 backward steps in 78,506 samples, which is
+   * most of the run, on a quantity whose entire contract is monotonicity.
+   *
+   * `floor(waveIndex / BOSS_EVERY)` cannot double-count, because it is the same
+   * cursor `bossProgress`'s own `waveIndex % BOSS_EVERY` is taken from: as one
+   * rolls over, the other steps up, and the sum is continuous by construction
+   * rather than by timing. It is exactly `bossesClearedBefore(waveIndex)`, and
+   * in a real run it equals `bossesBeaten` everywhere except that interlude.
+   *
+   * THE COST IS STATED: the act pips fill on the kill (they read
+   * `bossesBeaten`, which is what a player just did) and this number catches up
+   * at the next wave. They are both honest about different questions — "is that
+   * boss dead" and "how far through the run are we" — and one of them has to be
+   * monotone. This is the one.
+   * ---------------------------------------------------------------------- */
+
+  /** 0 at the first wave, 1 the instant the final boss dies. Monotone. */
+  get runProgress(): number {
+    if (this.victory) return 1;
+    const done = bossesClearedBefore(this.waveIndex);
+    // Where we are inside the current act, in waves. `bossProgress` already
+    // answers exactly this and is already monotone within a cycle.
+    const raw = clamp01((done + clamp01(this.bossProgress)) / BOSS_COUNT);
+    /*
+     * 1.000 IS RESERVED FOR THE WIN, and this line is why. Photographed, not
+     * reasoned about: standing in front of the final boss at full health, this
+     * getter read exactly 1.000. `bossProgress` saturates as soon as a wave's
+     * SCHEDULE is spent — which is correct for "how far to the boss", because
+     * at that point the stage has delivered everything it owes and only the
+     * killing is left, and its own note says so. It is wrong for "how far to
+     * the END", because on the last act the killing IS the end.
+     *
+     * The cap is a hair rather than a redesign: everything below the finale is
+     * untouched, the value stays monotone (a min of a monotone series and a
+     * constant is monotone), and the only behaviour that changes is that a
+     * consumer reading 1 knows the run is WON rather than merely nearly over.
+     * That matters most for the music, which would otherwise get its final
+     * cadence cue at the top of the fight instead of at the end of it.
+     */
+    return Math.min(raw, 1 - 1 / (BOSS_COUNT * 64));
+  }
+
+  /** Boss encounters still to clear, the finale included. 0 once it is won. */
+  get bossesLeft(): number {
+    return Math.max(0, BOSS_COUNT - this.bossesBeaten);
+  }
+
+  /** True while the wave now running is the one that ends the game. */
+  get onFinalWave(): boolean {
+    return this.plan.isFinalBoss;
   }
 
   /** Whole waves still to clear before the boss wave. 0 during the boss wave. */
@@ -4537,7 +4712,14 @@ export class World {
             // volley then land on the same beat.
             const bars = 4;
             const eta = bars * BEATS_PER_BAR * this.transport.secondsPerBeat();
-            this.bus.emit('boss:telegraph', { id: `boss-${this.waveIndex}`, phases: 3, etaSeconds: eta });
+            this.bus.emit('boss:telegraph', {
+              id: `boss-${this.waveIndex}`,
+              // `bossPhaseCount`, not the literal 3 this used to be: the riser
+              // the director builds is sized from this and the finale has five
+              // acts. See the constant's note in `enemies.ts`.
+              phases: bossPhaseCount(this.plan.isFinalBoss),
+              etaSeconds: eta,
+            });
             this.bossTelegraphed = true;
             this.phaseTimer = eta;
             this.phase = 'awaiting-boss';
@@ -4588,7 +4770,7 @@ export class World {
           // to come from — and a boss that entered ahead would have been the
           // single arrival `tools/spawnring.mjs` fails on.
           const entry = { x: ring.cx, y: ring.cy + ring.h / 2 + 120 };
-          const boss = spawnBoss(entry.x, entry.y, this.plan.difficulty, variant);
+          const boss = spawnBoss(entry.x, entry.y, this.plan.difficulty, variant, this.plan.isFinalBoss);
           /*
            * A boss gets HALF the roster's ensemble scaling, and the asymmetry
            * is deliberate rather than a compromise.
@@ -4622,8 +4804,21 @@ export class World {
       case 'conductor':
         if (!this.boss) {
           this.rewardBoss();
+          this.bossesBeaten = Math.min(BOSS_COUNT, this.bossesBeaten + 1);
           this.bus.emit('boss:defeat', { id: `boss-${this.waveIndex}` });
-          this.finishWave();
+          /*
+           * THE ONE LINE THAT ENDS THE RUN.
+           *
+           * `finishWave` is what made this game endless: it grades the wave,
+           * sets an interlude, and the interlude begins wave N+1 forever. The
+           * finale takes the other branch, and it takes it AFTER `rewardBoss`
+           * and `boss:defeat` deliberately — the last boss should pay out like
+           * every other boss, so a fusion the player was one kill away from
+           * lands and appears on the victory screen rather than being eaten by
+           * the ending. `winRun` does the grading itself.
+           */
+          if (this.plan.isFinalBoss) this.winRun();
+          else this.finishWave();
         } else {
           this.topUp(World.BOSS_ESCORT_FLOOR);
         }
@@ -4714,6 +4909,69 @@ export class World {
     // that the arrangement sat in a breakdown for a third of the run.
     this.phaseTimer = BEATS_PER_BAR * this.transport.secondsPerBeat();
     this.phase = 'interlude';
+  }
+
+  /**
+   * The run is WON. The only exit from this game that is not a death.
+   *
+   * WHAT THIS DELIBERATELY SHARES WITH DYING, and why sharing is right. Both
+   * set `phase = 'over'`, so every one of the ~20 `phase !== 'over'` guards in
+   * this file stops the simulation with no edit; both leave the transport
+   * RUNNING, for the reason `onPlayerHit` gives — an ending is an arrangement
+   * change and arrangement changes need bar lines to land on, so freezing the
+   * clock here would leave the last loop hanging; and both emit `run:over`, so
+   * every existing consumer (the summary screen, `tools/retry.mjs`,
+   * `tools/summarycheck.mjs`) keeps working without knowing a win exists.
+   *
+   * WHAT IT DELIBERATELY DOES NOT SHARE. No `player:death`. That event is what
+   * puts the director into its collapse — tempo sagging, filter shutting,
+   * every pitched layer muted (`tools/ending.mjs` measures it) — and playing a
+   * funeral over a victory is the single worst thing this change could do to
+   * the music. `run:won` fires in its place, `snapshot.runOutcome` says `won`,
+   * and the audio side can build a real ending on either. Nothing is wired from
+   * here into `src/audio`; the fields are published and that is all.
+   *
+   * THE LAST WAVE IS STILL GRADED. `finishWave` is not called — it would queue
+   * an interlude and start wave 21 — so the parts of it that are about the wave
+   * rather than about what comes next are done here: the clear event, the
+   * totals, the flawless count. Skipping them would have made the finale the
+   * one wave in the run that does not count toward `wavesCleared`, which is a
+   * summary that undercounts by exactly one on every winning run and by zero on
+   * every losing one, i.e. the kind of defect that hides for a year.
+   */
+  private winRun(): void {
+    const waveChain = this.wavePeakCombo - this.waveComboBase;
+    const grade: 'perfect' | 'clean' | 'rough' =
+      this.waveDamage === 0 && waveChain >= 8 ? 'perfect' : this.waveDamage === 0 ? 'clean' : 'rough';
+    this.bus.emit('wave:clear', {
+      index: this.waveIndex,
+      grade,
+      peakMultiplier: 1 + this.wavePeakCombo,
+      damageTaken: this.waveDamage,
+    });
+    this.totals.wavesCleared++;
+    if (grade === 'perfect') this.totals.flawless++;
+
+    this.victory = true;
+    this.phase = 'over';
+    /*
+     * NOT 'SET COMPLETE', AND THE REASON IS A SCREENSHOT.
+     *
+     * The summary screen's heading is SET COMPLETE and it opens in the same
+     * instant this banner is drawn. The banner lives on the canvas, UNDER the
+     * screen overlay, and it fades over about two seconds — so the first
+     * version put the same two words twice on one frame, the second copy a
+     * grey ghost behind the first. It reads as a rendering fault rather than as
+     * an echo. Photographed in `tools/_finaleshots/victory.png` before this
+     * line changed; the banner says something the heading does not.
+     */
+    this.announce('THE LAST ONE IS DOWN', '', 'boss');
+    this.bus.emit('run:won', {
+      score: this.score,
+      seconds: this.time,
+      bosses: this.bossesBeaten,
+    });
+    this.bus.emit('run:over', { score: this.score, wave: this.waveIndex + 1, outcome: 'won' });
   }
 
   /**
@@ -5504,7 +5762,6 @@ export class World {
      * `trauma^2` makes it worse rather than better, because the quadratic that
      * keeps small hits subtle also makes a pegged value maximally violent.
      */
-    this.camera.shake(big ? 0.55 : 0.09);
     if (big) this.camera.freeze(0.06);
     this.shock(e.x, e.y, big ? 260 : 130, big ? 2600 : 900);
 
@@ -6029,7 +6286,6 @@ export class World {
           tick: 0,
         });
       }
-      this.camera.shake(0.05);
       if (struck > 0) this.propFires.quake++;
     }
 
@@ -6827,7 +7083,6 @@ export class World {
         170 + heat * 40,
         0.24 + heat * 0.14,
       );
-      if (heat > 0.5) this.camera.shake(0.02 * heat);
     }
 
     this.snapshot.threatsNear = near;
@@ -6857,7 +7112,6 @@ export class World {
       this.dischargeGuard();
     }
     this.fireRiposte();
-    this.camera.shake(0.85);
     this.camera.freeze(0.09);
     this.camera.strike(0, 0.65);
     this.particles.burst(this.rng, this.player.x, this.player.y, 40, 320, 350, 0.8, 4);
@@ -6962,7 +7216,7 @@ export class World {
       // arrangement change, and arrangement changes need bar lines to land on.
       // Freezing the clock here would leave the last loop hanging instead.
       this.bus.emit('player:death', {});
-      this.bus.emit('run:over', { score: this.score, wave: this.waveIndex + 1 });
+      this.bus.emit('run:over', { score: this.score, wave: this.waveIndex + 1, outcome: 'lost' });
     } else {
       this.bus.emit('player:hit', { hpLeft: this.player.hp });
     }
@@ -7018,6 +7272,20 @@ export class World {
     this.enemies = [];
     this.notes.length = 0;
     this.boss = null;
+    /*
+     * BRING `bossesBeaten` WITH THE JUMP, because a run-level readout that
+     * disagrees with the wave it is on is worse than no readout. A jump to the
+     * finale is the whole reason this hook exists now — the endgame is the part
+     * of this game that has never been looked at, and it is twenty minutes
+     * away — so the act pips and `runProgress` have to arrive there too rather
+     * than claiming nothing has happened yet.
+     *
+     * It is an assumption, stated plainly: the jump PRETENDS the bosses before
+     * this wave were beaten. That is exactly what a developer jumping to wave
+     * 20 means, and it is why the field is not simply derived from
+     * `waveIndex` everywhere — a real run counts its own kills.
+     */
+    this.bossesBeaten = bossesClearedBefore(index);
     this.beginWave(index);
   }
 
@@ -7092,7 +7360,6 @@ export class World {
           this.player.invuln = Math.max(this.player.invuln, 3);
           this.clearRoom();
         }
-        if (d.kind === 'overdrive') this.camera.shake(0.5);
         // The black-hole charge used to arrive here, from a drop. It comes from
         // the BLACK HOLE instrument's own cadence now (see `fireField`), and
         // `blackhole` no longer has a drop weight, so the branch that granted
@@ -8343,7 +8610,6 @@ export class World {
       dps: Math.max(0, s.damage),
       hue: this.hueOf(id),
     };
-    this.camera.shake(0.18);
     this.particles.burst(this.rng, this.player.x, this.player.y, 26, 200, this.hueOf(id), 0.6, 3);
   }
 
@@ -8377,7 +8643,6 @@ export class World {
       });
     }
     this.shock(this.player.x, this.player.y, sw.area * 1.2, 1400);
-    this.camera.shake(0.3);
   }
 
   /**
@@ -8479,7 +8744,6 @@ export class World {
           prop: 0,
           tick: 0,
         });
-        this.camera.shake(0.22);
         this.shock(this.player.x, this.player.y, maxR, 900);
       }
       this.tacetBank = 0;
@@ -8720,7 +8984,6 @@ export class World {
         tick: PROP.fieldTick,
       });
     }
-    this.camera.shake(0.05);
   }
 
 
@@ -9068,7 +9331,6 @@ export class World {
       }
       this.particles.emit(x, y, 0, -30, 0.3, 4, hue, ParticleShape.Ring, 1);
     }
-    this.camera.shake(0.04);
   }
 
 
@@ -9390,7 +9652,6 @@ export class World {
         });
       }
     }
-    this.camera.shake(0.5);
     this.camera.strike(90, 0.5);
   }
 
@@ -9454,7 +9715,6 @@ export class World {
       }
     }
     this.particles.ring(p.x, p.y, radius * 0.5, this.hueOf(g.id), 0.35);
-    this.camera.shake(0.3);
   }
 
   /**
@@ -9592,7 +9852,6 @@ export class World {
     const reach = 210;
     const at = this.onTrack(p.x + p.facingX * reach, p.y + p.facingY * reach);
     this.pushField(held.id, held.stats, at.x, at.y, clamp(Math.round(held.stats.count) || 1, 1, 3));
-    this.camera.shake(0.35);
     this.announce(labelOf(held.id), '', 'item');
   }
 
@@ -9789,6 +10048,24 @@ export class World {
     s.bossPhase = this.boss?.phase ?? 0;
     s.bossPhases = this.boss?.phases ?? 0;
     s.bossHp = this.boss ? clamp01(this.boss.hp / this.boss.maxHp) : 1;
+
+    /*
+     * THE RUN'S FORM. See the block on these fields in `core/events.ts` for
+     * what they are for; this is only where they are filled in.
+     *
+     * `bossKind` reads the LIVE boss rather than the plan, because the plan is
+     * true for the whole boss wave — escort, four-bar telegraph and all — and
+     * "there is a final boss on the field" is a different statement from "this
+     * is the wave the final boss is on". The first is what a musical cue wants
+     * and the second is what the progress bar wants; both are published, and
+     * neither is derived from the other by a consumer guessing.
+     */
+    s.act = actOf(this.waveIndex);
+    s.acts = BOSS_COUNT;
+    s.runProgress = this.runProgress;
+    s.bossKind = this.boss ? (this.boss.bossFinal ? 'final' : 'mini') : 'none';
+    s.bossesBeaten = this.bossesBeaten;
+    s.runOutcome = this.phase === 'over' ? (this.victory ? 'won' : 'lost') : 'running';
 
     s.wave = this.waveIndex;
     s.waveProgress =

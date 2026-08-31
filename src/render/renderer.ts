@@ -2425,19 +2425,72 @@ export class Renderer {
      * not a state a colourblind player can read (`tools/colourblind.mjs`).
      */
     const my = top - 11;
+    /*
+     * THE FINALE IS A BIGGER DIAMOND, and the size is the reading.
+     *
+     * On the last cycle this widget is pointing at the end of the game rather
+     * than at the next set piece, and it has to say so with something other
+     * than the numeral underneath, which a player glancing at a bar in their
+     * peripheral vision does not read. Scale is the channel that survives being
+     * glanced at, it survives colourblindness, and it costs one multiplier.
+     */
+    const isFinalCycle = w.bossesLeft <= 1;
+    const dr = isFinalCycle ? 9 : 6;
     g.beginPath();
-    g.moveTo(x, my - 6);
-    g.lineTo(x + 5, my);
-    g.lineTo(x, my + 6);
-    g.lineTo(x - 5, my);
+    g.moveTo(x, my - dr);
+    g.lineTo(x + dr * 0.83, my);
+    g.lineTo(x, my + dr);
+    g.lineTo(x - dr * 0.83, my);
     g.closePath();
     if (onBoss) {
-      g.fillStyle = `hsla(352, 95%, 62%, ${0.7 + Math.sin(w.snapshot.time * 4.2) * 0.28})`;
+      g.fillStyle = `hsla(${isFinalCycle ? 275 : 352}, 95%, 62%, ${0.7 + Math.sin(w.snapshot.time * 4.2) * 0.28})`;
       g.fill();
     } else {
-      g.strokeStyle = 'rgba(226,234,250,0.55)';
-      g.lineWidth = 1.2;
+      g.strokeStyle = isFinalCycle ? 'rgba(214,170,255,0.85)' : 'rgba(226,234,250,0.55)';
+      g.lineWidth = isFinalCycle ? 1.8 : 1.2;
       g.stroke();
+    }
+
+    /*
+     * ACT PIPS — how far through the RUN, above the diamond.
+     *
+     * A SECOND UNIT ON ONE WIDGET, AND IT MUST NEST RATHER THAN COMPETE. The
+     * bar below is waves-within-a-cycle and its unit was a deliberate finding
+     * (commit 55a7e87: on a treadmill distance carries no information, so the
+     * honest answer to "how far to the boss" is a count of waves). The run now
+     * has an end, so there is a second honest question — how far to THAT — and
+     * the only unit it can be asked in is the same one zoomed out: cycles.
+     *
+     * So these are the same reading at the next scale up, stacked directly on
+     * the bar's own axis with the diamond between them. One filled pip per boss
+     * already beaten, one hollow per boss still owed, ordered bottom-to-top like
+     * the fill beneath it. Nothing here restates what the bar says: the bar
+     * cannot see past the current cycle and the pips cannot see inside it.
+     *
+     * DRAWN ONLY WHEN THE RUN IS SHORT ENOUGH TO COUNT AT A GLANCE. Above about
+     * eight the row stops being a count and becomes a texture, and a readout
+     * nobody can read is worse than an absent one — so past that it is skipped
+     * rather than shrunk, and the numeral under the bar still carries the
+     * answer.
+     */
+    const acts = w.snapshot.acts;
+    if (Number.isFinite(acts) && acts >= 2 && acts <= 8) {
+      const beaten = Math.max(0, Math.min(acts, w.bossesBeaten));
+      const gapY = 7;
+      const py0 = my - dr - 8;
+      for (let i = 0; i < acts; i++) {
+        const py = py0 - i * gapY;
+        g.beginPath();
+        g.arc(x, py, 2.1, 0, TAU);
+        if (i < beaten) {
+          g.fillStyle = 'rgba(255,215,60,0.92)';
+          g.fill();
+        } else {
+          g.strokeStyle = 'rgba(226,234,250,0.34)';
+          g.lineWidth = 1;
+          g.stroke();
+        }
+      }
     }
 
     /*
@@ -2448,8 +2501,23 @@ export class Renderer {
     g.font = '700 13px ui-monospace, monospace';
     g.textAlign = 'center';
     g.textBaseline = 'top';
-    g.fillStyle = onBossWave ? 'hsl(352, 95%, 72%)' : 'rgba(226,234,250,0.78)';
-    g.fillText(onBossWave ? 'BOSS' : String(left), x, bot + 8);
+    // FINAL, not BOSS, on the last cycle — the one word that tells a player the
+    // game has an end without them having to count the pips.
+    const bossWord = isFinalCycle ? 'FINAL' : 'BOSS';
+    g.fillStyle = onBossWave
+      ? isFinalCycle
+        ? 'hsl(275, 95%, 78%)'
+        : 'hsl(352, 95%, 72%)'
+      : 'rgba(226,234,250,0.78)';
+    if (onBossWave) {
+      // FINAL is five characters at 13px against a 7px-wide track, so it needs
+      // its own smaller size or it runs into the playfield. Measured by looking
+      // at it, not computed.
+      if (isFinalCycle) g.font = '700 10px ui-monospace, monospace';
+      g.fillText(bossWord, x, bot + 8);
+    } else {
+      g.fillText(String(left), x, bot + 8);
+    }
     if (!onBossWave) {
       g.font = '600 8px ui-monospace, monospace';
       g.fillStyle = 'rgba(190,205,235,0.6)';
@@ -2469,9 +2537,26 @@ export class Renderer {
       const frac = clamp01(boss.hp / boss.maxHp);
       g.fillStyle = 'rgba(10,12,22,0.75)';
       g.fillRect(40, 22, w.viewW - 80, 12);
-      g.fillStyle = `hsl(${lerp(350, 20, 1 - frac)}, 95%, 58%)`;
+      /*
+       * THE FINALE'S BAR IS VIOLET AND THE MINIS' IS RED, and the four extra
+       * ticks are the other half of the tell.
+       *
+       * The ramp `lerp(350, 20, 1 - frac)` is red-to-orange, which is the two
+       * mini variants' own hues (340 and 15) — correct, and exactly why the
+       * final boss cannot use it: a player who has fought four of these reads
+       * that bar as "a boss", and the last fight in the game should not look
+       * like the four before it. Violet is not used anywhere else on this
+       * screen. It ramps too, over a narrower span, so the "nearly dead" signal
+       * survives; and the bar already CARRIES the structural difference for
+       * free, because `phaseThresholds` has four entries instead of two and
+       * those ticks are drawn from the boss itself.
+       */
+      const fin = boss.bossFinal;
+      g.fillStyle = fin
+        ? `hsl(${lerp(285, 258, 1 - frac)}, 92%, ${lerp(56, 66, 1 - frac)}%)`
+        : `hsl(${lerp(350, 20, 1 - frac)}, 95%, 58%)`;
       g.fillRect(42, 24, (w.viewW - 84) * frac, 8);
-      g.strokeStyle = 'rgba(255,255,255,0.25)';
+      g.strokeStyle = fin ? 'rgba(226,196,255,0.5)' : 'rgba(255,255,255,0.25)';
       g.lineWidth = 1;
       g.strokeRect(40.5, 22.5, w.viewW - 81, 11);
       // Phase ticks, so the player can see the drops coming.

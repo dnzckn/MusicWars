@@ -541,6 +541,42 @@ world.bus.on('run:over', (e) => {
   finalScore.textContent = e.score.toLocaleString('en-US');
   finalWave.textContent = String(e.wave);
 
+  /*
+   * WHICH ENDING THIS IS, and it is read off the event rather than off
+   * `world.victory`.
+   *
+   * Both are true at this instant, so the choice looks arbitrary; it is not.
+   * `run:over` is the thing that says a run ended, and a handler that reads the
+   * world for the reason is a handler that can be wrong about which run it is
+   * describing — this one already keeps `runOverAt`, writes localStorage and
+   * repaints a best-score line, and every one of those is about the run that
+   * just ended and not about whatever the world holds now.
+   *
+   * The `.won` class does the colour (see style.css) and these two lines do the
+   * words, which is the half a colourblind player reads.
+   */
+  const won = e.outcome === 'won';
+  gameoverScreen.classList.toggle('won', won);
+  document.getElementById('final-title')!.textContent = won ? 'SET COMPLETE' : 'RUN OVER';
+  const outcome = document.getElementById('final-outcome')!;
+  outcome.replaceChildren();
+  if (won) {
+    /*
+     * The claim, stated in the game's own units: every boss down, and how long
+     * it took. Time is the number a second run is measured against and it is
+     * the one thing the old summary never showed, because a run that could not
+     * end had no length worth printing.
+     */
+    const mins = Math.floor(world.snapshot.time / 60);
+    const secs = Math.floor(world.snapshot.time % 60);
+    const b = document.createElement('b');
+    b.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+    outcome.append(
+      document.createTextNode(`ALL ${world.snapshot.acts} BOSSES DOWN  ·  `),
+      b,
+    );
+  }
+
   // What the run was, and what it sounded like. The premise of the game is
   // that the fight writes the music, so the end is where that gets read back.
   const t = world.totals;
@@ -906,6 +942,12 @@ async function startRun(): Promise<void> {
   world.starter = chosenOpener;
   titleScreen.classList.add('hidden');
   gameoverScreen.classList.add('hidden');
+  // Drop the victory treatment with the screen. It is re-decided on the next
+  // `run:over` either way, but a hidden element carrying the previous run's
+  // state is how a screenshot tool ends up photographing a win that is not
+  // there — and `.won` also repaints the AGAIN button, which is visible for a
+  // frame during the fade on some machines.
+  gameoverScreen.classList.remove('won');
 
   // Audio must be unlocked from inside the gesture that got us here.
   try {

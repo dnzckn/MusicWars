@@ -324,46 +324,86 @@ if (CONTROL > 0) {
   }
 }
 
+/*
+ * THE LONG RUN - THIRDS OF THE RUN, NOT THIRDS OF THE WINDOW.
+ *
+ * RE-POINTED BECAUSE THE RUN GAINED AN END, and the old form is a worked
+ * example of a denominator going stale under a design change rather than under
+ * a defect. This block bucketed samples by `floor(3 * i / steps)` - the third
+ * of the 1500-SECOND WINDOW - and broke out of the loop on `gameOver`. That was
+ * exactly right while a run could not end, because the window WAS the run.
+ *
+ * `waves.ts` now has `BOSS_COUNT`, a run finishes in about sixteen minutes, and
+ * 1500s is longer than that. So the loop breaks two thirds of the way through
+ * its own window and the third bucket receives NO SAMPLES AT ALL. Measured on
+ * the build this note was written against: `hits/min by third 0.20 0.20 0.00`,
+ * `pressure by third 0.10 0.12 0.00`, `runs that ended 13/15`. Every one of
+ * those zeros is "the game was over", printed as though it were "the game
+ * stopped threatening you" - the most misleading possible reading, on the one
+ * row a person would read to judge whether the late game works.
+ *
+ * The fix is to divide by the run's OWN length. Samples are kept with the step
+ * they were taken at and bucketed afterwards, so a run that ends at 980s has
+ * three 327-second thirds and one that fills the window has three 500-second
+ * ones. Nothing about WHAT is measured changes; only the denominator, which is
+ * now printed next to every row.
+ *
+ * STILL REPORTED, STILL NOT GATED - that was true before and the reason is
+ * unchanged; see the long note above this block. What has changed is that the
+ * numbers describe the game again.
+ */
 const LONG = Number(process.env.LONG_SECS ?? 1500);
 if (LONG > 0) {
   const LONG_SEEDS = [1, 2, 3, 4, 5, 0x51ed, 0xbeef, 0x1234, 0xc0de, 0x9a7f, 7, 11, 13, 17, 19];
-  const seg = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  let ended = 0, longLives = 0, longWave = 0;
+  // [hits, pressure sum, pressure samples, seconds] per third, summed over seeds.
+  const seg = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+  let ended = 0, won = 0, longLives = 0, longWave = 0;
   for (const seed of LONG_SEEDS) {
     const w = new World(seed); w.start();
     const drive = makeBrain('dodge');
     const inp = { x: 0, y: 0, shoot: true, focus: false, bomb: false, well: false, choice: 0, banish: -1, reroll: false, skip: false };
-    let cur = 0;
-    w.bus.on('player:hit', () => { seg[cur][0]++; });
+    // Held per RUN and bucketed once the run's own length is known.
+    const hitSteps = [];
+    const samples = [];
+    let step = 0;
+    w.bus.on('player:hit', () => { hitSteps.push(step); });
     const steps = Math.round(LONG / DT);
+    let last = 0;
     for (let i = 0; i < steps; i++) {
-      cur = Math.min(2, Math.floor((3 * i) / steps));
+      step = i;
+      last = i;
       if (i % 2 === 0) { drive(w, inp); inp.choice = w.choosing ? 0 : -1; }
       inp.well = i % 180 === 0;
       w.update(DT, inp);
       if (i % 30 === 0) {
-        // Bodies, not bullets — see the note on the first copy of this block.
+        // Bodies, not bullets - see the note on the first copy of this block.
         let near = 0;
         for (const e of w.enemies) {
           const dx = e.x - w.player.x, dy = e.y - w.player.y;
           if (dx * dx + dy * dy < THREAT_RADIUS * THREAT_RADIUS) near++;
         }
-        seg[cur][1] += near; seg[cur][2]++;
+        samples.push([i, near]);
       }
-      if (w.snapshot.gameOver) { ended++; break; }
+      if (w.snapshot.gameOver) { ended++; if (w.victory) won++; break; }
     }
+    const span = Math.max(1, last + 1);
+    const third = (i) => Math.min(2, Math.floor((3 * i) / span));
+    for (const hs of hitSteps) seg[third(hs)][0]++;
+    for (const [i, near] of samples) { const t = third(i); seg[t][1] += near; seg[t][2]++; }
+    for (let t = 0; t < 3; t++) seg[t][3] += (span * DT) / 3;
     longLives += w.player.lives; longWave += w.waveIndex;
   }
-  const mins = (LONG / 3 / 60) * LONG_SEEDS.length;
-  console.log(`\n  THE LONG RUN — ${LONG}s x ${LONG_SEEDS.length} seeds`);
-  console.log(`    hits/min by third   ${seg.map((x) => (x[0] / mins).toFixed(2).padStart(6)).join('  ')}`);
-  console.log(`    pressure by third   ${seg.map((x) => (x[1] / x[2]).toFixed(2).padStart(6)).join('  ')}`);
-  console.log(`    runs that ended     ${ended}/${LONG_SEEDS.length}`);
+  console.log(`\n  THE LONG RUN - up to ${LONG}s x ${LONG_SEEDS.length} seeds, bucketed by thirds of EACH RUN`);
+  console.log(`    seconds per third   ${seg.map((x) => x[3].toFixed(0).padStart(6)).join('  ')}   (summed over seeds)`);
+  console.log(`    hits/min by third   ${seg.map((x) => (x[3] ? x[0] / (x[3] / 60) : 0).toFixed(2).padStart(6)).join('  ')}`);
+  console.log(`    pressure by third   ${seg.map((x) => (x[2] ? x[1] / x[2] : 0).toFixed(2).padStart(6)).join('  ')}   (n = ${seg.map((x) => x[2]).join('/')})`);
+  console.log(`    runs that ended     ${ended}/${LONG_SEEDS.length}   of which WON ${won}`);
   console.log(`    mean lives left     ${(longLives / LONG_SEEDS.length).toFixed(1)}   mean wave ${(longWave / LONG_SEEDS.length).toFixed(1)}`);
   if (ended < LONG_SEEDS.length / 2) {
-    console.log('    NOTE  most runs never end. Escalation is buying enemy hit points, which');
-    console.log('          are not danger. Whether an endless run should become lethal, or gain');
-    console.log('          a finale instead, is a design call — see the note above this block.');
+    console.log('    NOTE  most runs never end - which should no longer be possible. `waves.ts`');
+    console.log('          gives a run BOSS_COUNT acts and a finale, so a run that does not');
+    console.log('          finish inside this window is a stalled boss or a broken schedule.');
+    console.log('          tools/finale.mjs is the gate that owns that question.');
   }
 }
 

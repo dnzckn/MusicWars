@@ -2930,3 +2930,122 @@ further, because 125 Hz and 250 Hz are two thirds of this mix's energy and a
 band-limited hat cannot shift a ratio with that denominator. **Whether it
 SOUNDS like hi-hats is unverified**; nobody has played
 `renders/APX-after-all-32.wav`.
+
+## `warp` (`npm run warp`) — a mode, measured against the mode it replaces
+
+Warp is the owner's ask: *"holding down W should enable you to engage warp,
+where monsters start spawning much faster ... if a player is so strong they
+might want to do this to finish up the game, but it should be a lot harder."*
+`tools/warp.mjs` exists because nothing already here could see any part of that.
+`arena` drives a bot that never holds the throttle down long enough to enter
+the mode; `pursuit` measures whether arrivals reach the player, not how many
+there are; `spawnring` measures where they come from. A warp that had silently
+stopped multiplying would leave every one of them green.
+
+### Three findings that changed the design, in the order they arrived
+
+**1. Hold-to-sustain is a dead mode, and the numbers are why warp LATCHES.**
+The obvious reading of "holding down W" is that letting go leaves warp. The
+tool runs that arm — the bot's forward axis pinned at the stop for the whole
+run, steering only sideways — against an ordinary dodge, 4 seeds x 6 minutes:
+
+| | cruise | pinned forward |
+|---|---|---|
+| kills / second | 6.45 | 0.49 |
+| level reached | 20.0 | 1.0 |
+| wave reached | 7.8 | 3.0 |
+| enemies alive p50 | 29.5 | 406.0 |
+
+A ship at the forward stop makes 430 px/s against the stage and `SPEED_CEILING`
+is 285, so it outruns **every** body in the game by 145 px/s. Hold-to-sustain
+therefore means "warp is a mode you can only be in while running away from the
+fight it just summoned": nothing is in range, nothing dies, the boss wave never
+clears, and four hundred bodies trail behind uncatchable. So warp latches —
+forward stop to engage, aft stop to leave — and the whole stick is the player's
+in between.
+
+**2. Hitstop was eating the multiplier, and it got worse the better you played.**
+`World.update` bails at `if (simDt <= 0) return`, above `updateWave`, while
+`transport.advance(dt)` runs above the bail. The wave schedule is denominated in
+transport beats, so during hitstop it advances at 1x — but warp's eleven extra
+beats did not. At 20 kills a second the freeze is frequent enough that a wave's
+schedule emptied **5.9x** faster instead of the 12x the constant says. The
+accrual moved above the hitstop return (banked, capped at two bars so a level-up
+pause cannot dump a wave on the frame the cards close) and it reads 9.1x. A
+multiplier that quietly halves itself under exactly the player the mode is for
+is this repository's "a property nobody measures", again.
+
+**3. Two of warp's three mechanisms were decoration, and were deleted.** The
+first version also doubled the population floor and ran the top-up feed twelve
+times as often from the wave's first beat. Both survived their own fail-tests.
+An A/B at 3 seeds x 3 minutes says why:
+
+| | clock + floor + cadence | clock alone |
+|---|---|---|
+| schedule drain | 9.0x | 9.1x |
+| waves / minute | 2.2x | 2.2x |
+| spawns / s in phase | 27.86 | 26.90 |
+| hp / s in phase | 1787 | 1745 |
+| on screen p90 | 157 | 139 |
+
+Once a wave's whole schedule lands in two seconds there is no "first half of the
+wave" left to fill: the feed was topping up a stage already over its floor and
+declining on the next line. Both went out under the same rule the `mid-charge`
+assertion did. **Warp is one lever: the wave clock.**
+
+### What it reads now, 5 seeds x 6 minutes per arm
+
+The two arms differ only in whether the throttle is held to its stop long enough
+to latch; after that the same dodge brain flies both.
+
+| | cruise | warp | |
+|---|---|---|---|
+| a wave's schedule empties in | 30.75s | 3.36s | **9.1x** (7.1-11.0 per wave, paired on index) |
+| bodies / second | 7.38 | 30.27 | 4.1x |
+| bodies / second of `spawning` | 8.41 | 44.12 | 5.2x |
+| **hp delivered / second** | 396.7 | 6821.9 | **17.2x** |
+| on screen p90 | 21.4 | 242.4 | 11.3x |
+| encirclement p90 | 0.29 | 0.52 | 1.8x |
+| time to the first boss | 123.0s | 46.7s | **2.6x sooner** |
+| waves / minute | 1.37 | 3.00 | 2.2x |
+| level on reaching a boss wave | 15.4 | 11.7 | **-24%** |
+
+**Why the headline is the schedule drain and not bodies per second.** Bodies per
+second saturates: `topUp` declines while the census is over the floor, so the
+sustained arrival rate can never exceed what the player is killing, and a strong
+player caps the very number that is supposed to show the mode working. A wave's
+own `entries` are not subject to that — they are due on their beats and they
+arrive — so seconds from `wave:start` to `waveProgress === 1` measures the clock
+itself. It is paired wave index against wave index, because wave content grows
+with `escalation` and an unpaired mean was comparing cruise's waves 0-8 against
+warp's deeper, bigger 0-15 (it read 5.3x that way).
+
+**Why "harder" is not hits taken.** Hits count the bot's steering. The measures
+here are the stage against the player: *hp delivered per second* is what the
+player must destroy to stand still and contains no reference to where they are
+or how well they dodge; *on-screen p90* is what a bad moment looks like (the p50
+is deliberately not used — warp clears waves fast, so half its samples are the
+quiet after one, and its median can fall while every spike gets worse, which it
+does). `threatDistance` is printed and barely moves, 0.25 -> 0.30: a bot that
+dodges well keeps its bubble at any density, which is worth knowing about that
+signal.
+
+**Why "waves per minute" is only 2.2x when the schedule is 9.1x.** Warp
+deliberately does not touch the boss telegraph or the fight, so a warped run
+spends a far larger share of itself in a set piece running at ordinary speed.
+The boss is the destination, so the gate is on time-to-boss.
+
+**The free-speed guard is live, not ceremonial.** `docs/research-density.md` §6
+records more bodies making the game EASIER because the player out-killed them
+and levelled faster. With warp's clock deleted and the two removed mechanisms
+restored, the level-at-wave assertion goes **red**: warp reaches wave 3 at level
+17.0 against cruise's 13.5. That is §6 happening again, in this feature, caught
+by the assertion written for it.
+
+### Frame cost, measured rather than feared
+
+`Renderer.render` timed directly at 1280x800 in headless Chromium: p50 **0.60ms
+at 21 bodies, 2.40ms at 197**, and `World.update` 0.10ms -> 0.20ms per step. The
+two together are under 8% of wall time in a build that is drawing 22 fps, so
+neither the renderer nor the simulation is what the frame is going to. Absolute
+fps from that harness is software-rasterised and means nothing; the ratio does.

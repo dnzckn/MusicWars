@@ -627,6 +627,50 @@ body::before {
 }
 .heard b { color: var(--cool); font-weight: 600; }
 
+/* ---------------------------------------------------------------------------
+   VICTORY
+
+   The end screen is one element with two states, and this block is the whole
+   difference between them. The rule it follows is `tools/colourblind.mjs`'s:
+   a state a player has to notice cannot be carried by hue alone. So a win
+   changes THREE things at once — the heading's words (`#final-title`, set in
+   main.ts), an extra line that only exists on a win (`#final-outcome`), and the
+   colour. Any one of them read on its own says "you won".
+
+   Gold rather than red is not decoration either. `.screen h2` is `--hot`, the
+   same ink as the damage flash and the boss HP bar, and it is the colour this
+   game has spent a whole run using to mean "this is going badly". Gold is what
+   `.stat` and `#final-best` already use for "this went well".
+   --------------------------------------------------------------------------- */
+#gameover-screen.won h2 {
+  color: var(--gold);
+  text-shadow: 0 0 30px rgba(255,209,102,.5);
+}
+.outcome {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .18em;
+  color: var(--dim);
+  /* Reserves nothing when empty: on a loss this element renders no text and
+     must not push the score down by a line, or the two endings would have
+     different layouts for no reason a player could name. */
+  min-height: 0;
+}
+#gameover-screen.won .outcome {
+  color: var(--gold);
+  font-weight: 700;
+}
+#gameover-screen.won .outcome b {
+  color: var(--cool);
+  font-weight: 700;
+}
+/* The button says AGAIN either way, but after a win it is an invitation rather
+   than a retry, so it stops being the loud cyan call-to-action. */
+#gameover-screen.won button {
+  background: linear-gradient(180deg, #ffe98a, var(--gold) 55%, #e0b420);
+  box-shadow: 0 0 26px rgba(255,209,102,.4), 0 6px 20px rgba(0,0,0,.5);
+}
+
 .nowplaying {
   margin: 2px 0 0;
   font-size: 11px;

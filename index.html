@@ -352,8 +352,27 @@
           <p class="sub">press <kbd>P</kbd> to resume</p>
         </div>
 
+        <!--
+          ONE SCREEN, TWO ENDINGS.
+
+          A win gets `.won` on this element and a different heading, rather than
+          a second `<div>` beside it. The reason is the wiring, not the markup:
+          everything below the heading — score, wave, the four run stats, what
+          you heard, the band you built — is the same readout either way, and a
+          duplicate screen would have meant a duplicate copy of the sixty lines
+          in `main.ts` that fill it, plus `#final-notes-2` and friends for
+          `domwiring` to find. It would also have quietly broken three browser
+          gates (`retry`, `summarycheck`, `ending`) that reach for
+          `#gameover-screen` and `#retry-button` by id.
+
+          What makes it read as a win is `#final-outcome` above the score and
+          the `.won` rules in style.css — gold instead of red, and a heading
+          that says the set was played rather than that the run stopped.
+        -->
         <div id="gameover-screen" class="screen hidden">
-          <h2>RUN OVER</h2>
+          <h2 id="final-title">RUN OVER</h2>
+          <!-- Empty on a loss; the victory line on a win. Populated in main.ts. -->
+          <p class="outcome" id="final-outcome"></p>
           <p class="stat"><span id="final-score">0</span></p>
           <p class="sub">reached wave <span id="final-wave">1</span></p>
           <p class="sub" id="final-best">best 0</p>

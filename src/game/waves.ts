@@ -37,6 +37,17 @@ export interface WavePlan {
    */
   escalation: number;
   isBoss: boolean;
+  /**
+   * This is the LAST boss of the run, and clearing it wins.
+   *
+   * A separate flag rather than `index === FINAL_BOSS_WAVE` at every reader,
+   * because there are four of them — the spawner, the banner, the phase machine
+   * and the progress bar — and a run that ends is the one thing in this game
+   * that must not be decided in four places. `isBoss` is always true when this
+   * is, and `World` relies on that: the final boss reuses the whole
+   * `awaiting-boss` -> `conductor` path and only the ending differs.
+   */
+  isFinalBoss: boolean;
   entries: SpawnEntry[];
   /**
    * Beats after the last spawn before the wave gives up waiting — WRITTEN AND
@@ -73,6 +84,106 @@ export interface WavePlan {
  * of the game.
  */
 export const BOSS_EVERY = 4;
+
+/* ------------------------------------------------------------------------ *
+ * THE RUN ENDS
+ *
+ * "i want game cycle to be like ball x pit, so a few mini bosses, then the
+ * final boss, then after that game should end."
+ *
+ * Until this constant existed the run was ENDLESS by construction: `planWave`
+ * answers for any index, `World.finishWave` always begins another wave, and the
+ * only route to `Phase = 'over'` was dying. Every measurement in this repo was
+ * therefore of a run with no shape — `arena` asserts the player survives twenty
+ * simulated minutes and stops there because twenty minutes is where the tool
+ * gives up, not where the game does.
+ *
+ * ONE CONSTANT, AND EVERYTHING ELSE IS DERIVED. `BOSS_COUNT` is how many boss
+ * encounters a run contains, of which the last is THE FINAL BOSS and the rest
+ * are minis. It is deliberately the only number: a second constant for "which
+ * wave is the last" is a second thing to keep in step with `BOSS_EVERY`, and
+ * this file's own history is a list of numbers that drifted apart.
+ *
+ * WHY FOUR, MEASURED RATHER THAN CHOSEN. The two failure modes are opposite
+ * and both real:
+ *
+ *   too long   the run never resolves and we have shipped the endless game
+ *              again with a ribbon on it
+ *   too short  the run ends before the player has a build, which is strictly
+ *              worse than endless — `docs/plan-refactor-3.md` is an entire
+ *              document about the build being the content
+ *
+ * FIVE WAS BUILT FIRST AND THE MEASUREMENT CUT IT TO FOUR. `tools/finale.mjs`
+ * plays runs to their own end and prints, at every boss, when it arrived and
+ * what the player had. Card-0 bot, 3 seeds, means across the three:
+ *
+ *     boss      arrives   cards taken   fusions
+ *     1 (w4)      2:16        11.0        0.00
+ *     2 (w8)      5:37        17.0        0.33
+ *     3 (w12)    10:11        21.3        1.00
+ *     4 (w16)    16:03        21.7        1.00
+ *     5 (w20)    22:57        21.7        1.00
+ *
+ * THE BUILD STOPS GROWING AFTER THE THIRD ACT. Between boss 3 and boss 5 the
+ * player gains 0.4 cards and 0.00 fusions in THIRTEEN MINUTES — acts 4 and 5
+ * are more than half the run's clock and contribute nothing to the thing the
+ * run is about. (That late-game XP stall is its own defect and is not fixed
+ * here; it is recorded because it is the reason this constant is 4 and not 5,
+ * and because if the economy is repaired this number should be revisited with
+ * the same table.)
+ *
+ * So the finale goes where the build finishes rather than three acts past it:
+ * three minis, then the last mini's act completes the build, then ONE act that
+ * is nothing but the finale. Measured at four, a run is about sixteen minutes
+ * for a bot that never warps and about thirteen for the builder — Ball x Pit
+ * scale, against the endless game's twenty-minute measuring window. The
+ * "player has a build by the finale" gate reads identically at four and five
+ * (21.7 cards, L22.7), so the two acts removed cost the build nothing.
+ *
+ * WARP IS THE OTHER HALF OF THE ANSWER and it is why sixteen minutes is a
+ * ceiling rather than a length: commit 55a7e87 measured warp reaching a boss
+ * 2.6x sooner, so a player strong enough to hold the forward stop finishes the
+ * same four acts in a fraction of the time. That is exactly what warp was built
+ * for — "if a player is so strong they might want to do this to finish up the
+ * game" — and it only means anything now that there is a game to finish up.
+ *
+ * MOVING IT IS ONE LINE, and `tools/finale.mjs` prints the whole table above,
+ * so the next person to disagree does not have to re-derive it.
+ * ------------------------------------------------------------------------ */
+export const BOSS_COUNT = 4;
+
+/** Mini bosses before the final one. Derived; never write it down twice. */
+export const MINI_BOSSES = BOSS_COUNT - 1;
+
+/**
+ * The wave index of the final boss. Clearing it ends the run in a WIN.
+ *
+ * Boss waves are `index % BOSS_EVERY === BOSS_EVERY - 1`, so the n-th boss is
+ * at `n * BOSS_EVERY - 1` counting from one: 3, 7, 11, 15, 19.
+ */
+export const FINAL_BOSS_WAVE = BOSS_COUNT * BOSS_EVERY - 1;
+
+/**
+ * Which ACT of the run a wave belongs to, 1-based; `BOSS_COUNT` at the finale.
+ *
+ * PUBLISHED FOR THE MUSIC as much as for the HUD. `docs/TURNAROUND.md` records
+ * "no musical unit longer than 80 seconds" as the deepest open fault in the
+ * score, and the reason was structural rather than musical: there was no unit
+ * longer than a wave for the director to read, because the run had no form. An
+ * act is a boss cycle — three ordinary waves and a set piece — so a run is now
+ * five acts and a resolution, which is a shape a piece of music can have.
+ *
+ * Clamped at both ends. `jumpToWave` can put the world past the finale and a
+ * negative index is a bug elsewhere; neither should produce act 0 or act 9.
+ */
+export function actOf(index: number): number {
+  return Math.min(BOSS_COUNT, Math.max(1, Math.floor(index / BOSS_EVERY) + 1));
+}
+
+/** How many boss encounters have been CLEARED by the time wave `index` starts. */
+export function bossesClearedBefore(index: number): number {
+  return Math.min(BOSS_COUNT, Math.max(0, Math.floor(index / BOSS_EVERY)));
+}
 
 /*
  * Tier 2 — waves 7-9 — had no unarmed shape in it at all.
@@ -120,6 +231,17 @@ export function planWave(index: number): WavePlan {
   const difficulty = Math.min(1, raw);
   const escalation = Math.max(0, raw - 1);
   const isBoss = index > 0 && index % BOSS_EVERY === BOSS_EVERY - 1;
+  /*
+   * `>=`, not `===`, and that is not defensiveness — it is the debug hook.
+   *
+   * `World.jumpToWave` exists so the endgame can be looked at without playing
+   * to it, and this file is the only place that knows a run has an end. With
+   * `===`, jumping to wave 23 would produce a boss wave that is not the final
+   * boss, in a run that can no longer reach a final boss, and the world would
+   * simply keep going — the endless game back again, reachable from a
+   * developer key. `>=` makes every boss at or past the finale THE finale.
+   */
+  const isFinalBoss = isBoss && index >= FINAL_BOSS_WAVE;
 
   if (isBoss) {
     // A short escort before the boss: gives the director something to build
@@ -129,6 +251,7 @@ export function planWave(index: number): WavePlan {
       difficulty,
       escalation,
       isBoss: true,
+      isFinalBoss,
       entries: [
         // Four and three, not six and four: the escort is 2.5x tougher than it
         // was, and a boss wave cannot start until the stage is empty. The old
@@ -368,7 +491,7 @@ export function planWave(index: number): WavePlan {
     beat += escalation > 0.4 ? 4 : rng.bool(0.45) ? 8 : 4;
   }
 
-  return { index, difficulty, escalation, isBoss: false, entries, lengthBeats: beat + 16 };
+  return { index, difficulty, escalation, isBoss: false, isFinalBoss: false, entries, lengthBeats: beat + 16 };
 }
 
 /* ------------------------------------------------------------------------ *
