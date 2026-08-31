@@ -48,7 +48,7 @@ import {
   type EnemyContext,
 } from './enemies';
 import { ParticlePool, ParticleShape } from './particles';
-import { angleDelta, CRUISE_SPEED, PLAYER_CONTACT, Player } from './player';
+import { angleDelta, CRUISE_SPEED, PLAYER_CONTACT, Player, RAIL_FLOOR } from './player';
 import {
   pickPowerup,
   powerupDef,
@@ -852,7 +852,9 @@ export class World {
    * sliding relative to the lattice.
    */
   private carryStage(dt: number): void {
-    const c = CRUISE_SPEED * dt;
+    // `stageSpeed`, not `CRUISE_SPEED`: the loose world rides the rail at whatever
+    // speed the rail is actually making this step. See the field's own note.
+    const c = this.stageSpeed * dt;
     for (const n of this.notes) n.y -= c;
     for (const d of this.drops) d.y -= c;
     for (const w of this.wells) w.y -= c;
@@ -1628,6 +1630,26 @@ export class World {
   private waveBeatBias = 0;
 
   /* -- warp; see the constant block at the head of this file -------------- */
+  /**
+   * How fast the stage is advancing THIS STEP, in px/s.
+   *
+   * ONE VALUE, READ BY ALL THREE CARRIES, and that is the point of it existing
+   * rather than each site computing its own. The stage is carried in three
+   * places — the rail (`trackY`), `carryStage` for notes/drops/wells/novas/
+   * effects/popups/particles/bullets, and the per-enemy carry inside
+   * `updateEnemies`, which is separate because `stutterHop` writes `e.y`
+   * absolutely and the carry has to move its endpoints too. All three used to
+   * read `CRUISE_SPEED` directly, so they agreed by coincidence of spelling.
+   * The moment the rail could ease (see `RAIL_FLOOR`) that coincidence became
+   * a bug waiting to happen: a rail at 45% with a world still carried at 100%
+   * would slide every loose object and every enemy forward through the frame
+   * at 55% of cruise, which is a far worse defect than the sluggish throttle
+   * this was introduced to fix.
+   *
+   * Set once per step, immediately after `throttle`, and read-only thereafter.
+   */
+  stageSpeed = CRUISE_SPEED;
+
   /** Seconds the throttle has been held at its forward stop. */
   private warpHold = 0;
   /** Seconds it has been held at its AFT stop. The way out. */
@@ -1924,7 +1946,21 @@ export class World {
    * "moving" and "not moving" are still opposites.
    */
   private driftSpeed(): number {
-    return Math.hypot(this.player.vx, this.player.vy + CRUISE_SPEED);
+    /*
+     * `stageSpeed`, not `CRUISE_SPEED`, and the docstring above is what decides
+     * it: the quantity is defined as relative to the TREADMILL, and since
+     * `RAIL_FLOOR` the treadmill does not always move at cruise. The relative
+     * velocity is `vy - (-stageSpeed)`.
+     *
+     * Not a tidy-up — the constant is now actively wrong on the back half of
+     * the throttle. Pulling back leaves `vy` near -160 while the rail eases to
+     * 193, so the true drift is 33 px/s and the old expression reported 270:
+     * six times `STILL_SPEED`, which would have paid UP-TEMPO's trail full
+     * damage for a ship that is very nearly parked on the stage. The stick
+     * centred still reads exactly zero, as the docstring promises, because
+     * `stageSpeed` is `CRUISE_SPEED` there.
+     */
+    return Math.hypot(this.player.vx, this.player.vy + this.stageSpeed);
   }
   /**
    * Hues for the two rings the RIG produces, as opposed to the ten an
@@ -2824,8 +2860,23 @@ export class World {
        * being asked to.
        */
       this.throttle = input.throttle ?? -input.y;
+      /*
+       * THE BACK OF THE THROTTLE EASES THE RAIL. See `RAIL_FLOOR` for the
+       * measurement this comes from and for why the floor is not zero.
+       *
+       * `throttle` is +1 hard forward and -1 hard back, so only the negative
+       * half is read here: the FORWARD half already has its authority, via the
+       * drag at the end of this step that lets the ship tow the window. This
+       * gives the other half the same kind of authority in the other
+       * direction, and nothing else in the step changes.
+       *
+       * Set before `updateWarp` and before every carry, so the rail, the loose
+       * world and the enemies cannot disagree about how fast the stage moved
+       * this step.
+       */
+      this.stageSpeed = CRUISE_SPEED * (1 - Math.max(0, -this.throttle) * (1 - RAIL_FLOOR));
       this.updateWarp(simDt);
-      this.trackY -= CRUISE_SPEED * simDt;
+      this.trackY -= this.stageSpeed * simDt;
       this.carryStage(simDt);
       const expired = this.player.update(
         simDt,
@@ -3470,7 +3521,7 @@ export class World {
        * rides, exactly as a frozen body on a real conveyor would.
        */
       if (e.archetype !== 'conductor') {
-        const carry = CRUISE_SPEED * dt;
+        const carry = this.stageSpeed * dt;
         e.y -= carry;
         e.hopFromY -= carry;
         e.hopToY -= carry;
