@@ -66,7 +66,7 @@ const strudel = await import('@strudel/core');
 // `theory.ts` on why the voicing is built in MIDI instead), so this is the only
 // place in the repo that holds the package to its word.
 const tonal = await import('@strudel/tonal');
-const { buildChords } = await import('../src/audio/layers.ts');
+const { buildChords, VOICE_TAGS } = await import('../src/audio/layers.ts');
 const { buildChord, voiceLead, PROGRESSIONS, degreeToSemitone, extensionSemitone, LANE_RANGE } = await import(
   '../src/audio/theory.ts'
 );
@@ -85,16 +85,31 @@ const { buildChord, voiceLead, PROGRESSIONS, degreeToSemitone, extensionSemitone
  * Two changes, and both make the check stronger. The window comes from
  * `theory.LANE_RANGE.stab`, which is the table the builder folds to — so the
  * two cannot disagree, and moving the window moves the assertion with it. And
- * the stab is selected by TIMBRE rather than by register: it is the only voice
- * in this lane that is a `pulse` at 25% duty (`pw(0.5)`), the pad being
- * `pw(0)` and the colour tones a triangle. The old comment argued that
- * selecting by register "keeps this tool from holding a copy of the timbre",
- * which is true and which cost the entire assertion.
+ * the stab is selected by TIMBRE rather than by register.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THE TIMBRE IS NOW IMPORTED, BECAUSE THE HARDCODED COPY LIED
+ * ---------------------------------------------------------------------------
+ *
+ * This file used to read `e.s === 'pulse' && e.pw === 0.5` for the stab and
+ * `pw === 0` for the pad, written out here. The day the pad stopped being a
+ * square and the stab stopped being a pulse, both selectors matched nothing and
+ * this tool reported "the pad produced no bar with two tones" — on a pad
+ * producing exactly two tones in all 88 bars. It was not measuring the harmony,
+ * it was measuring its own copy of the orchestration.
+ *
+ * `layers.VOICE_TAGS` is that orchestration, exported by the module under test
+ * and applied to the haps by the same function the builders call. AGENTS.md §3:
+ * import the constant.
  */
 const STAB_BOTTOM = LANE_RANGE.stab.lo;
 const STAB_TOP = LANE_RANGE.stab.hi;
-/** The stab's voice group: a 25%-duty pulse. See the note above. */
-const isStab = (e) => e.s === 'pulse' && e.pw === 0.5;
+/** Does this hap belong to the voice group `tag` names? */
+const isTag = (e, tag) =>
+  e.s === tag.s &&
+  (tag.pw === undefined || e.pw === tag.pw) &&
+  (tag.unison === undefined || e.unison === tag.unison);
+const isStab = (e) => isTag(e, VOICE_TAGS.stab);
 const MODES_TO_TEST = Object.keys(PROGRESSIONS);
 
 /** Interval class above the chord root, 0-11. */
@@ -409,12 +424,11 @@ for (const mode of MODES_TO_TEST) {
       for (const tension of [0.2, 0.6]) {
         const m = state({ mode, degree, extend, tension });
         const evs = notesIn(buildChords(m), 1);
-        // The pad: the only 50%-duty pulse in this lane. `pw(0)` is superdough's
-        // 50% square; the stab is `pw(0.5)`, which is 25%.
+        // The bed. Identified by `VOICE_TAGS.pad`, never by a literal here.
         const pad = [
           ...new Set(
             evs
-              .filter((e) => e.s === 'pulse' && e.pw === 0)
+              .filter((e) => isTag(e, VOICE_TAGS.pad))
               .map((e) => (typeof e.note === 'number' ? e.note : Number(e.note)))
               .filter((n) => Number.isFinite(n)),
           ),

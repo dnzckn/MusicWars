@@ -128,12 +128,32 @@ export interface WubOpts {
  * Held, not plucked — `sustain(1)` and `clip(1)` so the note lasts its whole
  * hap. A percussive envelope here would fight the LFO for the rhythm and win,
  * and then there is no wobble, only a bass playing the notes it was given.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THESE TWO VOICES DO NOT WEAR A `TOUCH`, and what changed anyway
+ * ---------------------------------------------------------------------------
+ *
+ * `articulation.ts` owns the amplitude envelope of every pitched lane in the
+ * score. These two are the exception and it is the same exception the `rush`
+ * motif takes: their rhythm is not made of note onsets. The part is composed in
+ * FILTER MOVEMENT — `lpsync`/`lpdepth` on a ladder — so `clip` and `sustain`
+ * are structural here rather than expressive, and a touch would replace the
+ * instrument rather than articulate it.
+ *
+ * What DID change is the onset. 5 ms on a sawtooth at 110 Hz is half a cycle:
+ * a step discontinuity, which is broadband, on the loudest thing in the bottom
+ * of the mix, and `attackfloor` was reading it as 34% of the bass stem's haps
+ * under the 20 ms floor. 32 ms is three and a half cycles of 110 Hz — still
+ * instant against a note held for half a bar, and no longer a click. The
+ * release is untouched: at 80 ms it already clears the recalibrated floor, and
+ * on a lane whose notes are two per bar there is nothing for it to smear into.
  */
 export function wub(notes: Patternable, o: WubOpts): Pattern {
   return (
     note(notes)
       .s('sawtooth')
-      .attack(0.005)
+      // 32 ms, not 5. See the note above: at 110 Hz, 5 ms is half a cycle.
+      .attack(0.032)
       .decay(0.04)
       .sustain(1)
       .release(0.08)
@@ -247,7 +267,9 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .unison(2)
     .detune(0.14)
     .spread(0.7)
-    .attack(0.012)
+    // 36 ms, not 12. The growl is an octave up, so it can afford a slightly
+    // longer onset than the fundamental and still arrive with it.
+    .attack(0.036)
     .decay(0.1)
     .sustain(0.95)
     .release(0.12)

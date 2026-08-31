@@ -83,6 +83,20 @@ declare module '@strudel/core' {
     /** supersaw: detune in semitones. */
     detune(v: Patternable): Pattern;
     /**
+     * pulse only: rate in Hz of the LFO that sweeps the duty cycle.
+     *
+     * superdough builds it as `getLfo(ac, {frequency: pwrate, depth: pwsweep})`
+     * on the pulse worklet's `pulsewidth` parameter (`synth.mjs`), and the two
+     * controls default each other in: setting `pwrate` alone gives a sweep of
+     * 0.3, setting `pwsweep` alone gives a rate of 1 Hz. Setting neither means
+     * a duty cycle that never moves, which is what this score had on the
+     * most-heard sound in it. Set BOTH, for the same reason `vib`/`vibmod`
+     * must both be set.
+     */
+    pwrate(v: Patternable): Pattern;
+    /** pulse only: depth of the duty-cycle LFO. See `pwrate`. */
+    pwsweep(v: Patternable): Pattern;
+    /**
      * Vibrato rate in Hz. Registered in `@strudel/core` as
      * `registerControl(['vib', 'vibmod'], 'vibrato', 'v')`, so `.vib()` sets
      * the rate and `.vibmod()` the depth.

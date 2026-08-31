@@ -107,7 +107,28 @@ const noVib = [];
 const badDepth = [];
 const bossDepths = [];
 const plainDepths = [];
-const pairs = []; // [sustain, depth] for the coupling check
+/*
+ * [length, depth] for the coupling check.
+ *
+ * IT WAS [sustain, depth] AND THAT WENT DEAD WITHOUT FAILING, which is the
+ * failure mode AGENTS.md 3 names: "a check with five assertions can pass its
+ * own fail-test on the strength of one while the rest are dead."
+ *
+ * `buildLead`'s `held` used to be written into `.sustain()`, so the note-length
+ * dial and the sustain LEVEL were the same control. `articulation.ts` separated
+ * them: sustain is now a property of the touch (0.58-0.50, the same on every
+ * lead note) and LENGTH is `clip`, which is what `held` drives. The coupling
+ * itself — a longer note gets more vibrato — is unchanged and is exactly as
+ * real as it was; this file was reading the wrong column, and the symptom was a
+ * "--   only one sustain value seen; nothing to compare" line rather than a
+ * failure. A gate that reports "nothing to compare" is a gate that has stopped
+ * being one.
+ *
+ * `clip` is also the STRONGER column to read. It is the control that literally
+ * says how long the note is; sustain was only ever a proxy for it, and a proxy
+ * that a change of design could silently break, as this one did.
+ */
+const pairs = []; // [clip, depth]
 
 for (const c of cases) {
   const evs = notesIn(buildLead(state(c)), 1);
@@ -120,8 +141,8 @@ for (const c of cases) {
     } else if (e.vibmod < DEPTH_MIN || e.vibmod > DEPTH_MAX) badDepth.push({ ...c, vibmod: e.vibmod });
     // Coupling is a property of ONE state's sustain curve. Mixing the boss in
     // compares two different curves and reports their difference as a failure.
-    if (!c.boss && typeof e.sustain === 'number' && typeof e.vibmod === 'number') {
-      pairs.push([e.sustain, e.vibmod]);
+    if (!c.boss && typeof e.clip === 'number' && typeof e.vibmod === 'number') {
+      pairs.push([Number(e.clip.toFixed(4)), e.vibmod]);
       plainDepths.push(e.vibmod);
     }
   }
@@ -184,13 +205,29 @@ if (badDepth.length) {
  */
 const distinct = [...new Map(pairs.map((p) => [p[0], p[1]])).entries()].sort((a, b) => a[0] - b[0]);
 const monotone = distinct.every(([, d], i) => i === 0 || d >= distinct[i - 1][1]);
+/*
+ * FEWER THAN TWO LENGTHS IS A FAILURE, not a shrug. The lead's whole expressive
+ * premise is that LASER and a SOLOIST wave lengthen the note AND open the
+ * vibrato as one gesture; if the sweep only ever produces one note length,
+ * either the states below stopped exercising it or the coupling has been
+ * removed, and both of those are things this file exists to catch. It printed
+ * `--` for exactly one build of this repo and that build had a dead assertion.
+ */
 if (distinct.length < 2) {
-  console.log('  --   coupling — only one sustain value seen; nothing to compare');
+  failed = true;
+  console.log(
+    `\n  COUPLING — only ${distinct.length} distinct note length(s) over ${pairs.length} notes; ` +
+      'nothing to compare, which means this assertion measured nothing.',
+  );
 } else if (!monotone) {
   failed = true;
-  console.log(`\n  COUPLING — depth does not rise with sustain: ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`);
+  console.log(
+    `\n  COUPLING — depth does not rise with note length: ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`,
+  );
 } else {
-  console.log(`  ok   coupling — depth rises with sustain: ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`);
+  console.log(
+    `  ok   coupling — depth rises with note length (clip): ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`,
+  );
 }
 
 console.log(failed ? '\nLEAD IS OUT OF SPEC' : '\nLEAD HOLDS — the melody is articulated, not just pitched');

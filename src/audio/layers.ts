@@ -17,8 +17,9 @@
 import { note, s, silence, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp01, remap } from '../core/math';
-import type { Chord, ChordSpan, Extension, ModeName } from './theory';
+import type { Chord, ChordSpan, Extension, LaneId, ModeName } from './theory';
 import { LANE_RANGE, buildChord, contourForBar, degreeToSemitone, foldInto, laneTones } from './theory';
+import { articulate, type TouchName } from './articulation';
 // `riser` is no longer imported: the build is a timpani roll now, and a
 // white-noise uplifter has no equivalent in the canon this score is aiming at.
 // The function is left in `kit.ts` rather than deleted — it is a correct
@@ -615,14 +616,63 @@ export const MOVEMENT_MIX: Record<Movement, Partial<Record<StemId, number>>> = {
 // helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * WHAT SOUND EACH PITCHED VOICE GROUP IS, as data, exported, and read by both
+ * the builders and the tools.
+ *
+ * `AGENTS.md` §3: "A tool holding its own copy of a constant will lie the day
+ * it moves." It did, twice, in this pass. `tools/harmony.mjs` selected the stab
+ * with `e.s === 'pulse' && e.pw === 0.5` and the pad with `pw === 0`, and
+ * `tools/registermap.mjs` kept a `GROUP_WINDOW` table keyed on the same
+ * strings. The moment the pad stopped being a square, both gates went red while
+ * reporting things about the harmony that were not true — "the pad produced no
+ * bar with two tones", on a pad producing two tones in all 88 bars.
+ *
+ * The identity of a voice group is (oscillator, duty, unison). Those three and
+ * nothing else: `detune`, `spread`, `pwrate` and the filters are how a voice is
+ * SET UP, and they move without the group becoming a different instrument.
+ *
+ * `unison` is in the key because two lanes are supersaws now — the bed at three
+ * voices and the upper structure at two — and a grouping that could not tell
+ * them apart would merge a 47-57 window with a 78-90 one and report a single
+ * group sprawling forty-three semitones.
+ */
+export interface VoiceTag {
+  /** The `theory.LANE_RANGE` window this group is folded into. */
+  readonly lane: LaneId;
+  readonly s: string;
+  readonly pw?: number;
+  readonly unison?: number;
+}
+
+export const VOICE_TAGS = {
+  pad: { lane: 'pad', s: 'supersaw', unison: 3 },
+  colour: { lane: 'colour', s: 'supersaw', unison: 2 },
+  stab: { lane: 'stab', s: 'sawtooth' },
+  motor: { lane: 'motor', s: 'pulse', pw: 0.34 },
+  arp: { lane: 'arp', s: 'triangle' },
+} as const satisfies Record<string, VoiceTag>;
+
+/** Apply a voice tag. The three controls that decide WHICH INSTRUMENT this is. */
+export function tagVoice(p: Pattern, t: VoiceTag): Pattern {
+  let out = p.s(t.s);
+  if (t.pw !== undefined) out = out.pw(t.pw);
+  if (t.unison !== undefined) out = out.unison(t.unison);
+  return out;
+}
+
 /** MIDI numbers as a mini-notation sequence. */
 const seq = (notes: number[]): string => notes.join(' ');
 
 /** MIDI numbers as a single stacked chord event. */
 const chordOf = (notes: number[]): string => `[${notes.join(',')}]`;
 
-/** Repeat a chord `n` times across the bar. */
-const chordStabs = (notes: number[], n: number): string => Array(n).fill(chordOf(notes)).join(' ');
+/*
+ * `chordStabs` used to live here — "repeat a chord n times across the bar".
+ * It is gone because repetition is a RHYTHM, and a rhythm is now written as a
+ * `struct` rather than baked into a note string. Its one caller was the pad's
+ * intro restatement, which is `.struct('x x')`.
+ */
 
 /**
  * Pan positions fanning a chord across the stereo field, lowest voice leftmost.
@@ -1302,14 +1352,14 @@ export function buildSub(m: MusicalState): Pattern {
 
   const lpf = (p: Pattern): Pattern =>
     p.lpf(half ? m.sig.openness.range(105, 505) : m.sig.openness.range(150, 720));
-  const core = lpf(sub(pattern, 0.62));
+  const core = lpf(sub(pattern, 0.62, m.bpm));
   if (!layered) return core;
   return stack(
     core,
     // The fifth, an eighth before the halfway point.
-    lpf(sub(`~ ~ ~ ~ ~ ${fifth} ~ ~`, 0.62)).gain(m.sig.density.range(0, 1)),
+    lpf(sub(`~ ~ ~ ~ ~ ${fifth} ~ ~`, 0.62, m.bpm)).gain(m.sig.density.range(0, 1)),
     // Passing roots on the remaining offbeats, last to arrive.
-    lpf(sub(`~ ~ ~ ${root} ~ ~ ~ ${root}`, 0.62)).gain(m.sig.fill.range(0, 1)),
+    lpf(sub(`~ ~ ~ ${root} ~ ~ ~ ${root}`, 0.62, m.bpm)).gain(m.sig.fill.range(0, 1)),
   );
 }
 
@@ -1859,24 +1909,62 @@ export function buildMotor(m: MusicalState): Pattern {
    * that lasts as long as the note asked to. A held 0.3 under a 0.22 gain is
    * 0.066 — this stays the quiet inner voice its comment below insists on.
    *
-   * The offbeat layer keeps `sustain(0)` on purpose. It is garnish at a tenth
-   * of the level, it lands between the beat layer's notes, and giving it a body
-   * too would fill the gaps that are the whole reason the two layers read as
-   * separate. One voice sings, the other ticks.
+   * ---------------------------------------------------------------------
+   * AND NEITHER LAYER IS `sustain(0)` ANY MORE.
+   * ---------------------------------------------------------------------
+   *
+   * The offbeat used to be, argued as "one voice sings, the other ticks". The
+   * argument is right about the character and was implemented with the one
+   * control that makes a note's written length UNREADABLE: at sustain 0 the
+   * amplitude is already zero at attack+decay, so `clip`, `release` and the
+   * mini-notation length all say nothing. `attackfloor` measured this lane at
+   * 45% sustain-0 haps with a flat 74/74/74 ms tail on every one of 25,340.
+   *
+   * Both layers carry a touch now. The beat layer is `ticked` at eighths and
+   * the offbeat is `struck` at sixteenths, so the difference between them falls
+   * out of the arithmetic - a shorter note gets a faster onset and a shorter
+   * tail - instead of out of one of them being switched off. At 135 bpm that is
+   * 52-40 ms on / 170-144 ms off for the beat against 26-20 ms on / 105-85 ms
+   * off for the offbeat: further apart than the old pair, and both audible as
+   * lengths rather than one of them being a fixed blip.
    */
   const voice = (
     pattern: string,
     level: Patternable,
     velocity: number,
-    sustain: Patternable,
-    release: Patternable,
+    touch: TouchName,
+    slots: number,
   ): Pattern =>
-    note(pattern)
-      .s('pulse')
-      .pw(0.5)
-      .ad('0.004:0.07')
-      .sustain(sustain)
-      .release(release)
+    articulate(
+      tagVoice(note(pattern), VOICE_TAGS.motor)
+      /*
+       * THE DUTY CYCLE MOVES NOW, and that is this lane's share of "the base
+       * instruments havent changed".
+       *
+       * `pw(0.5)` is a 25% duty (superdough maps duty as `(1 - pw)/2`) held
+       * perfectly still for the whole project's life, on the most-heard sound
+       * in the game - 92,928 haps, under every bar. A static narrow pulse
+       * repeating eight to sixteen times a bar is, as an object, a harpsichord
+       * jack: the same waveform, the same length, the same spectrum, every
+       * time. Two of the owner's reports name a "clavichord" and this lane is
+       * the only thing in the mix that never stops making that shape.
+       *
+       * `pwrate`/`pwsweep` are superdough's own pulse-width LFO
+       * (`synth.mjs`, `getLfo(ac, {frequency: pwrate, depth: pwsweep})` on the
+       * worklet's `pulsewidth` parameter) and they were unused anywhere in this
+       * score. A duty sweeping slowly between roughly 20% and 35% is the
+       * string-machine sound - the harmonic ladder rearranges itself under a
+       * held pitch, which is heard as chorus rather than as vibrato because the
+       * FREQUENCY never moves. It costs no voices and no extra nodes.
+       *
+       * 0.35 Hz is one full sweep per five bars at 135 bpm, so no two bars of
+       * the clock have the same timbre and nothing about it is fast enough to
+       * be noticed as an effect. The centre moves 0.5 -> 0.34 (a 33% duty)
+       * because 25% is the thinnest point of the pulse family and a sweep
+       * should not be centred on the extreme of its own range.
+       */
+      .pwrate(0.35)
+      .pwsweep(0.3)
       /*
        * A little more top, because this is the only continuous voice left.
        *
@@ -1930,7 +2018,10 @@ export function buildMotor(m: MusicalState): Pattern {
        */
       .room(m.sig.space.range(0.15, 0.4))
       .roomsize(3)
-      .orbit(ORBIT_HARMONY);
+      .orbit(ORBIT_HARMONY),
+      touch,
+      { slots, bpm: m.bpm, shade: m.sig.openness },
+    );
 
   /*
    * Two layers on one lattice, exactly as the hats were — the retention lesson
@@ -1941,23 +2032,15 @@ export function buildMotor(m: MusicalState): Pattern {
    */
   const drive = Math.min(1, (m.barInPhrase % 4 === 3 ? 0.3 : 0) + (rapid > 0 ? 0.25 + rapid * 0.08 : 0));
   /*
-   * How much body the beat layer holds, and how long it takes to let go.
+   * The envelope is no longer written here at all - see `articulation.ts`.
    *
-   * Both ride `openness`, which is the master filter position — how big and
-   * open the mix currently is. When it closes down the motor tightens back
-   * towards the pluck it used to be; when the arrangement opens up the inner
-   * voice sings a little more. A curve rather than a constant, for the reason
-   * this file keeps relearning: a fixed number here would trade one invariant
-   * envelope for a different invariant envelope.
-   *
-   * The release is short by design. On the fill bar's sixteenths (111ms at 135
-   * bpm) a 90-160ms release overlaps the next note by about one note's worth at
-   * a third of the level, which is a chromatic run smearing into itself very
-   * slightly — the intended sound of a run-up. Anything near the 250ms floor
-   * §4 proposes would put three notes on top of each other and turn the lane
-   * into a drone, which would undo the pulse inversion this whole arrangement
-   * is built on. The floor is wrong for this lane and should not be applied to
-   * it; see the plan's note on retiring it.
+   * What used to be four hand-tuned signals in this function is a touch name
+   * and a subdivision. The reasoning the old comment carried is preserved in
+   * `TOUCH.ticked`, including the part that was right and is still right: a
+   * 250 ms tail on a lane playing sixteenths puts three notes on top of each
+   * other and turns the clock into a drone. It is arithmetic there rather than
+   * an exemption here, so a lane that slows down gets a longer tail without
+   * anybody editing a table.
    */
   /*
    * 0.22 -> 0.42, because the clock could not be heard.
@@ -1988,13 +2071,7 @@ export function buildMotor(m: MusicalState): Pattern {
    * the bass; still, on the octave-band table, worth **0.0%** — this change
    * cannot flatter the mud or air numbers and is not made for them.
    */
-  const base = voice(
-    line,
-    0.42,
-    1,
-    m.sig.openness.range(0.22, 0.36),
-    m.sig.openness.range(0.09, 0.16),
-  );
+  const base = voice(line, 0.42, 1, 'ticked', 8);
   if (half) return base;
   return stack(
     base,
@@ -2005,7 +2082,7 @@ export function buildMotor(m: MusicalState): Pattern {
     // Kept at a third of the beat layer, as it was: 0.14/0.42 against the old
     // 0.14/0.22, so the two articulations are further apart than before rather
     // than closer. One voice sings, the other ticks.
-    voice(`[~ ${third}]*4`, m.sig.fill.range(drive * 0.14, 0.14), 0.5, 0, 0),
+    voice(`[~ ${third}]*4`, m.sig.fill.range(drive * 0.14, 0.14), 0.5, 'struck', 16),
   );
 }
 
@@ -2291,7 +2368,17 @@ export function buildBass(m: MusicalState): Pattern {
    */
   const glide = (p: Pattern): Pattern =>
     m.feel === 'chase'
-      ? p.s('sine').attack(0.006).decay(0.7).sustain(0.35).release(0.4).penv(-7).pattack(0.11).pcurve(1)
+      ? /*
+         * The 808's PITCH slide survives; its envelope does not, and that is
+         * the whole point of `articulation.ts`. This used to set attack 6 ms,
+         * decay 700 ms, sustain 0.35 and release 400 ms right here, which made
+         * `chase` the one feel whose bass wore a different envelope from every
+         * other feel for reasons nobody could see from the touch table. What
+         * makes an 808 an 808 is `penv(-7).pattack(0.11)` - the pitch falling
+         * a fifth into the note - and that is a statement about pitch, so it
+         * stays. The amplitude shape is `played`, like every other bass note.
+         */
+        p.s('sine').penv(-7).pattack(0.11).pcurve(1)
       : p;
   const shaped = (p: Pattern): Pattern =>
     mag > 0
@@ -2303,46 +2390,33 @@ export function buildBass(m: MusicalState): Pattern {
       shaped(note(line))
       .s('sawtooth')
     /*
-     * THE ENDS OF THE NOTE, which is where "choppy" and "abrasive" actually
-     * live in this lane.
+     * THE ENDS OF THE NOTE ARE NOT WRITTEN HERE ANY MORE - see
+     * `articulation.ts`, touch `played`.
      *
-     * `.ds()` sets decay and sustain and says nothing about attack or release,
-     * so both used to fall through to superdough's defaults: a 1ms attack and a
-     * 10ms release. `attackfloor` measured the consequence — 72% of this lane's
-     * haps carrying no attack and no release, a median TAIL of 10ms, the
-     * shortest of any pitched lane in the game — on the lane it also measured
-     * at -11 dBFS, the LOUDEST pitched lane, 16dB above the motor.
+     * What stood here was a long and correct account of why a 1 ms attack on
+     * the loudest pitched lane in the game is a broadband click and a 10 ms
+     * ramp off it is an audible chop, and a fix of `attack(0.014..0.006)` /
+     * `ds('0.3:0.42')` / `release(0.26..0.14)`. That fix was real and it did
+     * not go far enough in either direction, which is the whole finding of this
+     * pass: 6-14 ms is still four to eight times faster than the corpus median
+     * of 50 ms, and 140-260 ms of release on top of a note that already held
+     * its FULL slot at sustain 0.42 meant every note ran into the next one.
+     * Eight notes a bar with no silence anywhere in the bar is not a bass part,
+     * and "the base sounds are like too drawn out" is what that is called from
+     * the outside.
      *
-     * The note itself was never short. `sustain(0.42)` holds it for its full
-     * length. It was hard-edged at BOTH ends: a 1ms ramp on a sawtooth this
-     * loud is a broadband click on every onset, and a 10ms ramp off it is an
-     * audible chop before the next note. Loudest lane, sharpest edges, eight
-     * times a bar — that is the abrasion, and no amount of `gain` work reaches
-     * it because the level was never the problem.
+     * The missing control was never attack or release. It was `clip`: this lane
+     * never stated how long a note IS, so length was whatever `sustain` and the
+     * mini-notation slot happened to leave. `played` holds 62-74% of the slot
+     * and releases in 155-205 ms, which is a finger damping a string.
      *
-     * Curves, not constants, and that is the point rather than a flourish. Four
-     * of the seven pitched lanes measured an IDENTICAL envelope on every hap of
-     * a twelve-minute sweep (attack lo/med/hi of 4.0/4.0/4.0, 6.0/6.0/6.0),
-     * which is the real clavichord complaint: not that the attacks are fast —
-     * the chiptune canon this score is aimed at has instant attacks — but that
-     * no note is ever shaped differently from any other. A flat floor typed as
-     * `.attack(0.02)` on every lane would satisfy an attack gate while leaving
-     * that invariance exactly as it is, which is this project's own recorded
-     * "gates optimised against" failure in a new costume.
-     *
-     * So both ends ride `drive`. Calm: a rounder 14ms onset and a 260ms tail
-     * that lets each note bleed into the next, which is the legato a bass
-     * wants when there is space for it. Driving: a 6ms onset for definition and
-     * a 140ms tail, because `layered` has by then stacked on-beat fills and
-     * eighths underneath and a long release across all three smears them into
-     * mud. The quiet passages are also where a listener hears each note most
-     * clearly, so that is where the long tail is worth most.
+     * The old comment's other point survives and is now structural rather than
+     * hand-typed: four of seven pitched lanes measured an IDENTICAL envelope on
+     * every hap of a twelve-minute sweep, and a flat `.attack(0.05)` everywhere
+     * would have been that same defect in a new costume. Every number in a
+     * touch is a fraction of the note's own length and rides a signal, so no
+     * two lanes and no two intensities get the same envelope.
      */
-    .attack(m.sig.drive.range(0.014, 0.006))
-    // 0.16 to silence left a hole under every beat. A bass that stops between
-    // notes takes the floor out from under the whole mix eight times a bar.
-    .ds('0.3:0.42')
-    .release(m.sig.drive.range(0.26, 0.14))
     /*
      * NO HIGHPASS HERE, AND IT IS NOT AN OVERSIGHT. There used to be a
      * `.hpf(95)` on this line, commented "out of the sub's way — without this
@@ -2488,16 +2562,103 @@ export function buildBass(m: MusicalState): Pattern {
       .orbit(ORBIT_LOW),
     );
 
-  const core = voice(pattern);
+  /*
+   * `articulate` is applied HERE, outside `voice`, and that is deliberate: it
+   * has to be the last writer for all five of the controls it owns
+   * (AGENTS.md 4, "later writes win, silently" - the defect that cost this very
+   * lane its 808 for the project's whole life). `glide` wraps the finished
+   * chain and sets `s`, `penv` and `pattack`; nothing after it touches an
+   * envelope except this.
+   *
+   * `slots: 8`. This lane's FASTEST note is an eighth - the `~ octave ~ ~ ~
+   * root ~ ~` fill layer below, and the shuffle's `[low@2 third]` - and a touch
+   * is scaled by the fastest note rather than the average one, so the busiest
+   * bar a lane can play is the one whose notes still fit inside their slots.
+   */
+  const played = (p: Pattern): Pattern =>
+    articulate(p, 'played', {
+      slots: 8,
+      bpm: m.bpm,
+      shade: m.sig.drive,
+      ring: 1 + (m.section === 'breakdown' ? 0.3 : 0),
+      hold: m.sig.hold,
+    });
+  const core = played(voice(pattern));
   if (!layered) return core;
   return stack(
     core,
     // Fills in the beats the anchor leaves open.
-    voice(`${low} ~ ${fifth} ~`).gain(m.sig.density.range(0, 0.86)),
+    played(voice(`${low} ~ ${fifth} ~`).gain(m.sig.density.range(0, 0.86))),
     // Driving eighths underneath, last to arrive.
-    voice(`~ ${octave} ~ ~ ~ ${root} ~ ~`).gain(m.sig.fill.range(0, 0.7)),
+    played(voice(`~ ${octave} ~ ~ ~ ${root} ~ ~`).gain(m.sig.fill.range(0, 0.7))),
   );
 }
+
+/**
+ * The comping rhythms, one row per feel, stated as `struct` and NOT as notes.
+ *
+ * THIS TABLE IS THE POINT OF THE REWRITE. Every rhythm in this lane used to be
+ * a mini-notation string with the CHORD SPELLED INTO IT — `[~ ${chord}] ~ [~
+ * ${chord}] ~` — five times over, once per feel, plus two more for the
+ * half-time comp. Pitch and time were the same string, so a change to the
+ * voicing was a change to seven rhythm strings and a change to a rhythm was a
+ * place the voicing could be typed differently. That is the shape the reference
+ * corpus does not have: `struct("<[~ x] [~ x _ ~]>/2")` states WHEN, `chord(x)
+ * .anchor(...).voicing()` states WHAT, and the two are composed.
+ *
+ * Here the notes come from one source (`m.chord`, spelled per lane by
+ * `theory.laneTones`/`foldInto`) and the time comes from this table. Adding a
+ * feel is one row. Revoicing the chord touches nothing here at all.
+ *
+ * `core` always sounds; `fill` fades in over it on `sig.ornament`, so pressure
+ * ADDS onsets between the ones already playing rather than replacing the bar —
+ * the nesting rule `tools/retention.mjs` exists to measure.
+ */
+const COMP_STRUCT: Record<Feel, { readonly core: string; readonly fill: string | null }> = {
+  /* Offbeat stabs, downbeats filling in: the classic placement, and it leaves
+   * the downbeat to the kick instead of doubling it. */
+  boomchick: { core: '~ x ~ x', fill: 'x ~ x ~' },
+  /* One late stab a bar under a running bass pedal. Nothing fills it: the point
+   * of `chase` is that the harmony is nearly static while the motor moves. */
+  chase: { core: '~ ~ x ~', fill: null },
+  /* With the beat, since the gallop's own bass figure is already continuous. */
+  gallop: { core: '~ x ~ x', fill: 'x ~ x ~' },
+  /* Inside the swung twelve, so the stab lands with the shuffle rather than
+   * across it. */
+  shuffle: { core: '[~ x] ~ [~ x] ~', fill: '~ [~ x] ~ [~ x]' },
+  /*
+   * THE HALF-TIME COMP SURVIVES ITS INSTRUMENT.
+   *
+   * These two rows are, to the sixteenth, the rhythm the deleted clavinet
+   * played (`skeleton` and `offbeats` in the removed block). The owner's
+   * complaint was never about the rhythm — half-time drums and a wobble bass
+   * with nothing moving fast in the bar is a mood rather than a groove, and
+   * something syncopated in the space the drums leave is what fixes that. What
+   * was wrong was the SOUND. So the figure is preserved verbatim and the voice
+   * that played it is gone; the upper structure plays it now, on the same
+   * filtered saw every other feel uses.
+   */
+  halftime: {
+    core: '[~ ~ x ~] ~ [~ ~ x ~] [x ~ x ~]',
+    fill: '~ [~ x ~ x] [~ ~ ~ x] ~',
+  },
+};
+
+/**
+ * How fast this lane's fastest note is, per feel, for `articulate`.
+ *
+ * Read off `COMP_STRUCT` rather than guessed: the densest cell in each row.
+ * Half-time and shuffle subdivide, everything else is on eighths. This is the
+ * number that makes a touch portable — the same `plucked` at 16 slots is a
+ * shorter, faster-speaking note than at 8, computed rather than typed.
+ */
+const COMP_SLOTS: Record<Feel, number> = {
+  boomchick: 8,
+  chase: 8,
+  gallop: 8,
+  shuffle: 12,
+  halftime: 16,
+};
 
 export function buildChords(m: MusicalState): Pattern {
   const spread = m.powerups.spread ?? 0;
@@ -2505,972 +2666,386 @@ export function buildChords(m: MusicalState): Pattern {
   const nova = m.powerups.nova ?? 0;
   // FLANKED widens everything harmonic; see MOVEMENT_MIX.
   const wide = m.movement === 'flank' ? 0.45 : 0;
-  /*
-   * No octave shift. `voiceLead` already places these between MIDI 55 and 79.
+
+  /* ==========================================================================
+   * ONE CHORD SOURCE, THREE PARTS.
    *
-   * This added +12 on top of that, so the pad sounded at 67-91 — an octave
-   * above the range its own voice leading was designed for, and the same
-   * territory as the arp and the lead. With the bass at the floor and every
-   * harmonic layer stacked into the top two octaves, the middle of the mix was
-   * empty and the top never rested: "too much high pitch synth always playing,
-   * its taxing on the ears".
-   *
-   * A keyboard player's left hand lives here. Leaving the chord where the voice
-   * leading already put it is what puts something back in the middle.
-   */
-  /*
-   * A FIX THAT FAILED, THEN SUCCEEDED — and the reason it changed is the point.
-   *
-   * Read the history below in order. Capping the pad's register was tried,
-   * measured, and rejected: it made roughness WORSE (1950 -> 2066 pairs) and
-   * left `chords+lead` untouched. That verdict was correct for the pad as it
-   * then was: a full triad or tetrad, which cannot move down without the
-   * displaced voices colliding with the bass and the motor instead.
-   *
-   * Opening the pad to fifths changed the object. A two-note dyad is a
-   * different thing from a four-note chord, and the register move was re-tested
-   * against it rather than left rejected on the strength of a measurement taken
-   * on something else:
-   *
-   *     total audible weight   992 -> 918   (-7.5%)
-   *     chords+lead            547 -> 446   (-18%, from 60% of all roughness to 49%)
-   *     clash                   142 -> 142   unchanged
-   *     interlock pile-up      2.81 -> 2.68
-   *
-   * The lesson worth keeping is not about pads. **A rejected experiment expires
-   * when its premise changes.** This one sat in the source as settled for
-   * several hours after the change that unsettled it, and would have stayed
-   * settled indefinitely, because a written rejection reads exactly like a
-   * closed question.
-   *
-   * -- the original note, kept because the numbers in it are still the reason
-   *    the register move is delicate at all: --
-   *
-   * A REJECTED FIX, recorded because the numbers are the useful part.
-   *
-   * `tools/masking.mjs` shows chords-against-lead is **48% of every
-   * critical-band collision in the score** (936 of 1950 rough pairs), with 72%
-   * of all roughness in MIDI 60-71 — exactly where the tune lives. A held pad
-   * tone a semitone under a melody note does not clash and resolve; it beats
-   * against the line for the whole bar, and neither low-passing nor level
-   * automation touches it, because the two signals are inside one critical band.
-   *
-   * The obvious fix — cap the pad below the melody by dropping offending voices
-   * an octave — was tried and MADE IT WORSE: 1950 -> 2066 rough pairs, with
-   * `chords+lead` unchanged at 936 and the displaced voices simply colliding
-   * further down instead (`bass+chords` 52 -> 124, `chords+motor` 173 -> 217).
-   *
-   * It could not have worked, and the arithmetic says so without an experiment:
-   * a ceiling of `tonic + 10` is 67, the melody is based at 69, and 67 against
-   * 69 is a whole tone — still inside the band. Real separation would need the
-   * pad below about `tonic + 5`, which is the motor's register and then the
-   * bass's.
-   *
-   * THE ACTUAL PROBLEM IS STRUCTURAL: there are four sustained pitched lanes
-   * and three registers. Bass owns 45-57, the motor owns 57-69, the lead is
-   * based at 69 and climbs. There is no octave left for a continuous pad, and
-   * no voicing rule can invent one.
-   *
-   * Which is what `buildMotor`'s own comment already says: the motor "IS the
-   * comping — it states the chord continuously... which is what allows the pad
-   * to become an occasional colour rather than a permanent bed." That intent
-   * was never carried into `STEM_CURVES`, where `chords` still has the
-   * second-highest ceiling in the mix (0.9) and enters at 0.1. The fix is a
-   * level and arrangement decision, not a voicing one — and `masking.mjs`
-   * cannot score it, because it ignores gain by design.
-   */
+   * The harmony below is unchanged and deliberately so — it is the one part of
+   * this lane a previous pass measured hard and got right, and `tools/harmony
+   * .mjs` holds seven assertions over it (guide tones against @strudel/tonal's
+   * own `guidetones` dictionary in all 44 chords; pad spacing; the core/tension
+   * partition surviving `voiceLead`). What changed is everything downstream: the
+   * three parts are now derived from this one source and differ by ANCHOR,
+   * TIMBRE, STRUCT and TOUCH, which is the corpus's shape, instead of each
+   * hand-assembling its own note strings.
+   * ======================================================================== */
 
   /*
-   * OPEN THE PAD TO FIFTHS ONCE THE MELODY IS PLAYING.
+   * THE PAD IS A DYAD, ALWAYS — and that is arithmetic, not taste.
    *
-   * With audibility weighting, `chords+lead` is **67% of all the audible
-   * roughness in the score** — two thirds of the mud, from one pair of lanes.
-   * Cutting the pad's level would score well on that metric and would be
-   * cheating: the pad is the only sustained thing in the mix besides the tune,
-   * and the last time it was thinned the result was "percussion with
-   * decoration". The metric would improve and the music would not.
+   * A window of N semitones can only hold a chord whose span is under N. A
+   * root-position shell {root, fifth, seventh} spans eleven and its root can be
+   * any of twelve pitch classes, so holding it upright needs 23 semitones; fold
+   * the overflow down an octave instead and the seventh lands a WHOLE TONE
+   * UNDER THE ROOT. Measured the day the chord grew its seventh: 38 of 88 pad
+   * bars held two tones a second apart, at 110-220 Hz, on the one lane that
+   * never stops sustaining, with every register gate green.
    *
-   * The tone that actually collides is the THIRD. It is a semitone from the
-   * fourth and from the flat third, a tone from the second — the intervals a
-   * melody moves through constantly — and the pad holds it for a whole bar
-   * while the tune walks past. The root and the fifth are the two notes a
-   * melody can sit on top of without grinding, which is why open fifths are
-   * what every arranger reaches for when the top voice needs room, and why
-   * organum, power chords and the entire 8-bit harmony tradition sound the way
-   * they do.
+   * Two tones a fifth apart fold to a FOURTH. There is no arrangement of
+   * {root, fifth} in any window that produces a second, which is why the pad is
+   * this shape unconditionally. Nothing is lost: the motor states the third
+   * continuously, the stab states the third and the seventh as guide tones, and
+   * the colour pair states the ninth and the thirteenth.
    *
-   * Dropping the third loses no harmony here, because the MOTOR is already
-   * stating it — root, third and fifth, continuously, in its own register.
-   * That is precisely the division of labour `buildMotor` claims: it "IS the
-   * comping... which is what allows the pad to become an occasional colour
-   * rather than a permanent bed." This is the pad taking that seriously while
-   * keeping every bit of its sustain.
-   *
-   * Only once the melody is actually sounding. Below the lead's entry point
-   * the pad IS the harmony and needs its third; there is nothing above it to
-   * make room for.
-   */
-  /*
-   * ...EXCEPT ON A PIVOT, where the third is the entire chord.
-   *
-   * The rule above is right and stays. It has one counter-example and this is
-   * it: the bar before a modulation plays the incoming key's dominant, whose
-   * major third is that key's LEADING TONE — the note that pulls a semitone up
-   * onto the new tonic on the next downbeat. Dropping it leaves an open fifth,
-   * which is the one sonority that belongs to no key at all, so the arrival
-   * would resolve from nowhere in particular.
-   *
-   * This is the only change the run-level form asked of `layers.ts` besides
-   * `themeForWave`'s recapitulation branch, and it is one bar per modulation —
-   * about ten bars in a twenty-minute run. The pad's own argument for dropping
-   * the third is that the melody is walking past it for a whole bar; on a
-   * cadence bar the melody is landing rather than walking, which is what a
-   * cadence is.
-   */
-  /*
-   * ---------------------------------------------------------------------
-   * IT IS A DYAD NOW, ALWAYS — and that is arithmetic, not taste.
-   * ---------------------------------------------------------------------
-   *
-   * The rule above was `melodyPresent && openTones.length >= 2`, so the pad
-   * played its FULL chord below the lead's entry point. That was fine while the
-   * chord was a triad and the lane had no ceiling. It stopped being fine on the
-   * day the chord became a seventh and the lane got a thirteen-semitone window,
-   * and the failure is one a fold cannot avoid:
-   *
-   *   A window of N semitones can only hold a chord whose span is under N. A
-   *   root-position shell {root, fifth, seventh} spans eleven, and its root can
-   *   be any of twelve pitch classes, so holding it upright needs 12 + 11 = 23
-   *   semitones. Fold the overflow down an octave instead and the seventh lands
-   *   a WHOLE TONE UNDER THE ROOT. That is not an inversion, it is a cluster.
-   *
-   * MEASURED before this line changed, over all nine modes x every degree x two
-   * tensions: **38 of 88 pad bars contained two tones a semitone or a tone
-   * apart** — `[49,50,54,57]`, `[49,52,54,57]` — held for a whole bar, at 110
-   * to 220 Hz, on the one lane in the mix that never stops sustaining. Low
-   * seconds are the single most reliable way to make a mix sound muddy.
-   *
-   * A DYAD IS THE ONE SHAPE THE FOLD CANNOT SPOIL. Two tones a fifth apart fold
-   * to a FOURTH — an inversion, consonant, and the interval organum, power
-   * chords and the whole 8-bit harmony tradition are built out of. There is no
-   * arrangement of {root, fifth} in any window that produces a second.
-   *
-   * Nothing is lost from the HARMONY, and this is the part worth checking
-   * rather than asserting. The third is stated by the motor, continuously, in
-   * its own register, under every bar of the game (`motorcheck`: "every note is
-   * a chord tone"). The third and the seventh are stated by the stab as guide
-   * tones, verified against `@strudel/tonal`'s own `guidetones` dictionary in
-   * all 44 chords by `tools/harmony.mjs`. The ninth and the thirteenth are the
-   * colour pair above. What the pad contributes is WEIGHT and SUSTAIN, and a
-   * dyad contributes exactly as much of both as a tetrad while occupying two
-   * voices instead of four — which is also two fewer simultaneous voices in the
-   * lane `registermap` measured as the mix's second-largest occupant of the
-   * 250 Hz band.
-   *
-   * The old comment's "below the lead's entry point the pad IS the harmony and
-   * needs its third" was true when it was written and is not true now: three
-   * other lanes state the third and two of them are gated by nothing.
+   * ...EXCEPT ON A PIVOT, where the pad keeps ROOT AND THIRD. The bar before a
+   * modulation plays the incoming key's dominant, whose major third is that
+   * key's LEADING TONE. An open fifth belongs to no key at all, so the arrival
+   * would resolve from nowhere in particular. Root and major third fold to a
+   * minor sixth, so that shape is cluster-free for the same reason.
    */
   const rootPc = (((m.chord.root % 12) + 12) % 12);
   const ivOf = (n: number): number => ((((n % 12) - rootPc) % 12) + 12) % 12;
-  const openTones = m.chord.notes.filter((n) => {
-    const iv = ivOf(n);
-    // Root, perfect fifth, or the diminished fifth locrian gives instead.
-    return iv === 0 || iv === 7 || iv === 6;
-  });
-  /*
-   * ...EXCEPT ON A PIVOT, where the pad keeps the ROOT AND THE THIRD.
-   *
-   * The counter-example below still holds — the incoming dominant's major third
-   * is the new key's leading tone and an open fifth belongs to no key at all —
-   * and it is now expressed as a different dyad rather than as a whole chord.
-   * Root and major third fold to a minor sixth, so this shape is cluster-free
-   * for the same reason the fifth is.
-   */
+  // Root, perfect fifth, or the diminished fifth locrian gives instead.
+  const openTones = m.chord.notes.filter((n) => ivOf(n) === 0 || ivOf(n) === 7 || ivOf(n) === 6);
   const pivotTones = m.chord.notes.filter((n) => ivOf(n) === 0 || ivOf(n) === 4);
-  // Never let the guard empty the pad: a voicing rule that can silence a lane
-  // is a bug waiting for the one chord that trips it.
+  // Never let a voicing rule empty a lane: that is a bug waiting for the one
+  // chord that trips it.
   const chosen = m.chord.pivot ? pivotTones : openTones;
   const opened = chosen.length >= 2 ? chosen.slice(0, 2) : m.chord.notes.slice(0, 2);
-  /*
-   * THE WINDOW IS `LANE_RANGE.pad`, NOT A CONDITIONAL DROP.
-   *
-   * This was `n > m.tonic + 5 && n - 12 >= 45 ? n - 12 : n` — a rule that
-   * depended on the key, fired only when the melody was sounding, and had no
-   * ceiling at all. Two rules were deciding where this lane sits (that one and
-   * `voiceLead`'s window) and neither was written anywhere a tool could read,
-   * which is how `registermap` came to measure the pad and the stab as the two
-   * largest occupants of the same 250 Hz band.
-   *
-   * Folding into the declared window is unconditional and total: every hap this
-   * lane emits is inside `LANE_RANGE.pad` by construction, so the gate that
-   * asserts it cannot be satisfied by a chord that happens not to trip a
-   * threshold. The open-fifths rule above still decides WHICH tones; this only
-   * decides where they sound.
-   */
   const voiced = foldInto(opened, LANE_RANGE.pad.lo, LANE_RANGE.pad.hi);
 
   /*
-   * THE STABS ARE NO LONGER THE PAD'S NOTES.
+   * THE UPPER STRUCTURE IS THE GUIDE TONES — the third and the seventh, the
+   * two notes that distinguish a minor seventh from a half-diminished from a
+   * dominant, and the two the bass and the bed are NOT holding.
    *
-   * Measured, off the haps rather than off this file: `tools/registermap.mjs`
-   * groups the `chords` lane by oscillator and duty, and `chords/pulse:pw0`
-   * (the pad) and `chords/pulse:pw0.5` (the stab) came back with the IDENTICAL
-   * range, MIDI 51-62 at p5-p95, over 21,120 and 46,464 haps. They were in
-   * unison, on one orbit, differing only in envelope and pan. Two voice groups
-   * playing the same notes in the same octave are not two parts; they are one
-   * part with a tremolo, and they were the two largest contributors to a mix
-   * with 66.6% of its energy in the 250 and 500 Hz bands.
-   *
-   * A comping keyboard does not double its own left hand. The pad keeps the
-   * low open fifths it was deliberately moved down to — it is the bed — and
-   * the stab takes the UPPER STRUCTURE: the full triad, third included, folded
-   * into the octave above the pad. Three consequences, and the third is the
-   * one that matters:
-   *
-   *   1. The third comes back into the harmony. `opened` drops it from the pad
-   *      whenever the melody is playing, on the grounds that the motor is
-   *      already stating it. Now the stab states it too, in its own register,
-   *      so the chord is complete without the pad having to hold the interval
-   *      that grinds against the tune.
-   *   2. The two lanes are audibly two parts: root-and-fifth held low, triad
-   *      struck on the offbeats an octave up.
-   *   3. It empties the 250 Hz band of one of its two largest occupants
-   *      without removing a note from the score.
-   *
-   * The window is `LANE_RANGE.stab` — 68-80, which is clear of the motor's
-   * ceiling of 69 by one semitone and sits under the tune. Against the tune
-   * this lane is a 25%-duty pulse lasting 220 ms on the offbeats, which is the
-   * one relationship in the file where two lanes in one octave do not fight.
-   *
-   * THE TONES ARE THE CHORD'S OWN, folded — NOT the iReal spelling.
-   *
-   * `laneTones` would spell the chord symbol at this lane's anchor, which is
-   * the corpus idiom and is what the ARP uses. It is the wrong source HERE, and
-   * the reason is worth stating because it is the one place the two designs
-   * disagree: a symbol has no way to express which extension the ACT has
-   * unlocked. `Extension` replaces the third with the ninth from the
-   * intensification on, and that substitution lives in `chord.notes` — a
-   * symbol-driven voicing would go on spelling `A-7` and the reserved material
-   * would never reach the one lane that states it.
-   *
-   * So the stab states the chord AS BUILT, in its own window. It still brings
-   * the SEVENTH into this lane, which it never had: the pad is open fifths
-   * whenever the melody plays, and a chord whose seventh existed only as a
-   * fader was, in every lane that mattered, a triad.
+   * The tones are the chord's own, folded — not the iReal spelling, and this is
+   * the one place this file's design and the corpus's disagree on purpose. A
+   * SYMBOL cannot express which extension the act has unlocked: `Extension`
+   * replaces the third with the ninth from the intensification on, and that
+   * substitution lives in `chord.notes`. A symbol-driven voicing would go on
+   * spelling `A-7` while the reserved material never reached the lane that
+   * states it. `buildArp` uses `laneTones` precisely because it has no such
+   * obligation.
    */
   const stabFolded = foldInto(m.chord.notes, LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
-  /*
-   * The root goes, and that keeps the ONSET COUNT flat.
-   *
-   * An upper structure is the chord minus the note the bass and the bed are
-   * already holding. Dropping the root is what makes this two parts instead of
-   * one: the pad holds root and fifth low, the stab strikes third and fifth an
-   * octave up, and between them the triad is complete with no pitch stated
-   * twice in the same instant.
-   *
-   * It is also the difference between an arrangement change and an addition.
-   * The pad is a dyad whenever the melody is playing, so folding the full
-   * triad into the stab took this lane from two voices to three: measured on
-   * the first pass, `chords/pulse:pw0.5` went from 46,464 haps to 69,696 over
-   * the identical 10,560-state sweep, and mean pitched note-events per bar
-   * from 41.1 to 44.7. `attackfloor` already reads 36 onsets a second and
-   * `MASTER_PLAN` §7 names onset density as the leading remaining suspect for
-   * "abrasive over time"; paying for register separation in transients would
-   * be trading one complaint for another. Back to 46,464.
-   *
-   * Guarded, because a voicing rule that can empty a lane is a bug waiting for
-   * the one chord that trips it — the same guard `opened` carries above.
-   *
-   * ---------------------------------------------------------------------
-   * GUIDE TONES, and this is what keeps the onset count flat.
-   * ---------------------------------------------------------------------
-   *
-   * It was `stabFolded.slice(1)` — the folded chord minus its root, which was
-   * two voices while the chord was a triad and would be four now that it is a
-   * seventh with an iReal spelling. Four would be a 100% rise in this lane's
-   * transient count, and `attackfloor` already reads 36 onsets a second with
-   * `MASTER_PLAN` §7 naming onset density as the leading suspect for "abrasive
-   * over time". Register separation paid for in transients is one complaint
-   * traded for another.
-   *
-   * So it takes the two tones that a comping player's right hand actually
-   * plays: the THIRD and the SEVENTH. Those two are the guide tones — they are
-   * what distinguishes a minor seventh from a half-diminished from a dominant,
-   * and the root and the fifth are the two the bass and the bed are already
-   * holding. Two voices, the same as before, now carrying the information the
-   * chord symbol contains instead of a doubling of the pad.
-   */
-  const stabPc = ((((m.chord.root % 12) + 12) % 12));
   const stabGuide = stabFolded.filter((n) => {
-    const iv = ((((n % 12) - stabPc) % 12) + 12) % 12;
+    const iv = ((((n % 12) - rootPc) % 12) + 12) % 12;
     // Everything that is not the root and not a perfect or diminished fifth.
     return iv !== 0 && iv !== 7 && iv !== 6;
   });
   const stabVoiced = stabGuide.length >= 2 ? stabGuide.slice(0, 2) : stabFolded.slice(-2);
 
-  /*
-   * A pad first, stabs second.
-   *
-   * Previously this was stabs only, which left nothing sustaining anywhere in
-   * the mix — so between kick hits there was silence, and the track read as
-   * percussion with decoration rather than as music. The pad is the bed
-   * everything else sits on, heavily low-passed and drenched in room so it adds
-   * warmth without adding anything for the ear to fight.
-   */
-  // Same reasoning as the sub: during the intro the pad restates twice a bar so
-  // the opening cannot begin with a bar of silence.
-  /*
-   * A HOLLOW PULSE, not a supersaw.
-   *
-   * Timbre is the fastest thing the ear reads genre from — faster than rhythm,
-   * far faster than harmony — and a detuned supersaw is a dance-music sound
-   * with no equivalent anywhere in the 8- and 16-bit canon. It could not be
-   * there: a supersaw is seven voices spent on one note, and these scores had
-   * eight voices for the entire arrangement. Width in that music comes from
-   * octave doubling and from the SPC700's echo unit, never from detuning.
-   *
-   * A 50%-duty pulse — `pw(0)`, since superdough's worklet maps duty to
-   * `(1 - pw) / 2` — is a hollow, clarinet-ish square. It is the standard
-   * harmony timbre on every one of those chips, and against a supersaw it is
-   * enormously less fatiguing for the same reason it is less impressive alone:
-   * a square has only odd harmonics, and no detuning means no beating. The
-   * previous comment here was already chasing that fatigue with a 1900Hz
-   * ceiling and `lpq(0.9)`; this removes the cause instead of filtering it.
-   *
-   * SPREAD keeps its meaning without the detune — but NOT via `.spread()`,
-   * which is the mistake this comment used to enshrine. That control is read
-   * only in superdough's `supersaw` branch, so from the moment this lane became
-   * a pulse the powerup did nothing at all here. It is now real stereo
-   * placement of the voices, done by `fanPans` and an explicit `.pan()` per
-   * chord tone, which is what the powerup's name says and what a chip would
-   * actually have done with a second channel.
-   */
-  // Fanned across the field rather than stacked in the centre. See `fanPans`
-  // for why `.spread()` had to go: it is a supersaw-only control and has done
-  // nothing on this lane since it became a pulse.
-  const padPans = fanPans(voiced.length, 0.52 + spread * 0.16 + wide);
-  /*
-   * EACH VOICE BREATHES AT ITS OWN RATE, and the beating between them is the
-   * point rather than the wobble on any one of them.
-   *
-   * `strudel.d.ts`'s own note on `vib` says it plainly: "A pulse or triangle
-   * held at a fixed frequency is a test tone — the ear hears an oscillator. The
-   * same note with a few cents of periodic movement is heard as *sung*, because
-   * every physical instrument and voice does it. Its absence is a large part of
-   * what makes a chip melody read as synthetic." That note has been sitting in
-   * the type declarations while `.vib()` appeared in exactly ONE place in the
-   * whole score — `buildLead` — so every other pitched lane, this bed included,
-   * has been a mathematically perfect oscillator.
-   *
-   * This lane is the worst place for that to be true. It is the bed: held under
-   * everything, 27,752 haps, second-loudest pitched lane at -15 dBFS, tails out
-   * to 2.2 seconds. A chord of three to five perfectly steady pulses is the
-   * single most fatiguing thing a mix can hold under a listener for twelve
-   * minutes, and "abrasive on the listener over time" is what that fatigue
-   * sounds like when someone describes it.
-   *
-   * `.detune()` is the obvious fix and is unavailable: superdough only reads it
-   * in the `supersaw` branch, and this lane is a pulse on purpose. So the
-   * ensemble is built the other way round — each chord tone gets its OWN
-   * vibrato rate, 4.6Hz upward in steps of 0.43, and because no two voices
-   * return to centre together their sum is never the same twice. That is what a
-   * section of players sounds like, and it is the nearest thing to a chorus
-   * available without a chorus node.
-   *
-   * Depth is deliberately far under the 0.1-0.2 the docs call ordinary: at 0.06
-   * a semitone is ~6 cents, well inside what a held note can carry without the
-   * harmony smearing. Per-voice depth is not what makes this work; the
-   * disagreement between the rates is.
-   *
-   * Both controls are set, always. The oscillator is behind `if (vib > 0)`, so
-   * `.vibmod()` alone is silent, and `.vib()` alone takes superdough's default
-   * depth of 0.5 — half a semitone, which on a sustained chord would be audibly
-   * out of tune. That trap is documented in `strudel.d.ts` and is easy to walk
-   * back into.
-   */
-  const padVoice = (n: number, pan: number, i: number): Pattern =>
-    note(m.section === 'intro' ? chordStabs([n], 2) : `${n}`)
-    .s('pulse')
-    .pw(0)
-    .pan(pan)
-    .vib(4.6 + i * 0.43)
-    .vibmod(m.sig.openness.range(0.045, 0.075))
-    .attack(0.45)
-    .decay(0.5)
-    .sustain(0.75)
-    .release(m.sig.hold.range(0.9, 2.2))
-    /*
-     * The ceiling comes down and the resonance comes off.
-     *
-     * "too much high pitch synth always playing, its taxing on the ears" is a
-     * description of sustained saw harmonics in the 2.5-6kHz fatigue band, and
-     * a pad that is held under everything else is the largest single
-     * contributor to it. At 1900Hz the chord keeps its body and its width and
-     * stops competing with the melody for the top of the spectrum, which is
-     * also where it belongs musically: this is the bed, not a voice.
-     */
-    /*
-     * A NEGATIVE RESULT, recorded so it is not re-derived. Opening this
-     * ceiling is NOT where the mix's missing air comes from.
-     *
-     * The reasoning that says it should be is good, which is why it was tried:
-     * the argument above is about "sustained SAW harmonics", and this lane is
-     * not a saw any more — it is a 50%-duty pulse (`pw(0)`), chosen fifty lines
-     * up precisely because a square is "enormously less fatiguing". A ceiling
-     * derived for an instrument the lane no longer is, over a group that is
-     * **27% of the whole mix** by soloed-stem reconstruction, whose
-     * fundamentals are 156-294 Hz behind a cutoff that evaluates to **1230 Hz
-     * at mid openness — harmonics 1, 3, 5, 7 and nothing else**.
-     *
-     * Measured, `range(560, 1900)` against `range(760, 3200)` (1980 Hz at mid),
-     * paired, same seed, same day. Soloed, the `chords` stem moved **+1.5 dB at
-     * 2 kHz and +0.7 dB at 4 kHz** against a soloed-render noise floor of
-     * 0.00 dB, so the filter change is real. In the FULL MIX it was worth
-     * **+0.2 dB in the 2 kHz band** — this lane owns about 15% of that band —
-     * which is a sixth of `capture.mjs`'s own 1.3 dB full-mix noise floor.
-     *
-     * So: a real change to one lane, invisible in the mix, bought by putting
-     * -19 dB harmonics at 2-3 kHz under a listener continuously — which is the
-     * one thing this file has a recorded human complaint about ("too much high
-     * pitch synth always playing, its taxing on the ears"). Reverted. The air
-     * came from the clap, from the lead's decoration becoming a pulse, and
-     * from the arp's filter, all of which are sources rather than filters.
-     */
-    .lpf(m.sig.openness.range(560, 1900))
-    /*
-     * 110 Hz, not 20 — a REGISTER BOUNDARY that exists at full health.
-     *
-     * `thin` is the player-damage signal (`director.ts:955`,
-     * `pow(1 - health, 1.35)` through a damp), so it is 0 whenever nobody has
-     * been hit. Measured off the haps by `tools/registermap.mjs`: every one of
-     * this lane's 21,120 haps carried `hcutoff` exactly 20 at full health.
-     * Five highpasses across `layers.ts` read as lane separation and all five
-     * were doing nothing in ordinary play; they were a mix-wide thinning
-     * gesture wearing a boundary's clothes.
-     *
-     * The base is now the boundary and the damage signal still rides on top of
-     * it. 110 Hz is a fifth below this lane's lowest fundamental (measured
-     * MIDI 51 = 156 Hz at p5, and `voiced` will not fold below 45), so it
-     * removes only the skirt this pulse puts under the bass and the sub, and
-     * not one note.
-     *
-     * NO `.ftype()` ANYWHERE IN THIS CHAIN, and that is load-bearing rather
-     * than incidental: superdough has one shared filter-model control, so an
-     * `.hpf()` beside an `.ftype('ladder')` is a second 24 dB/oct LOWPASS
-     * (AGENTS.md §4). `registermap` prints the `ftype` count per voice group
-     * and this lane reads 0.
-     */
-    .hpf(m.sig.thin.range(110, 400))
-    // A resonant peak is a narrow band the ear cannot stop hearing. On a
-    // sustained source it should be nearly flat.
-    .lpq(m.sig.ring.range(0.9, 3.4))
-    .room(m.sig.space.range(m.section === 'breakdown' ? 0.78 : 0.58, 0.95))
-    .roomsize(m.section === 'breakdown' ? 8 : 6)
-    .gain(m.section === 'breakdown' ? 0.5 : 0.42)
-    .orbit(ORBIT_HARMONY);
+  /* ==========================================================================
+   * PART 1 — THE BED.
+   * ======================================================================== */
 
   /*
-   * One voice per chord tone, each with its own place in the field.
+   * ---------------------------------------------------------------------
+   * THE PAD IS A SUPERSAW NOW, AND THE ARGUMENT AGAINST IT HAS EXPIRED.
+   * ---------------------------------------------------------------------
    *
-   * The level is unchanged: `chordOf` already produced one simultaneous voice
-   * per note at this gain, so stacking them costs nothing extra — the only
-   * difference is that they are no longer all in the same speaker.
+   * What stood here was a long, careful case for a 50%-duty pulse — "a hollow
+   * pulse, not a supersaw" — resting on one premise: that this score is aimed at
+   * the 8- and 16-bit canon, where "a supersaw is seven voices spent on one note
+   * and these scores had eight voices for the entire arrangement". That premise
+   * is no longer true and has not been for two briefs. The reference moved to
+   * Aphex Twin (see the `buildHats` tombstone's own amendment) and then to
+   * `eefano/strudel-songs-collection`, where `supersaw` appears in 8 of 60
+   * pieces and the rest of the harmony is carried by `gm_*` soundfonts this
+   * install does not have. `AGENTS.md` §8's rule applies to itself: a rejected
+   * experiment expires when its premise changes, and a written rejection reads
+   * exactly like a closed question.
+   *
+   * And the argument was, in the end, an argument for a SQUARE WAVE under the
+   * whole game. `pw(0)` maps to duty `(1 - 0) / 2` = 50%: this bed — 27% of all
+   * mix energy by soloed-stem reconstruction, sounding under every bar — was a
+   * bare square oscillator. The owner's report, three times and finally by name,
+   * is that "the base instruments havent changed" and that something "sounds
+   * like a clavichord". A square wave held under everything is the largest
+   * single reason a score sounds like a chip rather than like a record, and no
+   * envelope or filter pass reaches it because the source is the problem.
+   *
+   * `supersaw` is the ONE rich source available here. `.detune()` and
+   * `.spread()` are supersaw-only (AGENTS.md §4) and this is the only lane in
+   * the file that can use them, so it is also the only lane that can have an
+   * ensemble without spending extra voices: superdough's supersaw is a single
+   * pooled `supersaw-oscillator` worklet with a `unison` parameter, not N
+   * oscillator nodes (`synth.mjs:154-190`). Three detuned saws for one node.
+   *
+   * IT IS ALSO THE MIX'S ONLY SOURCE OF REAL WIDTH. `tools/widthcheck.mjs`
+   * measured the rendered file at 4.13% side energy and L/R correlation 0.918 —
+   * a mono file with a hint of width. The supersaw worklet declares
+   * `outputChannelCount: [2]` and pans its unison voices across the field by
+   * `spread`, so this is stereo generated at the source rather than a pan.
+   *
+   * THE FILTER DOES NOT MOVE, and that is deliberate rather than an oversight.
+   * A saw has every harmonic at 1/k where a square has odd ones at 1/k, so at
+   * an unchanged 560-1900 Hz this lane gets BRIGHTER, which is the direction
+   * the mix wants (2.7% of energy above 2 kHz, measured on a render) and also
+   * the direction the owner has previously complained about ("too much high
+   * pitch synth"). The resolution is to buy the harmonics at the source and pay
+   * for them in LEVEL. The gain drops 0.42 -> 0.30.
+   *
+   * THE LEVEL ARITHMETIC, because the supersaw worklet DOES NOT NORMALISE and
+   * this is exactly the sort of thing this file gets wrong by assuming. Read
+   * `worklets.mjs`'s `SuperSawOscillatorProcessor.process`: it sums `voices`
+   * sawblep oscillators into the output with alternating L/R gains and there is
+   * no `1/sqrt(voices)` anywhere (the OTHER supersaw implementation further
+   * down that file has a `normalizer`; the one `registerSound('supersaw')`
+   * instantiates does not). So:
+   *
+   *   old   50%-duty pulse, peak +-1, RMS 1.000, gain^2 = 0.42^2 = 0.176
+   *   new   3 detuned saws, RMS 0.577 each, incoherent so x sqrt(3) = 1.000,
+   *         gain^2 = 0.30^2 = 0.090
+   *
+   * The two sources come out at the same RMS per unit gain, so the level change
+   * is the gain change and nothing else: -5.9 dB. NOT HEARD. The brightness
+   * trade is arithmetic and a judgement, and it is the first thing to
+   * re-measure with an ear.
+   *
+   * The per-voice vibrato rates stay. They were built as a substitute for the
+   * detune this lane could not have, and now that it can have both, they do
+   * different jobs: `detune` beats WITHIN a note, `vib` at different rates beats
+   * BETWEEN the chord tones. Both controls are set, always — the oscillator is
+   * behind `if (vib > 0)` so `.vibmod()` alone is silent, and `.vib()` alone
+   * takes a default depth of half a semitone (AGENTS.md §4).
    */
+  const padPans = fanPans(voiced.length, 0.52 + spread * 0.16 + wide);
+  const padVoice = (n: number, pan: number, i: number): Pattern =>
+    articulate(
+      /*
+       * Three saws, not superdough's default five: this is a bed under a whole
+       * arrangement, and five at this detune is a trance lead. The oscillator
+       * and the voice count are the group's IDENTITY, so they come from
+       * `VOICE_TAGS` and the gates read that same table rather than a copy.
+       *
+       * The bed restates twice a bar during the intro, and that is a RHYTHM
+       * rather than a note list, so it is a `struct`. Strudel patterns are
+       * installed live and a hap whose onset is already past never fires, so a
+       * one-note-per-bar intro can wait a whole bar before making a sound —
+       * measured at four seconds of literal silence after pressing start.
+       */
+      tagVoice(note(`${n}`).struct(m.section === 'intro' ? 'x x' : 'x'), VOICE_TAGS.pad)
+        // 14 cents. Wide enough to beat slowly, narrow enough that a held
+        // fourth is still a fourth — past about 0.3 the chord goes sour.
+        .detune(0.14)
+        .spread(0.7)
+        .pan(pan)
+        .vib(4.6 + i * 0.43)
+        .vibmod(m.sig.openness.range(0.045, 0.075))
+        /*
+         * A NEGATIVE RESULT, kept so it is not re-derived: opening this ceiling
+         * is not where the mix's missing air comes from. `range(560,1900)`
+         * against `range(760,3200)`, paired, same seed: the soloed stem moved
+         * +1.5 dB at 2 kHz and the FULL MIX moved +0.2 dB, a sixth of
+         * `capture.mjs`'s own 1.3 dB noise floor. Reverted then and unchanged
+         * now — with the source change above, the harmonics arrive without the
+         * filter having to be opened for them.
+         */
+        .lpf(m.sig.openness.range(560, 1900))
+        /*
+         * 110 Hz is a REGISTER BOUNDARY that exists at full health. `thin` is
+         * the player-damage signal and is 0 until somebody is hit, so every one
+         * of this lane's haps used to carry `hcutoff` exactly 20. 110 is a fifth
+         * below the lane's lowest fundamental, so it removes the skirt this
+         * source puts under the bass and not one note.
+         *
+         * NO `.ftype()` ANYWHERE IN THIS CHAIN, and that is load-bearing:
+         * superdough has one shared filter-model control, so an `.hpf()` beside
+         * an `.ftype('ladder')` is a second 24 dB/oct LOWPASS (AGENTS.md §4).
+         */
+        .hpf(m.sig.thin.range(110, 400))
+        // A resonant peak is a narrow band the ear cannot stop hearing. On a
+        // sustained source it should be nearly flat.
+        .lpq(m.sig.ring.range(0.9, 3.4))
+        .room(m.sig.space.range(m.section === 'breakdown' ? 0.78 : 0.58, 0.95))
+        .roomsize(m.section === 'breakdown' ? 8 : 6)
+        .gain(m.section === 'breakdown' ? 0.36 : 0.3)
+        .orbit(ORBIT_HARMONY),
+      'bowed',
+      {
+        slots: m.section === 'intro' ? 2 : 1,
+        bpm: m.bpm,
+        shade: m.sig.openness,
+        ring: 1 + (m.section === 'breakdown' ? 0.25 : 0),
+        hold: m.sig.hold,
+      },
+    );
   const pad = stack(...voiced.map((n, i) => padVoice(n, padPans[i], i)));
 
+  /* ==========================================================================
+   * PART 2 — THE UPPER STRUCTURE THAT SUSTAINS: the ninth and the thirteenth.
+   * ======================================================================== */
+
   /*
-   * The 7th and 9th, as a fade rather than a chord change.
-   *
-   * `chordForBar` used to add these to the chord above tension thresholds of
-   * 0.35 and 0.7, which rewrote the pad AND shifted the arp's pitch walk under
-   * it — the arp kept 44% of its phrase across one step of the tension dial and
-   * the pad 75%. They now always exist as `chord.colour` and swell in on their
-   * own signals, the 7th first, so the harmony opens up continuously and no
-   * note is ever replaced.
-   *
-   * `nova` and the shuffle floor them open: safety should be audible as
-   * harmonic space, and a plain triad over a swing feel sounds like a mistake
-   * rather than a choice.
-   */
-  /*
-   * HUSHED floors the colour tones open alongside nova and the shuffle.
-   *
-   * Nova already means "you are safe" as harmonic space, and a wave where
-   * nothing shoots is the same statement made by the stage instead of by a
-   * powerup. It is the difference between the movement being quieter and the
-   * movement being *prettier*, which is the whole idea.
+   * `nova`, the shuffle and a HUSHED wave floor the colour tones open: safety
+   * should be audible as harmonic space, and a plain triad over a swing feel
+   * sounds like a mistake rather than a choice.
    */
   const floor = m.feel === 'shuffle' || nova > 0 || m.movement === 'hush' ? 1 : 0;
   /*
-   * NO `+ 12` ANY MORE, and its removal is half of why this group's measured
-   * span was thirty-four semitones.
+   * AN ENSEMBLE, NOT A SINE WITH AN EDGE.
    *
-   * `voiceLead` places the colour tones and this line then moved them an octave
-   * further up, so the lane's real register was the sum of two rules neither of
-   * which stated a ceiling: `registermap` measured MIDI 56-90 across 50,688
-   * haps. `voiceLead` now leads them into `LANE_RANGE.colour` (78-90) and this
-   * plays exactly where it is told, with a fold as the belt-and-braces so the
-   * window is a guarantee rather than an expectation.
+   * This pair was a `triangle`, and a triangle at 740-1480 Hz behind a 4550 Hz
+   * cutoff keeps its 3rd partial at -19 dB and its 5th at -28 dB and has
+   * nothing else to give — the previous pass had to move the filter twice to
+   * find those two, and both moves are recorded in this file as "THE FILTER WAS
+   * BELOW THE NOTE". You cannot filter in what the source never made.
+   *
+   * A two-voice supersaw at a very small detune is what an arranger means by an
+   * upper structure: two players a few cents apart, which beats slowly and
+   * never sits still. `unison(2)` and `detune(0.06)` — half the bed's — because
+   * this pair sits above the tune, where a wide detune is heard as being out of
+   * tune rather than as an ensemble. `spread(0.9)` puts the two voices at
+   * opposite edges of the field, which is where a high sustained part belongs
+   * and is width the mix does not otherwise have.
+   *
+   * THE LOWPASS IS UNCHANGED AT 2600-6500 and the level pays for the source, as
+   * in the bed. `registermap`'s `harm@lpf` column reads the cutoff against the
+   * fundamental and a saw needs the same ratio a triangle does to keep three
+   * partials; moving the filter down to compensate for a brighter source would
+   * be the exact defect this file has now caught four times. 0.45 -> 0.34 of
+   * gain is -5.1 dB after gain-squaring. NOT HEARD.
    */
   const colourVoice = (pitch: number, level: Patternable, pan: number, i: number): Pattern =>
-    note(String(foldInto([pitch], LANE_RANGE.colour.lo, LANE_RANGE.colour.hi)[0] ?? pitch))
-      /*
-       * These carry vibrato for the same reason the pad does, and they need it
-       * more than the pad does: `release(1.1..2.6)` makes them the LONGEST
-       * sustained tones anywhere in the mix, and they are the highest pitched
-       * ones as well. A perfectly steady tone held for two and a half seconds
-       * at the top of the arrangement is the definition of the test tone
-       * `strudel.d.ts` warns about.
-       *
-       * Rates sit deliberately outside the pad's 4.6-5.46 band so the bed never
-       * locks into one collective wobble — the whole value of per-voice rates
-       * is that nothing agrees. Depth is slightly wider than the pad's because
-       * there are only ever two of these, so there is less mutual beating to do
-       * the work, and because the ear forgives more movement in a high colour
-       * tone than in the chord's own body.
-       *
-       * ---------------------------------------------------------------------
-       * 5.9-6.4 Hz -> 0.37-0.61 Hz: this is DRIFT now, not vibrato
-       * ---------------------------------------------------------------------
-       *
-       * Same brief as `percGrid`. The reference asked for is analogue
-       * instability — tape wow, an oscillator that will not stay put — and
-       * that is a SUB-HERTZ movement. At 5.9 Hz the ear integrates the wobble
-       * into the tone's identity and hears a singer; at 0.37 Hz a note lasting
-       * two and a half seconds gets through about one cycle, so it is heard as
-       * the note itself being slightly sharp and then slightly flat. Two tones
-       * doing that at 0.37 and 0.61 Hz are never in tune with each other in
-       * the same way twice.
-       *
-       * This is the right pair of voices to spend it on and the only pair. They
-       * are the two longest and highest sustained tones in the score — a drift
-       * needs a note long enough to drift ACROSS, and nothing else here has
-       * one. The pad's three voices keep their 4.6-5.46 Hz vibrato untouched,
-       * because they are the bed and a bed that will not hold its pitch is not
-       * a bed; the argument three blocks up for per-voice rates is about them
-       * and still stands in full.
-       *
-       * Depth comes down slightly with the rate. At 5.9 Hz a 10-cent excursion
-       * is a wobble the ear tracks; at 0.4 Hz the same 10 cents is a slow
-       * detune against everything else holding, so a little less of it goes
-       * much further. Both controls are still set, always, for the reason the
-       * block above gives — `.vibmod()` alone is inert and `.vib()` alone
-       * takes a default depth of half a semitone.
-       *
-       * `tools/vibprobe.mjs` prints rate and depth per stem and has no
-       * thresholds, so this shows up there as a changed number rather than as
-       * a pass. WHAT IT SOUNDS LIKE IS UNVERIFIED: nobody has heard it, and a
-       * drift that is too slow is indistinguishable from being out of tune.
-       */
-      .vib(0.37 + i * 0.24)
-      .vibmod(m.sig.openness.range(0.05, 0.085))
-      /*
-       * Triangle, not supersaw.
-       *
-       * These two tones sit above the triad and are the highest sustained
-       * pitches in the mix, so they are the worst place in the arrangement for
-       * a saw's harmonic series. A triangle carries only odd harmonics falling
-       * as 1/n squared: at this register that is close to a flute and it adds
-       * colour without adding edge, which is the entire job of a 7th and a 9th.
-       */
-      .s('triangle')
-      .attack(0.6)
-      .decay(0.5)
-      .sustain(0.8)
-      .release(m.sig.hold.range(1.1, 2.6))
-      /*
-       * THE FILTER WAS BELOW THE NOTE.
-       *
-       * These are the highest sustained pitches in the arrangement and the
-       * whole argument above is about what their harmonics do. Measured off
-       * the haps (`tools/registermap.mjs`, 21,120 haps): this group emits
-       * MIDI 79-91 at p5-p95 — fundamentals of 784-1568 Hz — behind a lowpass
-       * that sat at 1450 Hz at mid openness. The ratio of cutoff to
-       * fundamental was **1.4x**, the lowest of any voice group in the score,
-       * so for the top of its own range this lane was being attenuated below
-       * its fundamental and everywhere else reduced to a sine. A 7th and a 9th
-       * written as "colour" were rendered as two test tones.
-       *
-       * That is also half of "dull", measured: the full mix carries 3.2% of
-       * its energy above 2 kHz across four octave bands, and no pitched lane
-       * in the file had a lowpass above 2.8 kHz.
-       *
-       * 2600-6500 lets the 3rd and 5th partials through. On a triangle those
-       * fall as 1/n squared — the 3rd is 19 dB down and the 5th 28 dB — so
-       * this is air rather than edge, which is exactly why the source is a
-       * triangle and not a saw. Two voices, at gain 0.3, on the quietest
-       * pitched group in the mix.
-       */
-      .lpf(m.sig.openness.range(2600, 6500))
-      // A real boundary, not the dead one. See the pad's highpass: `thin` is 0
-      // at full health, so `range(20, ...)` was 20 Hz on every hap. 420 Hz is
-      // well under this group's lowest measured fundamental of 784 Hz.
-      .hpf(m.sig.thin.range(420, 900))
-      .lpq(m.sig.ring.range(0.9, 3.4))
-      .room(m.sig.space.range(0.62, 0.95))
-      .roomsize(7)
-      .gain(level)
-      /*
-       * Placed either side, always — not only when FLANKED.
-       *
-       * `registermap` counted 9 of 15 voice groups sitting inside +/-0.05 of
-       * centre, this one among them: `0.5 + pan * wide` is exactly 0.5 unless
-       * the wave happens to be a flank, which is one wave in twelve. Two
-       * sustained tones a tone or a semitone apart, summed to the same point,
-       * beat against each other; the same two tones 36% of the field apart are
-       * heard as two voices. FLANKED still widens them further.
-       */
-      .pan(0.5 + pan * (0.18 + wide))
-      .orbit(ORBIT_HARMONY);
-  /*
-   * 0.3 -> 0.45. The comment above opened this group's LOWPASS to 6.5 kHz on
-   * the grounds that it is the highest sustained pitch in the arrangement and
-   * "that is also half of dull, measured". Opening a filter over a lane at
-   * gain 0.3 buys 0.3-worth of air.
-   *
-   * Measured since, off soloed renders: the `chords` stem's whole 1 kHz band
-   * is -36.1 dBFS in-mix and its 2 kHz band -45.6, and this triangle pair —
-   * fundamentals 784-1568 Hz, the only pitched group in the file whose
-   * fundamental is above 700 Hz — is what puts anything there at all.
-   * +3.5 dB of energy, on the quietest pitched group in the mix, two voices.
-   */
-  const colourGain = 0.45;
-  /*
-   * The colour tones are deliberately NOT register-disciplined, and TWO
-   * attempts to impose it were measured and refuted.
-   *
-   * `voiced` above folds pad notes above `tonic + 5` down an octave so the bed
-   * sits under the tune, and the obvious next step is to do the same to the
-   * 7th and 9th: `masking` reports the `chords` lane spanning MIDI 52 to 87
-   * (p5 to p95) against the lead's 53 to 78, with `chords+lead` accounting for
-   * 44% of all audible masking weight — the largest pair by a wide margin.
-   *
-   * Folding them makes it WORSE, monotonically. Measured per-bar masking with
-   * a ceiling applied to the colour tones:
-   *
-   *     none  1137.5      76 -> 1309.4      72 -> 1533.7      68 -> 1856.2
-   *
-   * The high colour tones are staying OUT of the way. Folding them lands them
-   * in the middle, where the pad's own voicing, the bass and the motor already
-   * are, and the extra collisions there outweigh the ones removed from the
-   * melody's octave. `THEMES[2]`'s note records the same effect from the other
-   * direction — a narrower-span melody scored worse, not better.
-   *
-   * The same was then tried on the BASS, whose octave note is `chord.root` and
-   * so lands wherever the harmony puts it — p95 of MIDI 65, which is tenor
-   * range, and `bass+chords` plus `bass+lead` are 30% of the weight. Capping
-   * it to take the fifth instead (the shape `MOTOR_TOP` already uses next
-   * door) also made things worse, if only slightly:
-   *
-   *     none 1137.5      64 -> 1140.4      60 -> 1153.4      57 -> 1153.5
-   *
-   * Two experiments, both in the direction the register table suggests, both
-   * refuted. The conclusion is not "try a third": five lanes sharing about
-   * three octaves will collide, and moving a voice between registers
-   * RELOCATES collisions rather than removing them.
-   *
-   * AND MASKING IS NOT AN OBJECTIVE. It has no target and no zero worth
-   * reaching — a mix with one lane in it scores nothing. `THEMES[2]`'s note
-   * already accepts a 9% rise as the price of a better tune, on the grounds
-   * that "a tune nobody can hum is a worse failure than 9% more critical-band
-   * roughness". Treat this number as a diagnostic that says WHERE lanes meet,
-   * not as a score to drive down.
-   */
+    articulate(
+      tagVoice(
+        note(String(foldInto([pitch], LANE_RANGE.colour.lo, LANE_RANGE.colour.hi)[0] ?? pitch)),
+        VOICE_TAGS.colour,
+      )
+        .detune(0.06)
+        .spread(0.9)
+        // Slow, and slower than the bed's: an inner voice moving faster than
+        // the part above it reads as nervousness. Both controls set, always.
+        .vib(0.37 + i * 0.24)
+        .vibmod(m.sig.openness.range(0.05, 0.085))
+        .lpf(m.sig.openness.range(2600, 6500))
+        .hpf(m.sig.thin.range(420, 900))
+        .lpq(m.sig.ring.range(0.9, 3.4))
+        .room(m.sig.space.range(0.62, 0.95))
+        .roomsize(7)
+        .gain(level)
+        .pan(clamp01(0.5 + pan * (0.18 + wide)))
+        .orbit(ORBIT_HARMONY),
+      'breathed',
+      { slots: 1, bpm: m.bpm, shade: m.sig.openness, ring: 1 + floor * 0.2, hold: m.sig.hold },
+    );
+  const colourGain = 0.34;
   const colourPad = stack(
     ...m.chord.colour.map((pitch, i) =>
-      colourVoice(pitch, (i === 0 ? m.sig.colour7 : m.sig.colour9).range(floor * colourGain, colourGain), i === 0 ? -1 : 1, i),
+      colourVoice(
+        pitch,
+        (i === 0 ? m.sig.colour7 : m.sig.colour9).range(floor * colourGain, colourGain),
+        i === 0 ? -1 : 1,
+        i,
+      ),
     ),
   );
 
   if (m.section === 'breakdown') return stack(pad, colourPad);
 
+  /* ==========================================================================
+   * PART 3 — THE UPPER STRUCTURE THAT MOVES: one voice, five rhythms.
+   * ======================================================================== */
+
   /*
-   * Offbeat stabs — the classic placement, and it leaves the downbeat to the
-   * kick instead of doubling it.
+   * ---------------------------------------------------------------------
+   * THE CLAVINET IS DELETED, AND THIS IS THE THIRD DISPOSITION OF IT.
+   * ---------------------------------------------------------------------
    *
-   * The default feel used to pick between "no stabs at all", two stabs and four
-   * from thresholds on intensity, so crossing one replaced the lane. The two
-   * offbeats are now always present and the downbeats fade in over them, which
-   * adds up to the same four-stab bar the busy case played while keeping the
-   * offbeats untouched underneath.
+   * Its history, because two of the three attempts were reasonable and both
+   * failed the same way:
+   *
+   *   1. `s('square').ad('0.003:0.08').sustain(0).release(0.05)`, no room. The
+   *      owner named it: "the pinging noise is just really bad base type of
+   *      sound ... i mean clav or whatever that sound is".
+   *   2. Rebuilt as a plucked string — `triangle`, a 14 ms onset, sustain 0.16,
+   *      a 220 ms release, 0.28 of room, and a wah from `lpenv`. Every one of
+   *      those changes was right about what a clavinet IS.
+   *   3. The owner's report after (2): "theres still the annoying instrument
+   *      that kind of sounds like a clavichord".
+   *
+   * Two passes of making it a better clav did not make anyone want a clav. The
+   * defect was never the envelope and never the waveform — THE VOICE DOES NOT
+   * BELONG. It is one more sustained-register stab doubling harmony that four
+   * other parts already carry, and it existed only on `halftime`, which is 27.8%
+   * of bars in a measured run and the feel of wave 1.
+   *
+   * So it is gone, and the half-time groove is carried by the SAME part that
+   * comps on every other feel, on the same filtered saw, with the clav's own
+   * sixteenth-note figure moved verbatim into `COMP_STRUCT.halftime`. That is
+   * the whole disposition: delete an instrument, keep a rhythm, and stop having
+   * a special case. It removes a voice group from `registermap`, a timbre from
+   * the roster, and about 120 lines including the two long comments arguing for
+   * a sound nobody wanted.
+   *
+   * ---------------------------------------------------------------------
+   * AND THE VOICE THAT REPLACES IT IS NOT A PULSE EITHER.
+   * ---------------------------------------------------------------------
+   *
+   * The stab was `pulse` at `pw(0.5)` — a 25%-duty square, the same oscillator
+   * family as the bed it is supposed to contrast with and the same family as
+   * the motor running underneath it. Three of this score's loudest pitched voice
+   * groups were square waves at different duties, which is precisely the "the
+   * base instruments havent changed" report: the roster had two oscillators in
+   * it wearing four names.
+   *
+   * A sawtooth through a resonant filter with an envelope on the cutoff is the
+   * other classic way to make a comping stab, it shares nothing with the bed or
+   * the motor, and the filter envelope was already here — `lpenv(1.1)`,
+   * `lpattack(0.006)`, `lpdecay(0.16)` were doing almost nothing to a pulse
+   * whose harmonics stop at the 7th. On a saw they are the instrument.
    */
   const stabLevel = 0.4;
-
-  if (m.feel === 'halftime') {
-    /*
-     * A clavinet comp, which is the "funky" half of the brief.
-     *
-     * Half-time drums and a wobble bass on their own are heavy and slow, and
-     * heavy and slow is a mood rather than a groove — there is nothing in the
-     * bar moving fast enough to make a body want to move with it. Funk solves
-     * this the same way it always has: something short, bright and syncopated
-     * playing sixteenths in the space the drums left, which in half-time is
-     * nearly the whole bar.
-     *
-     * A clav rather than the supersaw stab used everywhere else, because the
-     * supersaw is a sustained, wide, harmonically dense sound and there is now
-     * a sustained, wide, harmonically dense sound already occupying the mids.
-     * A clav is the opposite of all three — one narrow band, gone in 80ms — so
-     * it cuts through the wobble instead of piling onto it.
-     */
-    // The upper structure, same as the stab. See `stabVoiced`: a clav is a
-    // comping instrument and it was playing the pad's notes in unison too,
-    // which on this feel put it under its OWN highpass — measured hcutoff 260
-    // against fundamentals of 156-294 Hz, so the bottom two thirds of its
-    // range was in the stopband of the filter that was supposed to keep it
-    // clear of the wobble. Moving it up is what makes that highpass mean
-    // something.
-    const chord = chordOf(stabVoiced);
-    /*
-     * The comp, split so that the eighth-note skeleton and the offbeat
-     * sixteenths are separate layers.
-     *
-     * That split does two jobs at once. It makes the part additive — the
-     * sixteenths fade in over a skeleton that never moves, which is the rule
-     * every other lane in this file follows — and it means the sixteenths, and
-     * only the sixteenths, can be shuffled to sit with the hats. Swinging notes
-     * that fall on the eighth-note grid is not a shuffle, it is being late.
-     */
-    const skeleton = `[~ ~ ${chord} ~] ~ [~ ~ ${chord} ~] [${chord} ~ ${chord} ~]`;
-    const offbeats = `~ [~ ${chord} ~ ${chord}] [~ ~ ~ ${chord}] ~`;
-    /*
-     * The clav voice: a square, a fast filter envelope, and a resonant peak.
-     *
-     * The envelope is the wah. A clavinet through a pedal is a resonant band
-     * being pushed up on every stroke and falling back before the next one, and
-     * an eighth of a second is all it gets — past that it stops being a plucked
-     * sound. `lpenv` is kept to 1.4 octaves over a ceiling of 950Hz so the peak
-     * tops out around 2.5kHz: bright enough to cut, and short of the band
-     * `npm run audiocheck` fails a run for living in.
-     */
-    const clav = (rhythm: string, level: Patternable): Pattern =>
-      note(rhythm)
+  const grid = COMP_STRUCT[m.feel];
+  const stabChord = `[${stabVoiced.join(',')}]`;
+  const stabVoice = (rhythm: string, level: Patternable): Pattern =>
+    articulate(
+      tagVoice(note(stabChord).struct(rhythm), VOICE_TAGS.stab)
         /*
-         * DOWN AN OCTAVE, out of the melody's register.
-         *
-         * Reported from play: "why are there multiple conflicting melodies and
-         * theyre all on different tempos too, very confusing". The register map
-         * says exactly where that comes from. `tools/registermap.mjs` over
-         * 761,376 haps:
-         *
-         *   chords/pulse:pw0.5   MIDI 67-75
-         *   chords/square        MIDI 67-75   <- this voice, identical window
-         *   lead/triangle        MIDI 69-80
-         *   lead/pulse           MIDI 70-81
-         *   arp/triangle         MIDI 69-83
-         *
-         * Five voice groups inside one octave, each on its own subdivision.
-         * That is not a mix problem and no amount of gain work reaches it: it
-         * is an ORCHESTRATION problem, and the rule it breaks is the oldest one
-         * there is — voices are separated by register or by rhythmic function,
-         * and preferably both. A clav and a pad in the same octave playing
-         * different rhythms do not read as two parts, they read as one confused
-         * part.
-         *
-         * The clav is the voice that should move, because it is the RHYTHMIC
-         * one. A pad sustains and can hold the alto register without obscuring
-         * a melody above it; a stab is transient and competes directly. Down an
-         * octave it becomes what a clavinet actually is in an arrangement — an
-         * inner rhythmic voice under the tune, not a second tune.
-         *
-         * This does NOT fix the count. Lead, motor and arp are still three
-         * independent lines and the honest fix for that is fewer of them
-         * sounding at once, which belongs in orchestration's voice budget
-         * rather than here. This moves one voice out of the pile-up and is
-         * measurable; the rest is recorded in the changelog as still open.
-         *
-         * -----------------------------------------------------------------
-         * AND THE OCTAVE IS BACK, BECAUSE THE PILE-UP IT AVOIDED IS GONE.
-         * -----------------------------------------------------------------
-         *
-         * A rejected — or in this case an adopted — move expires when its
-         * premise changes, and this one's premise was the five-voice-groups
-         * table above. Three of those five have moved: `arp/triangle` is at
-         * 84-93 now rather than 69-83, and the stab and the clav are voiced
-         * from `LANE_RANGE.stab` (68-80) rather than from a hand-written 64-76.
-         * What is left in that octave is the tune's own two layers and one
-         * upper-structure part, which is an arrangement rather than a pile-up.
-         *
-         * Meanwhile the `-12` had become a collision of its own, and
-         * `registermap` says so: it put this voice at MIDI 56-66 against the
-         * motor's 58-65 — and the motor plays under EVERY bar of the halftime
-         * feel, which is the only feel this voice exists on. The move that was
-         * "out of the pile-up" is now "into the clock".
-         *
-         * The clav is also, on this feel, not an extra part at all: the
-         * halftime branch returns pad + colour + clav and no `stabVoice`, so
-         * this IS the stab. A stab belongs in the stab's register.
+         * `velocity`, not `gain`. superdough multiplies the two and squares the
+         * result, so this is the per-note weight and `gain` stays the lane's
+         * fader — two dials that mean different things, kept apart on purpose.
          */
+        .velocity(1.41)
+        .pan(clamp01(0.5 + 0.16 * clamp01(0.5 + spread * 0.16 + wide)))
+        .lpf(m.sig.openness.range(1100, 3600))
+        .hpf(m.sig.thin.range(300, 700))
         /*
-         * THIS VOICE IS THE "PINGING", NAMED BY THE OWNER: "the pinging noise
-         * is just really bad base type of sound ... i mean clav or whatever
-         * that sound is".
-         *
-         * It was a RAW SQUARE with a 3ms attack, an 80ms decay to SILENCE, a
-         * 50ms release and no reverb whatsoever. Every one of those four is a
-         * ping generator on its own and together they are nothing else: a
-         * square has odd harmonics all the way up with no rolloff, 3ms is below
-         * the ear's threshold for hearing an onset as anything but a click, and
-         * decaying to zero sustain means the note has no body to speak of. It
-         * was doing this in the melody's own octave until this pass moved it
-         * down.
-         *
-         * A real clavinet is a PLUCKED STRING under a pickup. It has an onset
-         * you can hear, a short body, and it lives in a room. Three changes:
-         *
-         *   triangle, not square — a triangle rolls off at 1/k^2 against the
-         *   square's 1/k, so the top two thirds of the harmonic ladder that
-         *   makes this read as a ping simply is not generated. The `lpf` below
-         *   was already trying to remove it after the fact, which is always
-         *   more expensive and less complete than not making it.
-         *
-         *   a 14ms onset and a real sustain — 0.003 to 0.014 puts the attack
-         *   where a plucked string actually is, and sustain 0.16 gives the
-         *   release something to ramp FROM. AGENTS.md §3 records that lengthening
-         *   release on a sustain(0) lane is the archetypal gate-passing no-op,
-         *   because superdough ramps release from sustain: 0.05 -> 0.22 only
-         *   means anything alongside the sustain change.
-         *
-         *   and 0.28 of room. 55 of the 60 songs in
-         *   eefano/strudel-songs-collection use `.room()`; this lane used none,
-         *   in a mix where the pad sits at 0.28 and the lead at 0.34. A dry
-         *   voice next to wet ones does not sound like a different instrument,
-         *   it sounds like a cheap one.
-         *
-         * It stays SHORT and it stays a stab. The point is that it is a plucked
-         * note rather than a transient, not that it becomes a pad.
+         * The filter envelope IS the stab now. On the old pulse a 1.1-octave
+         * sweep over a source with no harmonics above the 7th moved almost
+         * nothing; on a saw it opens and shuts across the whole harmonic ladder,
+         * which is what makes a comp bite without being loud.
          */
-        .s('triangle')
-        .ad('0.014:0.11')
-        .sustain(0.16)
-        .release(0.22)
-        .room(0.28)
-        /*
-         * 700-1600, and the envelope peak lands where the comment always said
-         * it did. The old ceiling of 950 Hz with `lpenv(1.4)` topped the wah
-         * out at 950 * 2^1.4 = 2.5 kHz only at FULL openness; at the mid
-         * openness this score spends its time at, the cutoff measured 675 Hz
-         * and the peak reached 1.8 kHz — 3.1 harmonics of a note whose
-         * fundamental is 330 Hz. A clav with three harmonics is a sine with a
-         * wah on it. This puts the peak at 4.2 kHz when the mix is open, which
-         * is where a clavinet actually speaks and is the band the whole mix is
-         * missing.
-         */
-        /*
-         * 700-1600 -> 1300-3000, BECAUSE THE NOTE MOVED AND THE FILTER HAS TO
-         * MOVE WITH IT. This is the third time this exact defect has been
-         * found in this file and it is always the same shape: a lane is
-         * transposed and its lowpass is left where it was, so the instrument
-         * loses its harmonics and turns back into a sine.
-         *
-         * The paragraph above derives its numbers from "a note whose
-         * fundamental is 330 Hz" — the clav at `stab - 12`. Removing the octave
-         * puts this voice at MIDI 68-80, 415-830 Hz, and `registermap` read the
-         * cutoff-to-fundamental ratio at 1.7x, which is the lowest in the file
-         * and the same number the colour tones scored before they were fixed
-         * for it.
-         *
-         * The ratio is what is being kept constant here, not the frequency:
-         * 1300-3000 against 415-740 Hz is 3.1x-4.0x, which is where the old
-         * pair sat against the old range. With `lpenv(1.4)` the wah peak lands
-         * at 3.4-7.9 kHz, which is where a clavinet actually speaks.
-         */
-        .lpf(m.sig.openness.range(1300, 3000))
-        .lpq(3.2)
-        .lpenv(1.4)
-        .lpattack(0.004)
-        .lpdecay(0.085)
-        // Well clear of the wobble. Two things chopping at each other in the
-        // same octave is mud, however different their envelopes are.
-        .hpf(m.sig.thin.range(260, 760))
-        .drive(m.sig.drive.range(0.5, 0.95))
-        .distort('1.1:0.4')
+        .lpq(m.sig.ring.range(1.5, 4.5))
+        .lpenv(1.1)
+        .lpattack(0.006)
+        .lpdecay(0.16)
+        .drive(m.sig.drive.range(0.45, 0.85))
         .gain(level)
-        // Off-centre, opposite the hats' 0.56. The comp and the hi-hat are
-        // playing the same sixteenths and they should not be in the same place.
-        .pan(0.4)
-        .room(0.16)
-        .orbit(ORBIT_HARMONY);
-    const clavLevel = 0.34;
-    return stack(
-      pad,
-      colourPad,
-      clav(skeleton, m.sig.density.range(clavLevel * 0.35, clavLevel)),
-      clav(offbeats, m.sig.fill.range(0, clavLevel * 0.8)).late(0.016),
+        .room(m.sig.space.range(0.28, 0.7))
+        .orbit(ORBIT_HARMONY),
+      'plucked',
+      { slots: COMP_SLOTS[m.feel], bpm: m.bpm, shade: m.sig.drive, hold: m.sig.hold },
+    );
+
+  const parts = [pad, colourPad, stabVoice(grid.core, m.sig.density.range(0, stabLevel))];
+  /*
+   * TIMEWARP suppresses the fill everywhere, not only on `boomchick`. Half the
+   * events at the same tempo is what half-time means to a listener, and the
+   * fill is the half that goes.
+   */
+  if (grid.fill && !half) {
+    parts.push(
+      stabVoice(grid.fill, m.sig.ornament.range(0, stabLevel * 0.8))
+        // Sixteen milliseconds behind the grid. A comping player is always a
+        // little late on the offbeat and dead on the beat; this was written for
+        // the deleted clav's offbeats and is the one thing about it worth
+        // keeping.
+        .late(m.feel === 'halftime' ? 0.016 : 0),
     );
   }
-
-  let coreRhythm: string;
-  let fillRhythm: string | null = null;
-  if (m.feel === 'shuffle') {
-    coreRhythm = `[~ ${chordOf(stabVoiced)}] ~ [~ ${chordOf(stabVoiced)}] ~`;
-  } else if (m.feel === 'chase') {
-    coreRhythm = `~ ~ ${chordOf(stabVoiced)} ~`;
-  } else {
-    coreRhythm = `~ ${chordOf(stabVoiced)} ~ ${chordOf(stabVoiced)}`;
-    if (!half) fillRhythm = `${chordOf(stabVoiced)} ~ ${chordOf(stabVoiced)} ~`;
-  }
-
-  const stabVoice = (rhythm: string, level: Patternable): Pattern =>
-    note(rhythm)
-    /*
-     * The second supersaw, and the last one. See the pad above for the full
-     * argument; the short version is that a detuned saw stack is a dance sound
-     * that no chip in this canon could produce, and the `chords` lane was two
-     * of them at the highest ceiling in the mix.
-     *
-     * A 25%-duty pulse for the stab rather than the pad's 50% — `pw(0.5)` maps
-     * to 25% duty in superdough's worklet. Thinner and reedier than the pad it
-     * sits on, which is exactly the relationship a comping chord should have
-     * with the bed underneath it: same harmony, different colour, so the ear
-     * hears two parts instead of one thing getting louder.
-     *
-     * The old comment was right that "fewer voices is not a quieter stab, it is
-     * a clearer one" — it had already walked seven detuned saws down to four.
-     * This finishes the thought: one voice, and the clarity comes free.
-     */
-    .s('pulse')
-    .pw(0.5)
-    // Thin duties lose level as well as harmonics; 25% needs about +3dB to sit
-    // where the saw stack did.
-    .velocity(1.41)
-    /*
-     * Placed rather than "spread". `.spread()` was inert here for the same
-     * reason it was on the pad — supersaw-only — so this lane has had no
-     * stereo behaviour since it became a pulse.
-     *
-     * A single pan rather than a per-voice fan, because this lane's chord is
-     * baked into its rhythm strings (`coreRhythm` interpolates `chordOf`), so
-     * the voices are not separable here without restructuring the rhythm. One
-     * offset is honest and still does the useful thing: it moves the stabs off
-     * the pad's centre of mass, so the two harmony lanes stop occupying the
-     * same point. It leans right because the pad's lowest voice sits left.
-     */
-    .pan(0.5 + 0.16 * clamp01(0.5 + spread * 0.16 + wide))
-    .ad('0.008:0.22')
-    .sustain(0.3)
-    .release(0.2)
-    .lpf(m.sig.openness.range(1100, 3600))
-    // A boundary that exists at full health, and now it can be a real one:
-    // `stabVoiced` folds into MIDI 64-76, so 300 Hz is a fourth below this
-    // lane's own lowest fundamental of 330 Hz. Against the old unison voicing
-    // (MIDI 51 = 156 Hz) it would have eaten the part. See the pad's highpass
-    // for why the old base of 20 was doing nothing.
-    .hpf(m.sig.thin.range(300, 700))
-    // The filter envelope is what makes a stab bite. Halving it keeps the
-    // articulation and drops the click that rides on top of it.
-    .lpq(m.sig.ring.range(1.5, 4.5))
-    .lpenv(1.1)
-    .lpattack(0.006)
-    .lpdecay(0.16)
-    .drive(m.sig.drive.range(0.45, 0.85))
-    .gain(level)
-    .room(m.sig.space.range(0.28, 0.7))
-    .orbit(ORBIT_HARMONY);
-
-  const parts = [pad, colourPad, stabVoice(coreRhythm, m.sig.density.range(0, stabLevel))];
-  if (fillRhythm) parts.push(stabVoice(fillRhythm, m.sig.ornament.range(0, stabLevel)));
   return stack(...parts);
 }
 
@@ -3699,6 +3274,23 @@ export function buildArp(m: MusicalState): Pattern {
        */
       .add(note(m.sig.arpOctave))
       /*
+       * THE ONE LANE THAT KEEPS ITS OSCILLATOR IN THIS PASS, and the reason is
+       * measured rather than conservative.
+       *
+       * The pad, the upper structure, the comping stab and the motor all
+       * changed source in this pass because they were four square waves at
+       * three duties. This one is a triangle at MIDI 87-99 — 1244-2489 Hz,
+       * the only lane in the score whose energy peaks above 1 kHz. A triangle
+       * has ODD harmonics only, falling as 1/k squared, so its third partial is
+       * 19 dB down and there is nothing above the fifth; a saw or a supersaw in
+       * that register puts -6 dB partials at 7 kHz, under a listener, for the
+       * whole run. The one human complaint this file has on the subject is "too
+       * much high pitch synth always playing, its taxing on the ears".
+       *
+       * What DID change here is everything about how it is played: a 4 ms
+       * onset became 26-40 ms, and the lane states a note length for the first
+       * time. See `TOUCH.plucked`.
+       *
        * Triangle, and the resonant filter comes off with it.
        *
        * `lpq(7)` with `lpenv(4)` on a sawtooth is an acid line — a resonant
@@ -3707,23 +3299,22 @@ export function buildArp(m: MusicalState): Pattern {
        * for a score that is being asked to sound melodic. The arp is filigree
        * behind the tune; it needs motion and pitch, not bite.
        */
-      .s('triangle')
+      .s(VOICE_TAGS.arp.s)
       /*
-       * Legato, not dots.
+       * The envelope moved to `articulation.ts`, touch `plucked`.
        *
-       * This was a 120ms decay to sustain 0 — at 130bpm an eighth note is
-       * 230ms, so more than half of every arp note was silence. Eleven layers
-       * of that is not an arrangement, it is morse code, and it is why the
-       * music still read as "very choppy" after the rebuild churn was fixed:
-       * the churn was gone but the texture was still made of disconnected
-       * points.
+       * The old comment here argued against dots and for legato, and it was
+       * answering a real defect - a 120 ms decay to sustain 0 on a 230 ms note
+       * is morse code. It over-corrected into the opposite one: sustain 0.4
+       * across the whole slot plus 180 ms of release is 1.8 notes of overlap on
+       * a sixteenth-note filigree, which is not legato, it is a wash.
        *
-       * A held sustain lets one note reach the next, which is what turns a
-       * sequence of pitches into a line.
+       * `plucked` holds 50-62% of the slot and lets go over 135-175 ms. That is
+       * a note that reaches most of the way to the next one and then stops,
+       * which is what a plucked line does; and because the release is allowed
+       * to exceed the hold, the ringing-on is a property of the instrument
+       * rather than of the note length.
        */
-      .ad(half ? '0.006:0.26' : '0.004:0.2')
-      .sustain(0.4)
-      .release(0.18)
       /*
        * Brighter, because this lane is now the sparkle.
        *
@@ -3836,9 +3427,32 @@ export function buildArp(m: MusicalState): Pattern {
    * changes, which is why this belongs here rather than in MOVEMENT_MIX.
    */
   const wing = m.movement === 'flank' ? 0.45 : 0;
+  /*
+   * `slots: 8`. The walk is written on the melody's eight eighth-note slots
+   * (`arpGapsFor` reads the same cell the tune does), and `core`/`fill` are
+   * that lattice split into odds and evens - so the fastest note this lane can
+   * emit is an eighth even when both halves are sounding.
+   */
+  const plucked = (p: Pattern): Pattern =>
+    articulate(p, 'plucked', {
+      slots: 8,
+      bpm: m.bpm,
+      shade: m.sig.drive,
+      /*
+       * TIMEWARP and HOMING both lengthen the note, and both used to do it by
+       * hand: `half` chose `ad('0.006:0.26')` over `ad('0.004:0.2')`, which is
+       * a 60 ms difference in DECAY on a lane whose sustain is 0.38 - i.e. a
+       * control the powerup could barely be heard through. `ring` scales the
+       * hold and the release together, which is what "notes ring on longer"
+       * actually means and is clamped in `articulate` so no combination can
+       * reach the overhang this pass exists to remove.
+       */
+      ring: 1 + (half ? 0.3 : 0) + homing * 0.12,
+      hold: m.sig.hold,
+    });
   const pod = (transpose: number, pan: number, level: number, sync: number): Pattern[] => [
-    voice(core, transpose, clamp01(pan - wing), level, sync),
-    voice(fill, transpose, clamp01(pan + wing), m.sig.fill.range(0, level), sync),
+    plucked(voice(core, transpose, clamp01(pan - wing), level, sync)),
+    plucked(voice(fill, transpose, clamp01(pan + wing), m.sig.fill.range(0, level), sync)),
   ];
   /*
    * EVERY POD LEVEL GOES UP BY HALF, and the reason is where this lane sits
@@ -4023,22 +3637,24 @@ export function buildLead(m: MusicalState): Pattern {
        * conditional here would be a second place to keep in step with `decor`.
        */
       .pw(0.5)
-      .attack(0.006)
-      .decay(0.22)
-      // Scales with level. This was `laser > 0 ? 0.4 : 0.12` — binary — so the
-      // second and third LASER a player picked up sounded exactly like the
-      // first. A repeat pickup should be worth hearing, and holding the lead
-      // longer is the whole character of the powerup.
-      // A soloist sustains; it does not pluck. Floored rather than replaced, so
-      // holding LASER on a SOLOIST wave still lengthens it further.
       /*
-       * The floor was 0.12 — the melody dropped to a tenth of its level almost
-       * as soon as it spoke, so the tune was a row of taps rather than a line
-       * anyone could follow. 0.55 is a singing sustain; LASER and SOLOIST still
-       * push it further, they just no longer start from a whisper.
+       * The envelope is `articulation.ts`'s, touch `sung`, applied at the
+       * bottom of this function so it is the last writer.
+       *
+       * What was here: `attack(0.006)`, `decay(0.22)`, `sustain(held)` where
+       * `held` is 0.55-0.78, and `release(sig.hold.range(0.34, 1.1))`. That is
+       * a 6 ms onset and up to 1100 ms of tail on eighth notes 222 ms long -
+       * FIVE melody notes overlapping, times three lines, times two to four
+       * octave doublings, on the loudest pitched stem in the game
+       * (`STEM_CURVES.lead` ceiling 0.95). Both of the owner's complaints come
+       * out of that one pair of numbers: 6 ms is the "ping", 1100 ms is the
+       * "drawn out".
+       *
+       * `sung` is 56-36 ms on and 210-160 ms off, which is the corpus median
+       * (50 / 200) to within a few milliseconds, and it holds 80-88% of the
+       * slot instead of all of it. One note still reaches the next; five no
+       * longer stack.
        */
-      .sustain(held)
-      .release(m.sig.hold.range(0.34, 1.1))
       .vib(m.boss ? bossVibRate : vibRate)
       /*
        * ADDED to the sustain-coupled depth, not substituted for it.
@@ -4242,12 +3858,45 @@ export function buildLead(m: MusicalState): Pattern {
     voices.push(...trio(-24, 0.3 + m.bossPhase * 0.07, 'sawtooth', 0.42));
   }
   if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'triangle', 0.62));
-  return octave(stack(...voices))
-    .delay(open ? 0.46 : 0.3)
-    .delaysync(open ? 1 / 4 : 3 / 16)
-    .delayfeedback(open ? 0.52 : 0.34)
-    .room(m.sig.space.range(open ? 0.66 : 0.34, 0.95))
-    .roomsize(open ? 8 : 4);
+  return articulate(
+    octave(stack(...voices))
+      .delay(open ? 0.46 : 0.3)
+      .delaysync(open ? 1 / 4 : 3 / 16)
+      .delayfeedback(open ? 0.52 : 0.34)
+      .room(m.sig.space.range(open ? 0.66 : 0.34, 0.95))
+      .roomsize(open ? 8 : 4),
+    'sung',
+    {
+      // Eight eighth-note slots per bar; `melodyForBar` writes on that grid and
+      // `HOLD` ties across it, so an eighth is the shortest note the tune has.
+      slots: 8,
+      bpm: m.bpm,
+      shade: m.sig.drive,
+      /*
+       * `held` no longer sets `sustain` - it is the LENGTH dial, which is what
+       * LASER and a SOLOIST wave were always reaching for. It ran 0.55 to 0.78,
+       * so it maps to a ring of 1.0 to 1.36: a soloist's note holds a third
+       * longer and lets go a third later, and `articulate` clamps `clip` at 1
+       * so it can never exceed its slot. The vibrato depth still tracks `held`,
+       * which keeps `leadcheck`'s "depth rises with sustain" assertion pointing
+       * at the same coupling it always did.
+       *
+       * FERMATA (`sig.hold`) used to be the release's own range, 0.34 to 1.1
+       * seconds, which is the single largest tail in this file after the pad's.
+       * It is not read here at all any more - a rig ability that can add three
+       * quarters of a second of overhang to the loudest lane in the game is the
+       * defect wearing a feature's clothes. Its remaining home is the breakdown
+       * and HUSHED, which open the room instead.
+       */
+      ring: 1 + (held - 0.55),
+      /*
+       * FERMATA. It used to be this lane's RELEASE range, 0.34-1.1 s; it is now
+       * the note's LENGTH, which is what the ability's name says and what the
+       * recalibrated tail ceiling permits. See `ArticulateOpts.hold`.
+       */
+      hold: m.sig.hold,
+    },
+  );
 }
 
 /**
@@ -5054,6 +4703,27 @@ interface Motif {
   archetype: EnemyArchetype;
   /** Higher wins when we run out of motif slots. */
   priority: number;
+  /**
+   * How this leitmotif is PLAYED, as data beside the priority rather than as
+   * five envelope calls inside `build`.
+   *
+   * Three of these voices used to carry a near-identical hand-written triple
+   * (`attack(0.012).ds('0.13:0.12').release(0.22)` and two variants of it),
+   * written three times, each with its own copy of the same eleven-line comment
+   * explaining why. Two more set `.ds()` alone and so inherited superdough's
+   * grouped defaults - a 1 ms attack and a 10 ms release - which is the trap
+   * AGENTS.md 4 records and which `attackfloor` reported as "23% no-attack,
+   * 30% no-release" on this stem.
+   *
+   * Declaring it here means the table can be READ as an orchestration: which
+   * archetype is struck, which is bowed, which is a transient with no body.
+   */
+  touch: TouchName | null;
+  /**
+   * Subdivisions of the bar this motif's fastest note occupies. Ignored when
+   * `touch` is null.
+   */
+  slots: number;
   build(m: MusicalState, count: number): Pattern;
 }
 
@@ -5093,12 +4763,14 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'conductor',
     priority: 100,
+    // A tritone PEDAL under everything: two half-notes, bowed, the one motif that is not an event.
+    touch: 'bowed',
+    slots: 2,
     build: (m) =>
       // A tritone pedal under everything. Unmistakable, and it stops sounding
       // like the normal track the instant a boss appears.
       note(seq([m.tonic + 6, m.tonic + 6]))
         .s('sawtooth')
-        .ds('0.5:0.2')
         .lpf(m.sig.openness.range(200, 1400))
         .lpq(3)
         .distort('1.5:0.5')
@@ -5108,11 +4780,13 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'subdrop',
     priority: 60,
+    // Two low tones struck on the beat; `ds('0.22:0')` gave it a 1 ms attack it never asked for.
+    touch: 'struck',
+    slots: 4,
     build: (m, count) =>
       note(chordOf([m.chord.root - 12, m.chord.root - 5]))
         .struct(count > 1 ? 'x ~ x ~' : 'x ~ ~ ~')
         .s('square')
-        .ds('0.22:0')
         .lpf(700)
         .distort('3:0.5')
         .gain(0.34)
@@ -5121,6 +4795,9 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'arpeggiator',
     priority: 50,
+    // Four notes a bar at most - `seq([a,b,a,b])`.
+    touch: 'struck',
+    slots: 4,
     build: (m, count) => {
       const a = m.chord.root + 12;
       const b = a + 7;
@@ -5130,32 +4807,17 @@ const MOTIFS: readonly Motif[] = [
         .s('triangle')
 
         /*
-         * A PLUCK, NOT A CLICK.
+         * A PLUCK, NOT A CLICK - and the envelope now comes from
+         * `articulation.ts`, touch `struck`, applied at the end of this chain
+         * so it is the last writer (AGENTS.md 4).
          *
-         * Reported from play: "there's a lot of pinging type sound which isnt
-         * great". `tools/attackfloor.mjs` has been reporting exactly this all
-         * along and it was repeatedly filed as pre-existing: the motifs stem
-         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
-         * attack and a 31ms tail. That is not a short note, it is a transient.
-         *
-         * The cause is `.ds('0.07')` and nothing else. Per AGENTS.md §4, ADSR
-         * defaults are GROUPED: setting decay and sustain leaves attack and
-         * release to fall through to 0.001s and 0.01s. So the envelope was a
-         * one-millisecond ramp onto a note that decays to silence and is gone.
-         *
-         * Appending `.release()` alone would have been the trap AGENTS.md §3
-         * names outright — superdough ramps release FROM sustain, so on a
-         * sustain(0) lane it is inaudible and would have turned the gate green
-         * with no change to the sound. Sustain has to come up with it.
-         *
-         * These stay SHORT, because a motif that becomes a pad stops being a
-         * motif and this lane is how an archetype announces itself. A real
-         * plucked string is about 10-15ms onto the note and a tail that decays
-         * rather than stopping; that is what these are now.
+         * The old fix here was right about the cause and wrote it out by hand:
+         * `.ds('0.07')` set decay and sustain only, so attack fell through to
+         * superdough's 1 ms default and release to 10 ms, and appending a
+         * release alone would have been the archetypal gate-passing no-op
+         * because release ramps FROM sustain. All three lanes that had it now
+         * share one technique instead of three near-identical triples.
          */
-        .attack(0.012)
-        .ds('0.13:0.12')
-        .release(0.22)
         // See the room note on the first motif voice above.
         .room(0.3)
         .lpf(2600)
@@ -5168,12 +4830,14 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'echo',
     priority: 45,
+    // A stab and its delayed repeat; the DELAY is the character, so the note itself is short.
+    touch: 'struck',
+    slots: 4,
     build: (m, count) => {
       const n = m.chord.root + 12;
       // A stab and its delayed repeat, which is literally what the enemy does.
       return note(count > 2 ? `${n} ~ ${n} ~` : `${n} ~ ~ ~`)
         .s('triangle')
-        .ds('0.08:0')
         .lpf(2600)
         .delay(0.5)
         .delaysync(3 / 16)
@@ -5186,6 +4850,17 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'rush',
     priority: 35,
+    /*
+     * THE ONE VOICE THAT KEEPS ITS OWN SHAPE, and the reason is that it is not
+     * a note. It is filtered white noise with a REVERSE envelope - a 220 ms
+     * attack into a 60 ms collapse - which is the whoosh itself and not an
+     * articulation of a pitch. A touch would replace the instrument.
+     *
+     * Stated as `null` rather than by omission, so the table cannot be read as
+     * "somebody forgot this row".
+     */
+    touch: null,
+    slots: 4,
     build: (m, count) =>
       // A short rising whoosh per dive. Noise, so it never fights the harmony.
       s('white')
@@ -5204,11 +4879,12 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'glissando',
     priority: 40,
+    // Two long tones sliding; `plucked` because the delay carries the rest.
+    touch: 'plucked',
+    slots: 2,
     build: (m) =>
       note(seq([m.tonic + 24, m.tonic + 24 + degreeToSemitone(m.mode, 3)]))
         .s('triangle')
-        .ad('0.06:0.3')
-        .sustain(0.2)
         .lpf(3000)
         .delay(0.4)
         .delaysync(3 / 16)
@@ -5220,38 +4896,26 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'stutter',
     priority: 30,
+    // A machine-gun repeat, up to sixteen a bar - the fastest motif and the shortest note.
+    touch: 'struck',
+    slots: 16,
     build: (m, count) => {
       const div = count > 8 ? 16 : count > 4 ? 8 : 4;
       return note(`${m.chord.root + 24}*${div}`)
         .s('square')
 
         /*
-         * A PLUCK, NOT A CLICK.
+         * A PLUCK, NOT A CLICK - and the envelope now comes from
+         * `articulation.ts`, touch `struck`, applied at the end of this chain
+         * so it is the last writer (AGENTS.md 4).
          *
-         * Reported from play: "there's a lot of pinging type sound which isnt
-         * great". `tools/attackfloor.mjs` has been reporting exactly this all
-         * along and it was repeatedly filed as pre-existing: the motifs stem
-         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
-         * attack and a 31ms tail. That is not a short note, it is a transient.
-         *
-         * The cause is `.ds('0.03')` and nothing else. Per AGENTS.md §4, ADSR
-         * defaults are GROUPED: setting decay and sustain leaves attack and
-         * release to fall through to 0.001s and 0.01s. So the envelope was a
-         * one-millisecond ramp onto a note that decays to silence and is gone.
-         *
-         * Appending `.release()` alone would have been the trap AGENTS.md §3
-         * names outright — superdough ramps release FROM sustain, so on a
-         * sustain(0) lane it is inaudible and would have turned the gate green
-         * with no change to the sound. Sustain has to come up with it.
-         *
-         * These stay SHORT, because a motif that becomes a pad stops being a
-         * motif and this lane is how an archetype announces itself. A real
-         * plucked string is about 10-15ms onto the note and a tail that decays
-         * rather than stopping; that is what these are now.
+         * The old fix here was right about the cause and wrote it out by hand:
+         * `.ds('0.03')` set decay and sustain only, so attack fell through to
+         * superdough's 1 ms default and release to 10 ms, and appending a
+         * release alone would have been the archetypal gate-passing no-op
+         * because release ramps FROM sustain. All three lanes that had it now
+         * share one technique instead of three near-identical triples.
          */
-        .attack(0.012)
-        .ds('0.09:0.12')
-        .release(0.18)
         /*
          * AND PUT IT IN A ROOM.
          *
@@ -5284,37 +4948,25 @@ const MOTIFS: readonly Motif[] = [
   {
     archetype: 'pluck',
     priority: 20,
+    // Two notes a bar on the offbeats.
+    touch: 'struck',
+    slots: 4,
     build: (m, count) =>
       note(count > 3 ? `~ ${m.chord.root + 12} ~ ${m.chord.root + 12}` : `~ ${m.chord.root + 12} ~ ~`)
         .s('triangle')
 
         /*
-         * A PLUCK, NOT A CLICK.
+         * A PLUCK, NOT A CLICK - and the envelope now comes from
+         * `articulation.ts`, touch `struck`, applied at the end of this chain
+         * so it is the last writer (AGENTS.md 4).
          *
-         * Reported from play: "there's a lot of pinging type sound which isnt
-         * great". `tools/attackfloor.mjs` has been reporting exactly this all
-         * along and it was repeatedly filed as pre-existing: the motifs stem
-         * measured 92% no-attack, 100% no-release, 91% sustain-0, with a 1ms
-         * attack and a 31ms tail. That is not a short note, it is a transient.
-         *
-         * The cause is `.ds('0.09')` and nothing else. Per AGENTS.md §4, ADSR
-         * defaults are GROUPED: setting decay and sustain leaves attack and
-         * release to fall through to 0.001s and 0.01s. So the envelope was a
-         * one-millisecond ramp onto a note that decays to silence and is gone.
-         *
-         * Appending `.release()` alone would have been the trap AGENTS.md §3
-         * names outright — superdough ramps release FROM sustain, so on a
-         * sustain(0) lane it is inaudible and would have turned the gate green
-         * with no change to the sound. Sustain has to come up with it.
-         *
-         * These stay SHORT, because a motif that becomes a pad stops being a
-         * motif and this lane is how an archetype announces itself. A real
-         * plucked string is about 10-15ms onto the note and a tail that decays
-         * rather than stopping; that is what these are now.
+         * The old fix here was right about the cause and wrote it out by hand:
+         * `.ds('0.09')` set decay and sustain only, so attack fell through to
+         * superdough's 1 ms default and release to 10 ms, and appending a
+         * release alone would have been the archetypal gate-passing no-op
+         * because release ramps FROM sustain. All three lanes that had it now
+         * share one technique instead of three near-identical triples.
          */
-        .attack(0.014)
-        .ds('0.16:0.14')
-        .release(0.26)
         // See the room note on the first motif voice above.
         .room(0.3)
         .lpf(2000)
@@ -5329,7 +4981,22 @@ export function buildMotifs(m: MusicalState): Pattern {
     .sort((a, b) => b.priority - a.priority)
     .slice(0, MAX_MOTIFS);
   if (!live.length) return silence;
-  return stack(...live.map((mo) => mo.build(m, m.enemies[mo.archetype])));
+  /*
+   * ONE PLACE APPLIES THE ENVELOPE, and it is after `build` so it is the last
+   * writer for all five controls it owns. A motif that wants a different shape
+   * changes a word in the table, not a chain.
+   */
+  return stack(
+    ...live.map((mo) =>
+      mo.touch === null
+        ? mo.build(m, m.enemies[mo.archetype])
+        : articulate(mo.build(m, m.enemies[mo.archetype]), mo.touch, {
+            slots: mo.slots,
+            bpm: m.bpm,
+            shade: m.sig.drive,
+          }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------

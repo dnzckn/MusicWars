@@ -41,6 +41,7 @@ import { makeSignals, notesIn } from './lib/headless-audio.mjs';
 
 const strudel = await import('@strudel/core');
 const layers = await import('../src/audio/layers.ts');
+const { VOICE_TAGS } = layers;
 const { buildChord, PROGRESSIONS, LANE_RANGE, MIN_LANE_SPAN } = await import('../src/audio/theory.ts');
 
 const argv = process.argv.slice(2);
@@ -152,12 +153,29 @@ function midiOf(v) {
 }
 const q = (arr, p) => (arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : NaN);
 
-/** A voice group key: the lane, its oscillator, and its duty if it has one. */
+/**
+ * A voice group key: the lane, its oscillator, its duty, and its UNISON COUNT.
+ *
+ * `unison` joined the key when two lanes became supersaws — the bed at three
+ * voices and the upper structure at two. Without it those two collapse into one
+ * `chords/supersaw` group whose p5-p95 spans forty-three semitones, and the
+ * sprawl assertion below would fail on an arrangement that is correct. It is
+ * also the third control (with `s` and `pw`) that decides WHICH INSTRUMENT a
+ * hap is, which is exactly the definition `layers.VOICE_TAGS` exports.
+ */
 function groupOf(lane, e) {
   const src = e.s ?? (typeof e.note === 'number' || typeof e.note === 'string' ? 'note' : '?');
   const pw = typeof e.pw === 'number' ? `:pw${e.pw}` : '';
+  const uni = typeof e.unison === 'number' ? `:u${e.unison}` : '';
   const fm = typeof e.fm === 'number' ? `:fm${e.fm}` : '';
-  return `${lane}/${src}${pw}${fm}`;
+  return `${lane}/${src}${pw}${uni}${fm}`;
+}
+
+/** The key `groupOf` will produce for a `VOICE_TAGS` entry, in a given stem. */
+function keyForTag(stem, t) {
+  const pw = t.pw !== undefined ? `:pw${t.pw}` : '';
+  const uni = t.unison !== undefined ? `:u${t.unison}` : '';
+  return `${stem}/${t.s}${pw}${uni}`;
 }
 
 const groups = new Map();
@@ -449,7 +467,7 @@ const bandOf = (f) => {
  * in the wrong order. Sanity: summing a_k^2 / 2 over k reproduces each shape's
  * mean square (sine 0.5, saw 1/3, square 1, triangle 1/3).
  */
-function harmonicAmp(src, k, pw) {
+function harmonicAmp(src, k, pw, uni) {
   switch (src) {
     case 'sine':
       return k === 1 ? 1 : 0;
@@ -464,8 +482,17 @@ function harmonicAmp(src, k, pw) {
       return (4 / (Math.PI * k)) * Math.abs(Math.sin(k * Math.PI * d));
     }
     case 'sawtooth':
-    case 'supersaw':
       return 2 / (Math.PI * k);
+    case 'supersaw':
+      /*
+       * N detuned saws, summed INCOHERENTLY: they are a few cents apart, so
+       * their partials do not phase-lock and power adds rather than amplitude.
+       * sqrt(N) on the amplitude. Modelling a supersaw as a single saw
+       * under-reports the bed by 4.8 dB at unison 3, which is the difference
+       * between "the pad owns the 250 Hz band" and "the pad is one of three
+       * things in it".
+       */
+      return (2 / (Math.PI * k)) * Math.sqrt(uni ?? 1);
     default:
       return 0; // white/noise sources are handled separately below
   }
@@ -504,6 +531,8 @@ for (const g of rows) {
   const src = g.key.split('/')[1].split(':')[0];
   const pwMatch = /:pw([-\d.]+)/.exec(g.key);
   const pw = pwMatch ? Number(pwMatch[1]) : 0;
+  const uniMatch = /:u(\d+)/.exec(g.key);
+  const uni = uniMatch ? Number(uniMatch[1]) : 1;
   const fader = FADERS[LANE_STEM[g.lane]] ?? 0;
   // amplitude = gain^2 * (fader * masterVolume)^2 — see `volume.ts`. The master
   // volume is common to every lane and cancels out of a SHARE, so it is left
@@ -545,7 +574,7 @@ for (const g of rows) {
     for (let k = 1; k <= 200; k++) {
       const f = f0 * k;
       if (f > NYQ) break;
-      const a = harmonicAmp(src, k, pw);
+      const a = harmonicAmp(src, k, pw, uni);
       if (a === 0) continue;
       const b = bandOf(f);
       if (b < 0) continue;
@@ -666,12 +695,28 @@ if (!spanFail) {
  * and there is nothing to fail. Hence the count of groups actually checked is
  * printed and zero is a failure.
  */
-const GROUP_WINDOW = {
-  'chords/pulse:pw0': 'pad',
-  'chords/pulse:pw0.5': 'stab',
-  'motor/pulse:pw0.5': 'motor',
-  'arp/triangle': 'arp',
-};
+/*
+ * BUILT FROM `layers.VOICE_TAGS`, not typed out here.
+ *
+ * This table used to be four hardcoded strings. When the pad stopped being a
+ * `pulse:pw0` every one of them stopped matching, `windowsChecked` fell to 1,
+ * and the gate would have gone on printing "ok" for the groups it could still
+ * find while silently checking nothing about the three it could not. The `if
+ * (windowsChecked === 0)` guard below catches total loss and not partial loss,
+ * which is the AGENTS.md §3 denominator problem one level up.
+ *
+ * So the mapping is derived, and the COUNT it must reach is asserted: five
+ * groups, one per entry in `VOICE_TAGS`. That is one more than the old table
+ * had — `colour` was excluded because `chords/triangle` was two different parts
+ * sharing an oscillator (the deleted clavinet and the colour tones), and with
+ * the clav gone the ambiguity that forced the exclusion is gone with it.
+ */
+const STEM_OF_LANE = { pad: 'chords', colour: 'chords', stab: 'chords', motor: 'motor', arp: 'arp' };
+const GROUP_WINDOW = {};
+for (const t of Object.values(VOICE_TAGS)) {
+  GROUP_WINDOW[keyForTag(STEM_OF_LANE[t.lane], t)] = t.lane;
+}
+const EXPECTED_WINDOWS = Object.keys(GROUP_WINDOW).length;
 let windowsChecked = 0;
 let windowFail = false;
 for (const g of rows) {
@@ -693,8 +738,13 @@ for (const g of rows) {
     contractFail = true;
   }
 }
-if (windowsChecked === 0) {
-  console.log('   FAIL  no mapped voice group was found — the group keys have moved or a lane is silent.');
+if (windowsChecked < EXPECTED_WINDOWS) {
+  const found = rows.filter((g) => GROUP_WINDOW[g.key] && g.notes.length).map((g) => g.key);
+  console.log(
+    `   FAIL  ${windowsChecked} of ${EXPECTED_WINDOWS} mapped voice groups found — a lane is silent or its ` +
+      `VOICE_TAGS entry does not match the haps it emits. Found: ${found.join(', ') || '(none)'}`,
+  );
+  console.log(`         expected: ${Object.keys(GROUP_WINDOW).join(', ')}`);
   contractFail = true;
 } else if (!windowFail) {
   console.log(`   ok    ${windowsChecked} mapped voice groups, every hap inside its declared window`);
@@ -767,7 +817,21 @@ if (sprawlChecked === 0) {
  * and its pairs — hence the pair count is printed and a zero denominator fails.
  */
 const HEAVY = 9;
-const HEAVY_MAX = 6;
+/*
+ * THE RATCHET TURNS AGAIN: 12 -> 6 -> 4.
+ *
+ * Six was set when six was what the arrangement produced. Deleting the halftime
+ * clavinet removed `chords/triangle` (68-89, two parts sharing an oscillator)
+ * and with it two of the six pairs; the remaining four are printed every run and
+ * each is a relationship an arranger keeps — the bass line crossing the bed, the
+ * tune's octave doubling against the halftime growl, and the upper structure
+ * under the tune, twice.
+ *
+ * Lowered rather than left, because a ceiling above what the code does is not a
+ * gate, it is a note. This one has now been seen at 4 and cannot go back to 5
+ * without somebody arguing for it in this file.
+ */
+const HEAVY_MAX = 4;
 const pitchedRows = rows.filter((g) => PITCHED.has(g.lane) && g.notes.length >= 20);
 const winOf = (g) => {
   const ns = g.notes.slice().sort((a, b) => a - b);
@@ -793,7 +857,7 @@ if (pairs === 0) {
   console.log('   FAIL  no cross-lane pair was compared. A check with no denominator is not a pass.');
   contractFail = true;
 } else if (heavy.length > HEAVY_MAX) {
-  console.log(`   FAIL  ${heavy.length} cross-lane pairs share ${HEAVY}+ semitones; the ceiling is ${HEAVY_MAX} (was 12).`);
+  console.log(`   FAIL  ${heavy.length} cross-lane pairs share ${HEAVY}+ semitones; the ceiling is ${HEAVY_MAX} (was 12, then 6).`);
   contractFail = true;
 } else {
   console.log(`   ok    ${heavy.length} of ${pairs} cross-lane pairs overlap heavily; the ceiling is ${HEAVY_MAX}`);

@@ -52,13 +52,16 @@
  * clarity and a noise sweep has no pitch. The exempt count is PRINTED per lane,
  * so the exemption cannot quietly grow to cover a lane.
  *
- * THE THRESHOLDS ARE PROVISIONAL. 20ms / 250ms are the plan's §4 placeholders,
- * not measurements. Phase 0's calibration protocol freezes numbers from a
- * measured distribution — current build, reference tracks, a bad control, with
- * interleaved repeats — and this tool exists partly to produce the first column
- * of that table. Every row prints its real numbers whatever the verdict says;
- * read those, not the pass/fail, until calibration lands. The failure mode of a
- * made-up threshold is that someone tunes to satisfy it.
+ * THE TAIL THRESHOLD HAS BEEN CALIBRATED AND RE-POINTED. It was a one-sided
+ * `>= 250ms`, which the old comment here correctly called a placeholder. Sixty
+ * songs of `eefano/strudel-songs-collection` put the corpus median release at
+ * 200ms and the median attack at 50ms, so a floor of 250ms is ABOVE what real
+ * music does, and could only ever be satisfied by lengthening tails on a score
+ * whose defect was tails that were already too long. It is a WINDOW now,
+ * 80-320ms, plus an OVERHANG assertion in gap units that is not a proxy at all.
+ * See the block above `ATTACK_FLOOR_MS`. The ATTACK floor of 20ms is unchanged
+ * and is still well below the corpus median, so it stays a floor and not a
+ * target.
  *
  * Usage:
  *   node --experimental-transform-types tools/attackfloor.mjs
@@ -117,15 +120,79 @@ const SEEDS = (
 const DT = 1 / 120;
 
 /*
- * PROVISIONAL. From MASTER_PLAN §4's `attackfloor` row ("pitched attack >=20ms,
- * release >=250ms"), which is itself a placeholder awaiting §4's calibration
- * protocol. Nothing here was measured to arrive at 20 or 250. When calibration
- * runs, these move to (post-fix median - spread) and this comment goes with
- * them; until then treat the printed distributions as the result and the
- * verdict as a direction of travel.
+ * ===========================================================================
+ * THE TAIL THRESHOLD IS RE-POINTED, AND IT WAS ARGUING FOR THE DEFECT
+ * ===========================================================================
+ *
+ * It was `TAIL >= 250ms`, one-sided, and the comment that stood here said so
+ * plainly: "PROVISIONAL ... nothing here was measured to arrive at 20 or 250 ...
+ * the failure mode of a made-up threshold is that someone tunes to satisfy it."
+ * Somebody did, four passes running, and the owner's report after every one of
+ * them was that the music is "too drawn out".
+ *
+ * THE CALIBRATION THE OLD COMMENT ASKED FOR. Sixty published pieces from
+ * `eefano/strudel-songs-collection`, read against this tree:
+ *
+ *                    corpus median      this score, before
+ *   attack                  50 ms       6 ms   (lead)
+ *   release                200 ms       530 ms (lead), 1475 ms (chords)
+ *   clip                      .95       unused on six of seven lanes
+ *
+ * A one-sided floor of 250 ms is ABOVE the corpus median. It could only ever be
+ * satisfied by tails longer than real music uses, on a score whose actual
+ * defect was tails so long that notes of one lane stacked five deep. That is
+ * not a threshold that was too loose or too tight; it was pointing the wrong
+ * way.
+ *
+ * SO IT IS A WINDOW NOW, and the window is wider than the corpus rather than
+ * narrower, because a gate should fail on defects and not on style: 80 ms to
+ * 320 ms brackets the median 200 with a factor of about 2.5 either side. The
+ * FLOOR keeps every bit of the pressure the old one-sided version was for - a
+ * `sustain(0)` lane still cannot pass by appending a release, because TAIL is
+ * defined as attack+decay when sustain is 0 (see the trap note above). The
+ * CEILING is new, and it is the half that catches what the owner hears.
+ *
+ * AND THE CEILING IS NOT THE REAL ASSERTION EITHER. A 300 ms tail is short on a
+ * whole-note pad and enormous on a sixteenth-note clock, so any threshold in
+ * milliseconds is a proxy. The measurement that is not a proxy is OVERHANG -
+ * how far a note runs past the NEXT note of its own lane, in units of the gap
+ * between them - and it is asserted below, per lane, with its denominator
+ * printed. Read that one. The millisecond window is the coarse net.
  */
 const ATTACK_FLOOR_MS = 20;
-const TAIL_FLOOR_MS = 250;
+const TAIL_FLOOR_MS = 80;
+const TAIL_CEIL_MS = 320;
+
+/*
+ * OVERHANG CEILINGS.
+ *
+ * `reachesSecond` is the number that matters: a note still sounding when the
+ * note AFTER the next one starts is three notes of the same part audible at
+ * once, which is the definition of a smear. Some of it is legitimate - a
+ * plucked string rings through its neighbour, and a delayed lane is supposed to
+ * - so the ceiling is a share rather than zero.
+ *
+ * SEEN RED, on this tree, at HEAD, with the same tool and the same seed. The
+ * paired run against the pre-articulation audio module failed three lanes on
+ * this assertion alone - bass p95 1.98, chords p95 2.95, motifs p95 1.62 - and
+ * the same run's chords lane read a p95 of 7.30 before the grouping was fixed
+ * to compare a note against the next note of its OWN line rather than of its
+ * stem. It is not a gate nobody has watched fail.
+ *
+ * After: the worst lane is the bass at 24% reaching the second onset and a p95
+ * of 1.29 gaps; every other lane is 0% and under 0.35. The ceilings leave that
+ * about a third of headroom, and they are RATCHETS - a figure seen at 24% does
+ * not get a ceiling of 60% back without an argument written in this file.
+ *
+ * The bass is the worst lane for a reason worth recording rather than tuning
+ * away: its three layers (anchor, on-beat fill, driving eighths) share one pan,
+ * so the line key groups them as ONE part and the measure sees a denser onset
+ * stream than any single layer plays. That over-reports it, and it is left
+ * over-reported because the alternative is a grouping key with a special case
+ * in it.
+ */
+const OVERHANG_SECOND_MAX = 0.32;
+const OVERHANG_P95_MAX = 1.5;
 
 /*
  * Furniture and drums: measured, printed, NOT gated. Named individually rather
@@ -232,6 +299,17 @@ function newAgg(stem) {
     bySrc: new Map(),
     belowAttack: 0,
     belowTail: 0,
+    aboveTail: 0,
+    /*
+     * OVERHANG — how far a note's tail runs past the next note of its own lane,
+     * as a multiple of the gap between them. See the OVERHANG section of the
+     * header. Dimensionless on purpose, so a whole-note pad and a sixteenth-note
+     * clock are on the same axis.
+     */
+    overhangs: [],
+    reachesNext: 0,
+    reachesSecond: 0,
+    overhangDenom: 0,
   };
 }
 
@@ -240,10 +318,11 @@ function bucketFor(map, stem, label = stem) {
   return map.get(stem);
 }
 
-const NUMERIC = ['attacks', 'decays', 'sustains', 'releases', 'tails', 'rooms', 'gains', 'notes'];
+const NUMERIC = ['attacks', 'decays', 'sustains', 'releases', 'tails', 'rooms', 'gains', 'notes', 'overhangs'];
 const COUNTERS = [
   'haps', 'zeroGain', 'exemptNoise', 'unparsed', 'noAttack', 'noRelease',
-  'sustainZero', 'clipped', 'belowAttack', 'belowTail',
+  'sustainZero', 'clipped', 'belowAttack', 'belowTail', 'aboveTail',
+  'reachesNext', 'reachesSecond', 'overhangDenom',
 ];
 
 /** Fold one seed's aggregate into the all-seeds aggregate. */
@@ -263,7 +342,7 @@ function mergeInto(dst, src) {
  * and a gate that ignored quiet haps could be satisfied by turning the
  * offending lane down — which is the shape of the drop-economy defect.
  */
-function collect(map, stem, haps, level) {
+function collect(map, stem, haps, level, secPerCycle) {
   const agg = bucketFor(map, stem);
   const sig = [];
   for (const h of haps) {
@@ -301,6 +380,7 @@ function collect(map, stem, haps, level) {
     if (num(v.clip) != null || num(v.legato) != null) agg.clipped++;
     if (e.a * 1000 < ATTACK_FLOOR_MS) agg.belowAttack++;
     if (e.tail * 1000 < TAIL_FLOOR_MS) agg.belowTail++;
+    if (e.tail * 1000 > TAIL_CEIL_MS) agg.aboveTail++;
 
     if (!agg.bySrc.has(src)) agg.bySrc.set(src, newAgg(`${stem}·${src}`));
     const sub = agg.bySrc.get(src);
@@ -320,6 +400,73 @@ function collect(map, stem, haps, level) {
     sig.push(`${src}:${e.a}:${e.d}:${e.s}:${e.r}`);
   }
   if (sig.length) agg.builds.add(sig.join('|'));
+
+  /*
+   * OVERHANG, over the haps of ONE query of ONE stem.
+   *
+   * `Hap.duration` already carries `clip` (@strudel/core applies it in the
+   * getter), and superdough starts the release ramp at `begin + duration`
+   * (`helpers.mjs`, `end = begin + duration`). So a note is audible from its
+   * onset until `onset + duration + release`, and everything below is
+   * arithmetic on numbers this tool already reads rather than a model of
+   * anything.
+   *
+   * The unit is the GAP between successive onsets of the same stem, so the
+   * measure is dimensionless and a whole-note pad and a sixteenth-note clock
+   * can be read on one axis. Onsets are DEDUPLICATED first: a four-note chord
+   * is four haps at one instant and is one onset.
+   *
+   * Zero-gain haps are excluded for the same reason the envelope table excludes
+   * them - the yield curves park a lane at exactly 0 on purpose and that is
+   * silence by arithmetic, not a note.
+   */
+  const live = haps.filter((h) => (num(h.value?.gain) ?? 0.8) !== 0 && h.whole);
+
+  /*
+   * ONE LINE, NOT ONE STEM, and getting this wrong made the measurement useless
+   * the first time it ran.
+   *
+   * Grouping onsets by STEM compared the pad's whole-bar note against the
+   * STAB's next sixteenth — two different instruments inside `chords` — and
+   * reported a p95 overhang of 7.3 gaps on an arrangement where the pad
+   * overlaps nothing at all. A tail only smears against the NEXT NOTE OF THE
+   * SAME PART.
+   *
+   * The key is (oscillator, duty, unison, pan). The first three are the voice
+   * group identity `layers.VOICE_TAGS` defines; `pan` separates parts that
+   * share a timbre, which in this score is exactly the case that matters — the
+   * lead's skeleton, filigree and ornament are one oscillator at three places
+   * in the field, and they are three lines, not one line playing triplets.
+   */
+  const lineOf = (v) => `${v.s ?? '?'}:${v.pw ?? ''}:${v.unison ?? ''}:${v.pan ?? ''}`;
+  const lines = new Map();
+  for (const h of live) {
+    const k = lineOf(h.value ?? {});
+    if (!lines.has(k)) lines.set(k, []);
+    lines.get(k).push(h);
+  }
+  for (const group of lines.values()) {
+    const onsets = [...new Set(group.map((h) => Number(h.whole.begin)))].sort((a, b) => a - b);
+    if (onsets.length < 2) continue;
+    const idx = new Map(onsets.map((t, i) => [t, i]));
+    for (const h of group) {
+      const v = h.value ?? {};
+      const e = envelopeOf(v);
+      if (!Number.isFinite(e.r)) continue;
+      const t0 = Number(h.whole.begin);
+      const i = idx.get(t0);
+      if (i === undefined || i + 1 >= onsets.length) continue;
+      const gap = onsets[i + 1] - t0;
+      if (!(gap > 0)) continue;
+      const dur = Number(h.duration ?? gap);
+      /* release is in SECONDS; onsets and durations are in cycles. */
+      const end = t0 + dur + e.r / secPerCycle;
+      agg.overhangDenom++;
+      agg.overhangs.push((end - onsets[i + 1]) / gap);
+      if (end > onsets[i + 1]) agg.reachesNext++;
+      if (i + 2 < onsets.length && end > onsets[i + 2]) agg.reachesSecond++;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ tables */
@@ -361,8 +508,43 @@ function judge(agg) {
   const attackMed = med(agg.attacks) * 1000;
   const tailMed = med(agg.tails) * 1000;
   const okAttack = agg.belowAttack === 0;
-  const okTail = agg.belowTail === 0;
-  return { attackMed, tailMed, okAttack, okTail, ok: okAttack && okTail };
+  const okTail = agg.belowTail === 0 && agg.aboveTail === 0;
+  /*
+   * EVERY GATED PITCHED HAP MUST STATE ITS NOTE LENGTH.
+   *
+   * `clip` was measured at 0% on six of seven lanes and 34% on the seventh
+   * before `articulation.ts` existed, and the consequence is the whole finding
+   * of that pass: a lane that never says how long its note is has its length
+   * decided by `sustain` and `release` as a side effect, which is how a score
+   * ends up "too drawn out" while every individual number looks reasonable.
+   *
+   * This is the assertion that locks the architecture in. A lane can only pass
+   * it by going through `articulate`, and `articulate` refuses to write `clip`
+   * on a `sustain(0)` lane — so a lane that reverts to a pluck fails here
+   * rather than quietly losing its length control. Noise haps are already
+   * excluded upstream (an attack floor buys pitch clarity; a noise sweep has no
+   * pitch), and the exempt count is printed per lane.
+   */
+  const okClip = agg.haps > 0 && agg.clipped === agg.haps;
+  /*
+   * OVERHANG. `overhangDenom === 0` is a FAILURE and not a pass: a lane with no
+   * pair of successive onsets was not measured at all, and AGENTS.md 3's "print
+   * every denominator" exists because zero and clean look identical.
+   */
+  const second = agg.overhangDenom ? agg.reachesSecond / agg.overhangDenom : 1;
+  const p95 = agg.overhangs.length ? pct95(agg.overhangs) : Infinity;
+  const okOver = agg.overhangDenom > 0 && second <= OVERHANG_SECOND_MAX && p95 <= OVERHANG_P95_MAX;
+  return {
+    attackMed, tailMed, second, p95,
+    okAttack, okTail, okOver, okClip,
+    ok: okAttack && okTail && okOver && okClip,
+  };
+}
+
+/** p95 of a numeric array. */
+function pct95(xs) {
+  const a = xs.slice().sort((x, y) => x - y);
+  return a[Math.min(a.length - 1, Math.floor(a.length * 0.95))];
 }
 
 function verdictLines(rows, label) {
@@ -371,9 +553,28 @@ function verdictLines(rows, label) {
     const j = judge(a);
     const bits = [];
     if (!j.okAttack) bits.push(`attack ${ms(med(a.attacks))}ms (${pct(a.belowAttack, a.haps)} under ${ATTACK_FLOOR_MS}ms)`);
-    if (!j.okTail) bits.push(`tail ${ms(med(a.tails))}ms (${pct(a.belowTail, a.haps)} under ${TAIL_FLOOR_MS}ms)`);
+    if (a.belowTail) bits.push(`tail ${ms(med(a.tails))}ms (${pct(a.belowTail, a.haps)} under ${TAIL_FLOOR_MS}ms)`);
+    if (a.aboveTail) bits.push(`tail ${ms(med(a.tails))}ms (${pct(a.aboveTail, a.haps)} over ${TAIL_CEIL_MS}ms)`);
+    if (!j.okClip) {
+      bits.push(
+        `clip ${pct(a.clipped, a.haps)} of ${a.haps} haps state a note length — the rest let \`release\` decide it`,
+      );
+    }
+    if (!j.okOver) {
+      bits.push(
+        a.overhangDenom === 0
+          ? 'OVERHANG not measured - no pair of successive onsets'
+          : `overhang ${pct(a.reachesSecond, a.overhangDenom)} of ${a.overhangDenom} notes still sounding two onsets later` +
+            `, p95 ${j.p95.toFixed(2)} gaps`,
+      );
+    }
     out.push(
-      `  ${j.ok ? 'ok  ' : 'FAIL'}  ${pad(a.stem, 16)}${j.ok ? `attack ${ms(med(a.attacks))}ms · tail ${ms(med(a.tails))}ms` : bits.join(' · ')}`,
+      `  ${j.ok ? 'ok  ' : 'FAIL'}  ${pad(a.stem, 16)}` +
+        (j.ok
+          ? `attack ${ms(med(a.attacks))}ms · tail ${ms(med(a.tails))}ms · overhang ` +
+            `${pct(a.reachesNext, a.overhangDenom)}/${pct(a.reachesSecond, a.overhangDenom)} next/second of ${a.overhangDenom}` +
+            `, p95 ${j.p95.toFixed(2)} gaps`
+          : bits.join(' · ')),
     );
   }
   return { label, out, failed: rows.some((a) => !judge(a).ok) };
@@ -403,20 +604,48 @@ if (CONTROL) {
     },
     {
       id: 'ctl-loophole',
-      why: 'attack 30ms and release 900ms — but sustain 0, so it dies at 90ms',
+      why: 'attack 30ms and release 900ms — but sustain 0, so it dies at 50ms',
       expect: 'FAIL',
-      pat: note('57 60 64 67').s('triangle').adsr('0.03:0.06:0:0.9'),
+      pat: note('57 60 64 67').s('triangle').adsr('0.03:0.02:0:0.9'),
     },
     {
-      id: 'ctl-bed',
-      why: 'a genuine sustained voice: adsr .06:.3:.6:.6',
-      expect: 'ok',
+      /*
+       * THE SMEAR CONTROL IS NEW, AND IT IS THE OLD `ctl-bed`.
+       *
+       * `adsr('0.06:0.3:0.6:0.6')` was specified as "a genuine sustained voice"
+       * and expected to PASS, because under a one-sided `tail >= 250ms` a 600 ms
+       * release was virtuous. Against the corpus median of 200 ms it is three
+       * times too long, and on quarter notes it is a note still sounding when
+       * the note after next begins. That is the exact defect this pass exists to
+       * remove, so the same lane keeps its numbers, changes its name, and flips
+       * its expectation.
+       *
+       * Recording it this way rather than deleting it is the point: the control
+       * set now contains a lane the OLD gate called correct and the NEW gate
+       * calls a failure, which is the clearest possible statement of what was
+       * re-pointed.
+       */
+      id: 'ctl-smear',
+      why: 'the OLD ctl-bed, which the old gate PASSED: adsr .06:.3:.6:.6, a 600ms tail',
+      expect: 'FAIL',
       pat: note('57 60 64 67').s('triangle').adsr('0.06:0.3:0.6:0.6').room(0.2),
+    },
+    {
+      /*
+       * A CORPUS-SHAPED LANE: 50 ms on, 200 ms off, and a `clip` that states the
+       * note's length instead of leaving it to the release. This is what the
+       * sixty reference songs do on their sustained parts, and the gate has to
+       * pass it or the gate is wrong.
+       */
+      id: 'ctl-bed',
+      why: 'corpus-shaped: adsr .05:.18:.6:.2 with clip .8 — 50ms on, 200ms off',
+      expect: 'ok',
+      pat: note('57 60 64 67').s('triangle').adsr('0.05:0.18:0.6:0.2').clip(0.8).room(0.2),
     },
   ];
 
   const map = new Map();
-  for (const l of LANES) collect(map, l.id, l.pat.queryArc(0, 1), 1);
+  for (const l of LANES) collect(map, l.id, l.pat.queryArc(0, 1), 1, 240 / 135);
   const rows = LANES.map((l) => map.get(l.id));
 
   console.log('\nattackfloor --control — a deliberately-bad input the gate must catch\n');
@@ -442,9 +671,9 @@ if (CONTROL) {
     console.log(`\nDETECTOR BROKEN — ${broken} control lane(s) did not behave as specified. Fix the gate before believing it.`);
     process.exit(2);
   }
-  console.log('\nDETECTOR HOLDS — three bad envelopes caught, one good envelope passed.');
-  console.log('  The three FAIL rows above ARE the result: this is the gate failing on inputs whose');
-  console.log('  envelopes are known to be wrong, while the fourth lane — equally synthetic — passes.');
+  console.log('\nDETECTOR HOLDS — four bad envelopes caught, one good envelope passed.');
+  console.log('  The four FAIL rows above ARE the result: this is the gate failing on inputs whose');
+  console.log('  envelopes are known to be wrong, while the fifth lane — equally synthetic — passes.');
   console.log('  Exit 1 is that failure, deliberately. Exit 2 would mean the DETECTOR itself is broken.');
   process.exit(1);
 }
@@ -527,7 +756,7 @@ for (let i = 0; i < Math.round(SECS / DT); i++) {
       cover.queryErrors++;
       continue;
     }
-    collect(seedMap, id, haps, d.levels?.[id] ?? 0);
+    collect(seedMap, id, haps, d.levels?.[id] ?? 0, 240 / (d.bpm || 135));
   }
 }
 perSeed.push({ seed: SEED, map: seedMap });
@@ -604,9 +833,13 @@ for (const a of gated) {
 /* -------------------------------------------------------- verdict + controls */
 
 console.log(
-  `\n  VERDICT — thresholds PROVISIONAL (attack >= ${ATTACK_FLOOR_MS}ms, tail >= ${TAIL_FLOOR_MS}ms).\n` +
-    `  These are MASTER_PLAN §4 placeholders, not measurements. §4's calibration protocol\n` +
-    `  freezes them from a distribution; the numbers above are this build's contribution to it.\n`,
+  `\n  VERDICT — attack >= ${ATTACK_FLOOR_MS}ms, tail ${TAIL_FLOOR_MS}-${TAIL_CEIL_MS}ms, clip on every hap,\n` +
+    `  and overhang\n` +
+    `  <= ${(OVERHANG_SECOND_MAX * 100).toFixed(0)}% of notes still sounding two onsets later, p95 <= ${OVERHANG_P95_MAX} gaps.\n` +
+    `  The tail window is CALIBRATED against 60 songs of eefano/strudel-songs-collection:\n` +
+    `  median attack 50ms, median release 200ms, clip .95. It was a one-sided '>= 250ms',\n` +
+    `  which is ABOVE that median - the threshold was arguing for the defect it was meant\n` +
+    `  to catch. OVERHANG is the assertion that is not a proxy. Read that one first.\n`,
 );
 
 const motor = map.get(MOTOR_STEM);
@@ -712,7 +945,8 @@ if (failed) {
   const total = gated.reduce((n, a) => n + a.haps, 0);
   console.log(
     `ENVELOPE FLOOR NOT MET — ${pct(below, total)} of pitched haps attack faster than ${ATTACK_FLOOR_MS}ms ` +
-      `and ${pct(belowT, total)} fall silent inside ${TAIL_FLOOR_MS}ms.`,
+      `, ${pct(belowT, total)} fall silent inside ${TAIL_FLOOR_MS}ms and `+
+      `${pct(gated.reduce((n, a) => n + a.aboveTail, 0), total)} ring past ${TAIL_CEIL_MS}ms.`,
   );
   for (const c of controlFails) console.log(`  sweep control: ${c}`);
   console.log('  Run `--control` to see the same verdict applied to inputs with known envelopes.');

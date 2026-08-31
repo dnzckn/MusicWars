@@ -13,6 +13,7 @@
  */
 
 import { s, note, stack, type Pattern, type Patternable } from '@strudel/core';
+import { articulate } from './articulation';
 
 export const ORBIT_DRUMS = 1;
 export const ORBIT_LOW = 2;
@@ -352,13 +353,25 @@ export function impact(level = 0.6): Pattern {
  * MEASURED: nothing. This is arithmetic on the period of a 50 Hz wave and a
  * reading of superdough's envelope code. Nobody has heard it.
  */
-export function sub(notes: Patternable, level = 0.7): Pattern {
-  return note(notes)
-    .attack(0.024)
-    .decay(0.25)
-    .sustain(0.85)
-    .release(0.18)
-    .s('sine')
-    .gain(level)
-    .orbit(ORBIT_LOW);
+export function sub(notes: Patternable, level = 0.7, bpm = 135): Pattern {
+  /*
+   * The envelope comes from `articulation.ts`, touch `pedal`, and `bpm` is a
+   * parameter for the same reason every touch takes one: a note's onset is a
+   * fraction of the note, so the same technique at a different tempo is a
+   * different envelope. The default is only for callers that have no transport
+   * (`tools/render.mjs` and the two probes), never for the game.
+   *
+   * `slots: 8`. Every lattice this lane is written on is eighths or slower -
+   * `~ root ~ ~ ~ ~ ~ ~` and its two fill layers - so the densest note spacing
+   * is 222 ms at 135 bpm and two sub pitches can never overlap.
+   *
+   * A pure sine cannot ping; the switch turning it on can. One cycle of 50 Hz
+   * is twenty milliseconds, which is why `pedal`'s onset floor is a physical
+   * constraint rather than a taste.
+   */
+  return articulate(note(notes).s('sine').gain(level).orbit(ORBIT_LOW), 'pedal', {
+    slots: 8,
+    bpm,
+    shade: 0.5,
+  });
 }
