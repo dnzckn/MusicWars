@@ -5402,6 +5402,42 @@ export class World {
     // cone it can actually fit inside.
     const bias = this.gapSide * (ENCIRCLE_GAP_HALF / ARRIVAL_CONE + Math.min(0.35, width / 8));
     const offset = clamp(this.rng.range(-1, 1) - bias, -1, 1);
+    /*
+     * IN WARP, HALF THE ARRIVALS COME FROM AHEAD.
+     *
+     * Reported from play: "while warp speed monsters dont really catch up so
+     * not sure how to fix", and earlier, "when you exit warp is when all the
+     * mass of enemies spawn". Both are the same geometry and no amount of
+     * spawn-rate tuning reaches it.
+     *
+     * The arithmetic. Everything arrives astern, and `carryStage` moves the
+     * world at CRUISE so a body spawned behind can close at up to
+     * SPEED_CEILING (285) RELATIVE TO THE STAGE. But the player also moves up
+     * to 430 relative to the stage, and a player in warp is a player holding
+     * forward. 430 away against 285 toward: THE GAP GROWS AT 145 px/s FOREVER.
+     * Warp folds the wave clock ninefold and pours all of it into a place the
+     * player is leaving. Then they let go, the gap stops growing, and the
+     * entire accumulated crowd lands at once — which is exactly what was
+     * reported.
+     *
+     * You cannot fix that from behind. Making them faster than 430 makes them
+     * uncatchable in cruise too; spawning more of them just deepens the pile
+     * that arrives on exit. The only geometry where a fast ship meets danger is
+     * the one it is flying INTO, which is what Star Fox does at speed and what
+     * the owner's very first description of this arena asked for: "enemies
+     * coming in is fine".
+     *
+     * So warp inverts half the ring. The player is not outrunning these — they
+     * are closing on them at 430 plus the stage carry, so the faster they go
+     * the sooner they arrive. That makes warp self-limiting in the way the
+     * owner wanted: "forcing the user to exit if theyre weak or overwhelmed".
+     * Half rather than all, because a solid wall ahead with nothing behind is a
+     * different game again, and the astern half is what still punishes you for
+     * dropping out carelessly.
+     */
+    if (this.warping && this.rng.next() < 0.5) {
+      return FORWARD_ANGLE + offset * ARRIVAL_CONE;
+    }
     return ARRIVAL_ANGLE + offset * ARRIVAL_CONE;
   }
 
