@@ -516,7 +516,52 @@ export interface ProgressionState {
    * the DUETS block in `weapons.ts`.
    */
   fusions: (EvolvedId | string)[];
+  /**
+   * WHICH IDS MAY BE DRAFTED AT ALL, or `null` for "the whole table".
+   *
+   * The meta layer starts a player with eight instruments and eight passives
+   * and sells the rest between runs (`src/game/meta.ts`). This is where that
+   * lands, and the shape of it is the load-bearing decision:
+   *
+   * IT IS A FILTER ON THE DRAFT POOL, NOT AN EDIT TO THE TABLES. `INSTRUMENTS`
+   * and `RIG` are unchanged, every FUSION recipe is unchanged, and a locked id
+   * can still appear as the RESULT of something — it simply cannot be dealt as
+   * a card. AGENTS.md §5's rule is that the way to change progression without
+   * paying the zero-sum tax is to change what an existing card is WORTH rather
+   * than to add or remove card TYPES, and a pool filter is the one lever that
+   * removes cards without touching what a card is.
+   *
+   * IT IS PER-RUN STATE, NOT A MODULE GLOBAL. A module-level "current roster"
+   * would be a hidden input to a pure module — `tools/levelup.mjs` and
+   * `tools/offerpool.mjs` build a dozen `ProgressionState`s in one process and
+   * compare them, and with a global they would all silently share whichever
+   * roster was set last. Every arm of `offerpool` is a different value of this
+   * field in the same process.
+   *
+   * `null` MEANS EVERYTHING, and it is the default. That is what keeps the ~200
+   * checks in `tools/` measuring the game they were calibrated against: a tool
+   * that never mentions this field sees the full 30-and-12 table exactly as
+   * before. Only `World` (via `meta.ts`) ever sets it.
+   *
+   * FUSION RESULTS ARE NOT GATED BY IT, and must not be. They are excluded from
+   * the draft pool already (`def.fused || def.weight <= 0`) and are EARNED, so
+   * gating them would make the unlock shop sell things the shop cannot show and
+   * would silently brick recipes whose result nobody had bought.
+   */
+  unlocked: ReadonlySet<string> | null;
   rng: Rng;
+}
+
+/**
+ * Is `id` draftable under this run's roster?
+ *
+ * One function, called from the two loops in `availableOptions`, so "locked"
+ * has exactly one definition. A second copy of `state.unlocked?.has(id)` in the
+ * rig loop is precisely the drift `src/render/levelup.ts` is a standing warning
+ * about.
+ */
+function draftable(state: ProgressionState, id: string): boolean {
+  return state.unlocked === null || state.unlocked.has(id);
 }
 
 /** The instrument a run starts holding when nothing else is chosen. */
@@ -630,7 +675,11 @@ export const STARTING_INSTRUMENT = 'ember';
  */
 export const STARTERS: readonly string[] = ['ember', 'bow', 'timpani'];
 
-export function createProgression(seed = 1, starter?: string): ProgressionState {
+export function createProgression(
+  seed = 1,
+  starter?: string,
+  unlocked: ReadonlySet<string> | null = null,
+): ProgressionState {
   return {
     level: 1,
     xp: 0,
@@ -646,6 +695,7 @@ export function createProgression(seed = 1, starter?: string): ProgressionState 
     banishes: BANISHES_START,
     banished: [],
     fusions: [],
+    unlocked,
     rng: new Rng(seed >>> 0),
   };
 }
@@ -659,7 +709,22 @@ export function createProgression(seed = 1, starter?: string): ProgressionState 
  * bug is written up in `tools/README.md` under `everypowerup`; this is the same
  * hazard with a different name.
  */
-export function resetProgression(state: ProgressionState, seed = 1, starter?: string): void {
+export function resetProgression(
+  state: ProgressionState,
+  seed = 1,
+  starter?: string,
+  unlocked: ReadonlySet<string> | null = null,
+): void {
+  /*
+   * THE ROSTER IS RE-READ ON EVERY RUN, and it has to be.
+   *
+   * `World.start()` is also the AGAIN path, and a player who buys three
+   * weapons in the shop and presses AGAIN must be playing with them. Leaving
+   * the previous run's set in place would have shipped a shop whose purchases
+   * only take effect after a page reload — the exact "looks implemented,
+   * isn't" shape this file's own history is a museum of.
+   */
+  state.unlocked = unlocked;
   state.level = 1;
   state.xp = 0;
   state.xpTotal = 0;
@@ -800,6 +865,7 @@ export function availableOptions(state: ProgressionState): OfferOption[] {
 
   for (const def of INSTRUMENTS) {
     if (def.fused || def.weight <= 0) continue;
+    if (!draftable(state, def.id)) continue;
     if (state.banished.includes(def.id)) continue;
     const owned = state.instruments[def.id] ?? 0;
     if (owned === 0 && !instRoom) continue;
@@ -822,6 +888,7 @@ export function availableOptions(state: ProgressionState): OfferOption[] {
 
   for (const def of RIG) {
     if (def.weight <= 0) continue;
+    if (!draftable(state, def.id)) continue;
     if (state.banished.includes(def.id)) continue;
     const owned = state.rig[def.id] ?? 0;
     if (owned >= RIG_MAX_LEVEL) continue;

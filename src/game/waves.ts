@@ -26,6 +26,21 @@ export interface SpawnEntry {
 
 export interface WavePlan {
   index: number;
+  /**
+   * Which STAGE this plan was generated for, 1-based. See `stagePressure`.
+   *
+   * Carried on the plan rather than read off the world at each consumer for
+   * the same reason `isFinalBoss` is: `World` reads the plan in four places and
+   * a run that is on stage 6 while one of them thinks it is on stage 1 is a
+   * difficulty bug nothing would print.
+   */
+  stage: number;
+  /**
+   * `stage - 1`, clamped. The number every stage term below is denominated in,
+   * so stage 1 multiplies everything by exactly 1 and the game as it shipped is
+   * bit-identical at stage 1.
+   */
+  pressure: number;
   /** 0..1, used for HP and emitter scaling. Saturates around wave 17. */
   difficulty: number;
   /**
@@ -163,6 +178,76 @@ export const MINI_BOSSES = BOSS_COUNT - 1;
  */
 export const FINAL_BOSS_WAVE = BOSS_COUNT * BOSS_EVERY - 1;
 
+/** How many waves a whole run contains, counting from one. Derived. */
+export const TOTAL_WAVES = FINAL_BOSS_WAVE + 1;
+
+/* ------------------------------------------------------------------------ *
+ * STAGES — "progressively rounds become harder, but the user is selecting
+ * which round they would like to attempt."
+ *
+ * A stage is a whole run — the same `BOSS_COUNT` acts, the same sixteen waves,
+ * the same finale — played at a chosen level of pressure. Stage 1 is the game
+ * exactly as it shipped: `pressure` is 0 there and every term below multiplies
+ * by one, so nothing about the existing balance moves and every measurement in
+ * `tools/` that never passes a stage is still measuring the same game.
+ *
+ * WHAT MAKES A DEEPER STAGE HARDER, AND WHAT DELIBERATELY DOES NOT.
+ *
+ * NOT enemy health. `World.scaleForEnsemble` was cut from `1 + difficulty*40`
+ * to `1 + difficulty*7` because the owner reported "monsters shouldnt be that
+ * tanky, some monsters take forever to die", and a stage multiplier on top of
+ * that would walk the same number straight back up — one stage at a time,
+ * invisibly, in a system whose own history is compensations compounding. The
+ * stage terms therefore touch NOTHING that feeds `difficulty` or `escalation`,
+ * which are the two values every hp and speed formula in the game reads.
+ *
+ * What they do touch is how MANY shapes arrive and how FAST they arrive:
+ *
+ *   groups     more groups per wave        `STAGE_GROUPS`
+ *   size       more bodies in each group   `STAGE_SIZE`
+ *   cadence    less time between groups    `STAGE_CADENCE`
+ *   floor      the population floor the world tops the stage up to
+ *              (`World.targetOnScreen`), so the crowd it pulls forward is
+ *              bigger as well as sooner
+ *
+ * That is the survivors-like lever and it is the one the owner named twice —
+ * "increase the monster count by a lot, make them slower". Bodies that die
+ * when hit, in numbers, rather than sponges.
+ *
+ * THE TERMS ARE LINEAR IN `pressure`, NOT GEOMETRIC. Three multiplicative
+ * factors compound — this file's own `groups` comment records a difficulty
+ * pass that overshot for exactly that reason ("three rising factors multiply")
+ * — so each one is deliberately modest and the compounding is the point rather
+ * than an accident. At stage 12 that is 3.4x the groups and 1.9x the bodies in
+ * each, which is about 6.4x the stage arriving about twice as often.
+ * `tools/stages.mjs` measures what that actually costs in run length and
+ * whether the run is still winnable at each depth; the numbers here are
+ * starting values that measurement is allowed to overrule.
+ * ------------------------------------------------------------------------ */
+
+/** How many stages the set list offers. */
+export const STAGE_COUNT = 12;
+
+/** Extra groups per stage step, as a fraction of the stage-1 count. */
+const STAGE_GROUPS = 0.22;
+/** Extra bodies per group per stage step. */
+const STAGE_SIZE = 0.08;
+/** How much sooner the next group is due, per stage step. */
+const STAGE_CADENCE = 0.1;
+/** Extra population floor per stage step, as a fraction. Read by `World`. */
+export const STAGE_FLOOR = 0.14;
+
+/**
+ * `stage - 1`, clamped into the set list.
+ *
+ * Every stage term is written against THIS rather than against `stage`, so the
+ * "stage 1 changes nothing" property is arithmetic rather than a promise: a
+ * term reading `pressure` is zero at stage 1 whatever its coefficient is.
+ */
+export function stagePressure(stage: number): number {
+  return Math.max(0, Math.min(STAGE_COUNT, Math.round(stage || 1)) - 1);
+}
+
 /**
  * Which ACT of the run a wave belongs to, 1-based; `BOSS_COUNT` at the finale.
  *
@@ -203,8 +288,19 @@ const POOLS: Record<number, readonly Exclude<EnemyArchetype, 'conductor'>[]> = {
   3: ['stutter', 'arpeggiator', 'glissando', 'subdrop', 'echo', 'rush'],
 };
 
-export function planWave(index: number): WavePlan {
+export function planWave(index: number, stage = 1): WavePlan {
   const rng = new Rng(0x5eed ^ (index * 0x9e3779b9));
+  /*
+   * THE STAGE IS NOT IN THE SEED, deliberately.
+   *
+   * `Rng(0x5eed ^ index)` is what makes wave 7 always wave 7, and the file
+   * header says why it matters: the music seeds its lead melody from the same
+   * number. Folding the stage into it would make wave 7 of stage 6 a different
+   * wave *and a different tune* from wave 7 of stage 1, which is a much bigger
+   * change than "harder" and would break the one property this generator is
+   * built around. A deeper stage plays the same wave with more of it.
+   */
+  const pressure = stagePressure(stage);
   /*
    * The old ramp (index * 0.085) put wave 1 at 8.5% of full difficulty and wave
    * 5 at 42%, which is far too steep — a new player was fighting near-endgame
@@ -246,8 +342,22 @@ export function planWave(index: number): WavePlan {
   if (isBoss) {
     // A short escort before the boss: gives the director something to build
     // over, and gives the player a chance to top up powerups first.
+    /*
+     * The escort grows with the stage and the BOSS DOES NOT.
+     *
+     * A boss wave cannot start until the stage is empty, so anything added to
+     * the escort is added to the wait before the set piece — which is why the
+     * escort was cut to four and three in the first place. The stage term is
+     * therefore on the escort only and is the same `STAGE_SIZE` the ordinary
+     * waves use, so the deep-stage boss arrives behind a real crowd rather
+     * than behind a bigger sponge. Boss HP is untouched by depth on purpose:
+     * see the note at the head of the stage block.
+     */
+    const escort = 1 + pressure * STAGE_SIZE;
     return {
       index,
+      stage,
+      pressure,
       difficulty,
       escalation,
       isBoss: true,
@@ -256,8 +366,8 @@ export function planWave(index: number): WavePlan {
         // Four and three, not six and four: the escort is 2.5x tougher than it
         // was, and a boss wave cannot start until the stage is empty. The old
         // counts at the new hp pushed the telegraph minutes out.
-        { atBeat: 0, archetype: 'stutter', count: 4, formation: 'arc', homeY: 150 },
-        { atBeat: 8, archetype: 'pluck', count: 3, formation: 'line', homeY: 170 },
+        { atBeat: 0, archetype: 'stutter', count: Math.round(4 * escort), formation: 'arc', homeY: 150 },
+        { atBeat: 8, archetype: 'pluck', count: Math.round(3 * escort), formation: 'line', homeY: 170 },
       ],
       lengthBeats: 32,
     };
@@ -411,7 +521,7 @@ export function planWave(index: number): WavePlan {
    * sponges becomes thirty things that die when hit. That is the survivors
    * shape and it is what makes a crowd readable as a crowd.
    */
-  const groups = 9 + Math.floor(index / 0.42) + Math.floor(escalation * 6.0);
+  const groups = Math.round((9 + Math.floor(index / 0.42) + Math.floor(escalation * 6.0)) * (1 + pressure * STAGE_GROUPS));
   const entries: SpawnEntry[] = [];
 
   let beat = 0;
@@ -462,7 +572,7 @@ export function planWave(index: number): WavePlan {
     // supply side of the post-3-level-ladder rebalance, deliberately modest,
     // because this file's own history is two difficulty passes that overshot by
     // tightening several hands at once.
-    const scale = 3.4 + difficulty * 6.0;
+    const scale = (3.4 + difficulty * 6.0) * (1 + pressure * STAGE_SIZE);
     const count = Math.max(
       1,
       Math.round(
@@ -488,10 +598,22 @@ export function planWave(index: number): WavePlan {
     });
     // Whole bars only. Six beats is a bar and a half, which put every other
     // group on an off-beat and quietly undid the point of scheduling in beats.
-    beat += escalation > 0.4 ? 4 : rng.bool(0.45) ? 8 : 4;
+    /*
+     * A deeper stage shortens the gap, and it still lands on a WHOLE BAR.
+     *
+     * `4 / (1 + pressure * STAGE_CADENCE)` is not a bar at any stage past 1, and
+     * the comment above is the reason that matters: a fractional gap puts every
+     * later group on an off-beat and undoes the beat scheduling the whole file
+     * is built on. So the gap is quantised back to a bar, with a floor of one:
+     * the deep stages spend their pressure by turning eight-beat gaps into
+     * four-beat ones and then four into two, in whole bars, rather than by
+     * sliding the grid.
+     */
+    const gap = escalation > 0.4 ? 4 : rng.bool(0.45) ? 8 : 4;
+    beat += Math.max(2, Math.round(gap / (1 + pressure * STAGE_CADENCE) / 2) * 2);
   }
 
-  return { index, difficulty, escalation, isBoss: false, isFinalBoss: false, entries, lengthBeats: beat + 16 };
+  return { index, stage, pressure, difficulty, escalation, isBoss: false, isFinalBoss: false, entries, lengthBeats: beat + 16 };
 }
 
 /* ------------------------------------------------------------------------ *
