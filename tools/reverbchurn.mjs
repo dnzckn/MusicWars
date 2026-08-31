@@ -2,11 +2,30 @@
  * reverbchurn — how many times a bar does superdough REBUILD the reverb?
  *
  * WHY THIS EXISTS. A CPU profile of a live wave-8 run (`tools/jankwhere.mjs`)
- * put `generateReverb` at 1061ms of JS self time in a 15-second window — SEVEN
- * TIMES the next JavaScript entry, and the only plausible source of the 24
- * long tasks of 72-109ms recorded over the same window. That is not a
- * rasteriser artefact: it is V8 running superdough's own code, and it costs
- * the same on a real GPU.
+ * found FOUR FIFTHS of the game's JavaScript inside one 54-line span of
+ * superdough, all of it building reverb impulse responses:
+ *
+ *     3288ms  (anonymous)      dist:691  <- `convolver.buffer = G`
+ *     1265ms  mt.generateReverb dist:637 <- fill the buffer with decaying noise
+ *      182ms  Jn                dist:668 <- the Math.random() inside that fill
+ *       51ms  d.generate        dist:683
+ *     ------
+ *     4786ms of 7552ms of JS in a 15-second window = 63%, and 31% of wall
+ *
+ * The largest line is not the noise fill but the ASSIGNMENT: setting `.buffer`
+ * on a ConvolverNode makes the Web Audio implementation normalise the response
+ * and build the partitioned FFT convolution kernel, synchronously, and an
+ * eight-second stereo IR at 48kHz is 768k samples of that. So the cost is not
+ * one function that could be optimised — it is the rebuild itself, and the
+ * only fix is to stop asking for rebuilds.
+ *
+ * This also explains the 32 long tasks of 94-116ms in the same window, which
+ * is what the owner has been reporting as "lagginess" and "doesn't feel
+ * snappy". It is not a rasteriser artefact — it is V8 running superdough's own
+ * code. SwiftShader has faked four performance panics in this project, so:
+ * that profile ran on SwiftShader too, which INFLATES the non-JS `(program)`
+ * share. On a real GPU the denominator shrinks and the reverb's share of wall
+ * clock goes UP. The 31% is the conservative end.
  *
  * THE MECHANISM, read out of the dependency rather than guessed
  * (`node_modules/superdough/superdoughoutput.mjs:69`, `getReverb`):
