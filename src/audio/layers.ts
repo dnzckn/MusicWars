@@ -58,6 +58,14 @@ import { articulate, type TouchName } from './articulation';
  */
 import { clap, hatLayer, impact, kick, metal, ORBIT_AIR, ORBIT_HARMONY, ORBIT_LOW, snare, sub } from './kit';
 import { reese, wub, wubFor } from './wobble';
+import {
+  applyVoice,
+  INSTRUMENTS,
+  type ResolvedVoice,
+  type SynthOnly,
+  type VoiceRole,
+  voiceSource,
+} from './soundfonts';
 
 export type StemId =
   | 'sub'
@@ -637,27 +645,100 @@ export const MOVEMENT_MIX: Record<Movement, Partial<Record<StemId, number>>> = {
  * them apart would merge a 47-57 window with a 78-90 one and report a single
  * group sprawling forty-three semitones.
  */
+/*
+ * FOUR OF THESE FIVE ARE NOW REAL INSTRUMENTS, and the group identity is the
+ * SOURCE rather than the oscillator.
+ *
+ * `src/audio/soundfonts.ts` owns which instrument each role plays and why, and
+ * owns the fallback: a lane whose samples do not load keeps the oscillator it
+ * had before, per-lane, so a flaky connection costs a timbre and never a part.
+ * `s`/`pw`/`unison` below are the WRITTEN source — what the score says, which
+ * in Node is also what the builders emit, so the gates measure the shipping
+ * path rather than the fallback. `resolveTag` is what the builders and any tool
+ * that wants the RUNTIME answer should call.
+ */
 export interface VoiceTag {
   /** The `theory.LANE_RANGE` window this group is folded into. */
   readonly lane: LaneId;
   readonly s: string;
   readonly pw?: number;
   readonly unison?: number;
+  /**
+   * The instrument role, when this group has one. `arp` deliberately does not:
+   * every sampled candidate in its register is a struck metal bar, which is the
+   * complaint rather than the cure. See the tombstone in `soundfonts.ts`.
+   */
+  readonly role?: VoiceRole;
 }
 
-export const VOICE_TAGS = {
-  pad: { lane: 'pad', s: 'supersaw', unison: 3 },
-  colour: { lane: 'colour', s: 'supersaw', unison: 2 },
-  stab: { lane: 'stab', s: 'sawtooth' },
-  motor: { lane: 'motor', s: 'pulse', pw: 0.34 },
-  arp: { lane: 'arp', s: 'triangle' },
-} as const satisfies Record<string, VoiceTag>;
+/*
+ * THE TAG'S `s` IS THE SOURCE THE SCORE IS WRITTEN WITH, WHICH IS NOT ALWAYS
+ * THE INSTRUMENT.
+ *
+ * `soundfonts.ts`'s `SAMPLED_ROLES` decides which roles are allowed a sampled
+ * instrument at all, and it is currently the bass alone — the harmony and
+ * melody lanes went back to synthesis after the first build that shipped them
+ * was heard ("sounds so whack like carnival"). A role that is not enabled has
+ * an entry in `INSTRUMENTS`, so re-enabling it is one line, but it emits its
+ * oscillator.
+ *
+ * So this table asks `voiceSource` rather than reading `INSTRUMENTS[x].font`.
+ * Written as a literal it would have said `gm_synth_strings_1` while the
+ * builders emitted `supersaw`, and `registermap` builds its window table from
+ * exactly these entries — the gate would have gone red reporting "a lane is
+ * silent", which is AGENTS.md §3's own recorded failure mode for the third
+ * time in this file.
+ */
+const roled = (lane: LaneId, role: VoiceRole): VoiceTag => {
+  const v = voiceSource(role);
+  return { lane, role, s: v.s, pw: v.pw, unison: v.unison };
+};
 
-/** Apply a voice tag. The three controls that decide WHICH INSTRUMENT this is. */
-export function tagVoice(p: Pattern, t: VoiceTag): Pattern {
-  let out = p.s(t.s);
-  if (t.pw !== undefined) out = out.pw(t.pw);
-  if (t.unison !== undefined) out = out.unison(t.unison);
+export const VOICE_TAGS = {
+  pad: roled('pad', 'pad'),
+  colour: roled('colour', 'colour'),
+  stab: roled('stab', 'stab'),
+  motor: roled('motor', 'motor'),
+  arp: { lane: 'arp', s: 'triangle' },
+} satisfies Record<string, VoiceTag>;
+
+/**
+ * The source controls this tag emits RIGHT NOW.
+ *
+ * In Node that is always the written source; in the browser it is the
+ * oscillator until the samples are resident. Exported so a tool can build a
+ * group key for either mode from one definition instead of a copy.
+ */
+export function resolveTag(t: VoiceTag): ResolvedVoice {
+  if (t.role) return voiceSource(t.role);
+  return { s: t.s, pw: t.pw, unison: t.unison, sampled: false };
+}
+
+/**
+ * Apply a voice tag. The controls that decide WHICH INSTRUMENT this is.
+ *
+ * `extra` carries the controls superdough reads only inside one oscillator's
+ * branch, and it is passed IN rather than chained by the caller so that it
+ * disappears with the oscillator. `.detune()`/`.spread()` are supersaw-only and
+ * `.pwrate()`/`.pwsweep()` are pulse-only (AGENTS.md §4); set on a soundfont
+ * they are silently inert, which is a defect this project has already shipped
+ * once and which `tools/session.mjs` now counts.
+ */
+export function tagVoice(p: Pattern, t: VoiceTag, extra?: SynthOnly): Pattern {
+  const v = resolveTag(t);
+  let out = p.s(v.s);
+  if (v.n !== undefined) out = out.n(v.n);
+  if (v.pw !== undefined) out = out.pw(v.pw);
+  if (v.unison !== undefined) out = out.unison(v.unison);
+  if (!extra) return out;
+  if (v.s === 'supersaw') {
+    if (extra.detune !== undefined) out = out.detune(extra.detune);
+    if (extra.spread !== undefined) out = out.spread(extra.spread);
+  }
+  if (v.s === 'pulse') {
+    if (extra.pwrate !== undefined) out = out.pwrate(extra.pwrate);
+    if (extra.pwsweep !== undefined) out = out.pwsweep(extra.pwsweep);
+  }
   return out;
 }
 
@@ -1936,10 +2017,15 @@ export function buildMotor(m: MusicalState): Pattern {
     slots: number,
   ): Pattern =>
     articulate(
-      tagVoice(note(pattern), VOICE_TAGS.motor)
+      tagVoice(note(pattern), VOICE_TAGS.motor, { pwrate: 0.35, pwsweep: 0.3 })
       /*
-       * THE DUTY CYCLE MOVES NOW, and that is this lane's share of "the base
-       * instruments havent changed".
+       * THE DUTY CYCLE MOVES — ON THE FALLBACK. This lane is an overdriven
+       * guitar unless its samples failed to load, and `pwrate`/`pwsweep` are
+       * pulse-only, so they are handed to `tagVoice` and applied only when the
+       * pulse is what is actually sounding. The paragraphs below are the
+       * argument for the pulse's duty sweep and they still hold for the lane's
+       * fallback; the sweep was an attempt to make ONE waveform stop sounding
+       * like a harpsichord jack, and a sampled guitar does not need it.
        *
        * `pw(0.5)` is a 25% duty (superdough maps duty as `(1 - pw)/2`) held
        * perfectly still for the whole project's life, on the most-heard sound
@@ -1963,8 +2049,6 @@ export function buildMotor(m: MusicalState): Pattern {
        * because 25% is the thinnest point of the pulse family and a sweep
        * should not be centred on the extreme of its own range.
        */
-      .pwrate(0.35)
-      .pwsweep(0.3)
       /*
        * A little more top, because this is the only continuous voice left.
        *
@@ -2387,8 +2471,24 @@ export function buildBass(m: MusicalState): Pattern {
       : p.lpq(5).lpenv(2).lpdecay(0.09);
   const voice = (line: string): Pattern =>
     glide(
-      shaped(note(line))
-      .s('sawtooth')
+      /*
+       * A FINGERED ELECTRIC BASS, not a sawtooth — see `soundfonts.ts`.
+       *
+       * The part was already written as a bass guitar part: the default figure
+       * is an octave pedal in eighth notes that walks onto the next chord,
+       * which is a bass GUITAR idiom, and it was being played on a sawtooth
+       * through a Moog ladder. `gm_electric_bass_finger` is the corpus's
+       * most-used font, 12 songs of 60.
+       *
+       * The ladder, the drive and the distortion below all STAY. They are the
+       * amp, and a bass guitar goes through one; the measurement that removed
+       * this lane's highpass (33-52 dB across its own range) is about the
+       * filter chain and is untouched by the source changing. The `chase`
+       * feel's 808 also stays, because `glide` is applied outside this and
+       * re-sets `.s('sine')` as the last writer — a drum machine is not an
+       * instrument and no sample of one belongs here.
+       */
+      applyVoice(shaped(note(line)), 'bass')
     /*
      * THE ENDS OF THE NOTE ARE NOT WRITTEN HERE ANY MORE - see
      * `articulation.ts`, touch `played`.
@@ -2826,11 +2926,19 @@ export function buildChords(m: MusicalState): Pattern {
        * one-note-per-bar intro can wait a whole bar before making a sound —
        * measured at four seconds of literal silence after pressing start.
        */
-      tagVoice(note(`${n}`).struct(m.section === 'intro' ? 'x x' : 'x'), VOICE_TAGS.pad)
-        // 14 cents. Wide enough to beat slowly, narrow enough that a held
-        // fourth is still a fourth — past about 0.3 the chord goes sour.
-        .detune(0.14)
-        .spread(0.7)
+      /*
+       * 14 cents. Wide enough to beat slowly, narrow enough that a held fourth
+       * is still a fourth — past about 0.3 the chord goes sour.
+       *
+       * Passed to `tagVoice` rather than chained, because both controls are
+       * supersaw-only and this lane is a sampled string section unless the
+       * samples failed to load. A real ensemble brings its own beating; the
+       * detune was always an imitation of one.
+       */
+      tagVoice(note(`${n}`).struct(m.section === 'intro' ? 'x x' : 'x'), VOICE_TAGS.pad, {
+        detune: 0.14,
+        spread: 0.7,
+      })
         .pan(pan)
         .vib(4.6 + i * 0.43)
         .vibmod(m.sig.openness.range(0.045, 0.075))
@@ -2913,9 +3021,9 @@ export function buildChords(m: MusicalState): Pattern {
       tagVoice(
         note(String(foldInto([pitch], LANE_RANGE.colour.lo, LANE_RANGE.colour.hi)[0] ?? pitch)),
         VOICE_TAGS.colour,
+        // supersaw-only; see `tagVoice`. A sampled choir has its own ensemble.
+        { detune: 0.06, spread: 0.9 },
       )
-        .detune(0.06)
-        .spread(0.9)
         // Slow, and slower than the bed's: an inner voice moving faster than
         // the part above it reads as nervousness. Both controls set, always.
         .vib(0.37 + i * 0.24)
@@ -3607,19 +3715,51 @@ export function buildLead(m: MusicalState): Pattern {
    * not a body, it is a second lead in the wrong octave.
    */
   const isBody = (osc: string): boolean => osc === 'sawtooth';
-  const voice = (line: string, transpose: number, level: Patternable, osc: string, pan: number): Pattern =>
-    note(line)
+  /*
+   * THE TUNE IS AN OBOE — see `soundfonts.ts`, role `leadTune`.
+   *
+   * `'tune'` is a token rather than a waveform name, because the answer is now
+   * a runtime one: `gm_oboe` when its samples are resident, the triangle this
+   * lane always had when they are not. Everything else in this function that
+   * branches on the oscillator (`isBody`, `decor`) is unchanged and still
+   * branches on `'sawtooth'` and `'tune'`, so the boss stack and the
+   * octave-down body are untouched.
+   *
+   * This function's own comment says the melody "has to stay legible over a
+   * busy stage" and then plays it on the least penetrating waveform there is.
+   * An oboe is the instrument an orchestra tunes to for exactly that property.
+   */
+  const tuneVoice = voiceSource('leadTune');
+  const decorVoice = voiceSource('leadDecor');
+  const resolved = (osc: string): ResolvedVoice =>
+    osc === 'tune' ? tuneVoice : osc === 'decor' ? decorVoice : { s: osc, sampled: false };
+  const voice = (line: string, transpose: number, level: Patternable, osc: string, pan: number): Pattern => {
+    const v = resolved(osc);
+    const src = v.s;
+    let p = note(line)
       // See the note on `.add(note(n))` in buildArp: a bare number is dropped.
       .add(note(transpose))
-      .s(osc)
+      .s(src);
+    if (v.n !== undefined) p = p.n(v.n);
+    /*
+     * `pw` IS PULSE-ONLY AND IS NOW SET ONLY ON A PULSE.
+     *
+     * It used to be unconditional, with a comment arguing that "on a triangle
+     * or a sawtooth it is inert, and a conditional here would be a second
+     * place to keep in step with `decor`". That was true and it is the exact
+     * shape of defect `tools/session.mjs` counts — a control that parses,
+     * type-checks, reaches the hap and does nothing. There is no second place
+     * to keep in step now: the condition is on the RESOLVED source, so it
+     * cannot disagree with what `.s()` was handed.
+     */
+    if (src === 'pulse') p = p.pw(v.pw ?? 0.5);
+    return p
       /*
-       * superdough's worklet maps duty as `(1 - pw) / 2`, so 0.5 is a 25%
-       * pulse — the NES melody duty, and the one whose 3rd and 5th partials
-       * are strongest. Set unconditionally because `pw` is read only in the
-       * pulse branch; on a triangle or a sawtooth it is inert, and a
-       * conditional here would be a second place to keep in step with `decor`.
+       * superdough's worklet maps duty as `(1 - pw) / 2`, so the 0.5 set above
+       * is a 25% pulse — the NES melody duty, and the one whose 3rd and 5th
+       * partials are strongest. That is why the decoration lines are pulses;
+       * see `decor`.
        */
-      .pw(0.5)
       /*
        * The envelope is `articulation.ts`'s, touch `sung`, applied at the
        * bottom of this function so it is the last writer.
@@ -3668,6 +3808,7 @@ export function buildLead(m: MusicalState): Pattern {
       .gain(level)
       .pan(pan)
       .orbit(ORBIT_HARMONY);
+  };
 
   /*
    * The melody's register follows the player up the screen — as a signal.
@@ -3764,26 +3905,49 @@ export function buildLead(m: MusicalState): Pattern {
    * dominates. That is the property that makes it the right change rather than
    * simply a louder one.
    *
-   * The SKELETON keeps its triangle. The tune itself is not being re-voiced —
-   * it sings on the flute it always did. The filigree and the ornament are the
-   * decoration around it, and giving a decorative line its own instrument is
-   * what an arranger does with it. It is also the canon: the melody channels on
-   * an NES are the two PULSE channels, and the triangle is the bass. This score
-   * had it exactly the other way round.
+   * THE DECORATION FOLLOWS THE TUNE ONTO THE OBOE, AND IT WAS MEASURED BEFORE
+   * IT MOVED — against the paragraph above, which is the only quantitative
+   * handle this project has on brightness and which argues for the pulse.
    *
-   * Only when the trio's own oscillator is the triangle — the boss stack and
-   * the octave-down body call this with `sawtooth`, and those are deliberately
+   * The first draft of this pass LEFT the two lines on the pulse and wrote out
+   * a deferral: the air measurement says the 2 kHz band is 57% this lane and
+   * that the pulse put it there, and `registermap`'s band model is a Fourier
+   * series over a named waveform, so nothing here could say what a recording
+   * does. Trading a measured property for a plausible one is the trade
+   * `AGENTS.md` exists to refuse.
+   *
+   * `tools/fontcheck.mjs --spectrum` then settled it, decoding the real sample
+   * and averaging five pitches across this lane's own window, MIDI 69-83:
+   *
+   *     source                    500     1k     2k     4k     8k   | >2 kHz
+   *     gm_oboe                   3.7   58.3   34.7    3.4    0.0   |  38.1%
+   *     pulse pw0.5 (theory)     32.9   39.7   16.2    5.9    3.7   |  27.4%
+   *
+   * The oboe is brighter than the pulse by half again, so the objection is
+   * gone and the arranger's answer stands: three lines of one melody are one
+   * instrument. `leadDecor` is a separate role from `leadTune` purely so that
+   * the FALLBACK is right — a player whose fonts do not load still gets the
+   * 25%-duty pulse the air measurement was taken on, not a second triangle.
+   *
+   * The old argument, kept because it is the argument for the pulse if this is
+   * ever revisited: the melody channels on an NES are the two PULSE channels
+   * and the triangle is the bass, and giving a decorative line its own
+   * instrument is what an arranger does with it.
+   *
+   * Only when the trio's own source is the tune's — the boss stack and the
+   * octave-down body call this with `sawtooth`, and those are deliberately
    * dark (`isBody` gives them a 500-1400 Hz lowpass).
    */
-  const decor = (osc: string): string => (osc === 'triangle' ? 'pulse' : osc);
+  const decor = (osc: string): string => (osc === 'tune' ? 'decor' : osc);
   const trio = (transpose: number, level: number, osc: string, pan: number): Pattern[] => [
     voice(lines.skeleton, transpose, level, osc, pan),
     voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), decor(osc), clamp01(pan - 0.14)),
     voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), decor(osc), clamp01(pan + 0.14)),
   ];
-  // The tune sings on a triangle; the octave below is the saw that gives it
-  // body. The descant is a triangle too — a sixth above the melody is the
-  // highest pitch in the mix and the last place that wants a saw.
+  // The tune sings on the oboe (`'tune'`, falling back to the triangle it
+  // always had); the octave below is the saw that gives it body. The descant
+  // sings on the tune's own voice — a sixth above the melody is the highest
+  // pitch in the mix and the last place that wants a saw.
   /*
    * WIDTH, and where it is NOT applied.
    *
@@ -3800,7 +3964,7 @@ export function buildLead(m: MusicalState): Pattern {
    * voice with something behind it rather than as one point source. Stereo
    * placement is the cheapest separation there is, and it costs no notes.
    */
-  const voices = [...trio(0, lead * 1.15, 'triangle', 0.5), ...trio(-12, 0.3, 'sawtooth', 0.4)];
+  const voices = [...trio(0, lead * 1.15, 'tune', 0.5), ...trio(-12, 0.3, 'sawtooth', 0.4)];
   /*
    * A boss is scored for LOW BRASS.
    *
@@ -3824,7 +3988,7 @@ export function buildLead(m: MusicalState): Pattern {
     voices.push(...trio(-12, 0.34 + m.bossPhase * 0.08, 'sawtooth', 0.6));
     voices.push(...trio(-24, 0.3 + m.bossPhase * 0.07, 'sawtooth', 0.42));
   }
-  if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'triangle', 0.62));
+  if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'tune', 0.62));
   return articulate(
     octave(stack(...voices))
       .delay(open ? 0.46 : 0.3)

@@ -3049,3 +3049,85 @@ at 21 bodies, 2.40ms at 197**, and `World.update` 0.10ms -> 0.20ms per step. The
 two together are under 8% of wall time in a build that is drawing 22 fps, so
 neither the renderer nor the simulation is what the frame is going to. Absolute
 fps from that harness is software-rasterised and means nothing; the ratio does.
+
+---
+
+## Soundfonts: `fontlanes` (node) and `fontcheck` (browser)
+
+Six of the seven pitched voice roles play General MIDI instruments now
+(`src/audio/soundfonts.ts`). Two tools guard it, and they were split by what
+each CAN see rather than by convenience.
+
+**`fontlanes` walks BOTH modes and compares them hap by hap.** The gates query
+the builders in Node, where there is no browser and no network, so
+`soundfonts.ts` reports the score AS WRITTEN there — the instruments. That is
+deliberate: if it reported the fallback, every gate in the suite would measure
+the oscillator score, which is the thing being replaced, and report green on a
+path no player hears. The consequence is that **nothing else in `tools/` ever
+exercises the fallback**, which is §3's "unmeasured properties rot" with a new
+costume. So this one flips the module's mode between two passes and requires the
+two to differ in exactly one respect: the source. Same onsets, same pitches,
+same hap count, and every hap the swap does not own byte-identical.
+
+Two versions of it were wrong in instructive ways.
+
+*Filtering haps by source name and comparing counts.* `pad` and `colour` both
+fall back to `supersaw`, so a source filter merges two lanes into one; and
+`buildBass` also emits the halftime wobble, which is a sawtooth in both modes
+and so appeared only in the fallback's filter. It reported "the fallback plays
+different music" on three lanes, all three of them the tool. Walking the two
+lists together fixes it and is strictly stronger.
+
+*Keying the role table on the font alone.* `leadTune` and `leadDecor` are two
+lanes of one instrument — both emit `gm_oboe` with the same `n` and are
+genuinely indistinguishable in the haps, which is correct. One silently shadowed
+the other and the tune reported zero notes. The key is `(font, fallback)`, which
+is unique because their fallbacks differ, and that is only readable at all
+because both modes are queried.
+
+`SHIPPED` inside it is a FROZEN copy of what each lane sounded like at `e8d61bd`
+and is the one place in this repo where §3's "import the constant" is wrong on
+purpose: it is a historical record, not a live value, and if someone changes a
+fallback oscillator the whole point is that this goes red.
+
+**`fontcheck` is the half that needs a real page**: whether the packaging
+resolves under Vite at all, how many bytes cross the wire, how long the player
+waits, and whether the game makes a sound with the font host blocked
+(`page.route(... abort)`).
+
+*Bytes are counted in Playwright, not in the page.* Resource Timing zeroes
+`transferSize` and `encodedBodySize` for a cross-origin response with no
+`Timing-Allow-Origin`, and GitHub Pages sends none, so the page's own count is a
+confident 0 for a load that plainly fetched six files.
+
+*Both runs listen at the same wall-clock offset.* The first version measured as
+soon as the font load settled — 4 s after START online, 0.2 s offline — and
+reported the fallback as four times quieter. The intro ramps; that was the tool.
+
+*`--spectrum` is the only octave-band figure in this repository that describes
+an actual instrument.* `registermap`'s band table is a Fourier series over a
+named waveform and there is no series for a recording, so every soundfont row
+there is modelled from the oscillator it replaced and is marked `~`. This
+decodes the real sample through the page's own loader and integrates it. Two
+findings came straight out of it and changed the code:
+
+- **The stab's first variant was a wavetable.** `gm_electric_guitar_clean` n=1
+  was chosen off the catalogue — six zones at 44.1 kHz for 8955 bytes. Measured:
+  **86.7% of its energy above 2 kHz out of a 53 ms sample**, against 25.3% for
+  the sawtooth it would have replaced. n=0 is 2196 ms of real recording at
+  11.7%. Chosen on that.
+- **The lead's decoration moved after the measurement said it could.** It was
+  left on a 25%-duty pulse because the mix's air was measured to come from
+  there. Averaged over five pitches across MIDI 69-83, `gm_oboe` reads 38.1%
+  above 2 kHz against the pulse's 27.4%, so it moved.
+
+*Average over the range; one pitch is not an instrument.* The same oboe reads
+2.2% above 2 kHz at MIDI 76 and 97.6% at MIDI 79. Both are correct: nearly all
+its energy is in its second harmonic and the 2 kHz band edge at 1414 Hz falls
+between that harmonic's frequency at the two pitches. A single-pitch band share
+measures where the band edges are.
+
+*And use a real FFT.* The first version decimated the bin grid by four to avoid
+writing one. A Hann-windowed partial spans about three bins, so that misses
+narrow peaks while sampling broadband content uniformly — it reported a clean
+electric guitar with 43% of its energy above 8 kHz.

@@ -10,7 +10,10 @@
  *    total silence with no error at all.
  *  - No samples are loaded by default and none ship with the packages, so
  *    `s("bd")` throws. Every drum in this game is synthesised from oscillators
- *    and noise (see `kit.ts`), which also means the game works offline.
+ *    and noise (see `kit.ts`), which also means the drums work offline. The
+ *    PITCHED lanes now fetch General MIDI soundfonts at runtime and fall back
+ *    to their oscillators when that fails — see `soundfonts.ts` and the call
+ *    to `beginSoundfontLoad` below.
  *  - `sync: true` would select a SharedWorker-based clock whose worker file
  *    Vite inlines as a `data:` URL, which Chrome rejects. Never pass it.
  *  - Mini-notation in plain TypeScript requires `miniAllStrings()`; without it
@@ -31,6 +34,7 @@ import {
 } from '@strudel/webaudio';
 import { setStringParser } from '@strudel/core';
 import { BEATS_PER_BAR, type Transport } from '../core/transport';
+import { beginSoundfontLoad } from './soundfonts';
 
 // Safe at module load: pure string-parser wiring, no AudioContext, no DOM.
 miniAllStrings();
@@ -151,6 +155,29 @@ export function bootAudio(bpm: number): Promise<Repl> {
 
     await registerSynthSounds();
     registerZZFXSounds();
+
+    /*
+     * REAL INSTRUMENTS, FETCHED, AND DELIBERATELY NOT AWAITED.
+     *
+     * `src/audio/soundfonts.ts` explains the whole mechanism. What matters at
+     * this call site is the ORDER and the absence of an `await`:
+     *
+     *   - It runs after the context is resumed, because the warm-up decodes
+     *     samples and needs one. It does not need a RUNNING context — decoding
+     *     works on a suspended one — but this is the first point where the
+     *     context is certainly built and the gesture is certainly spent.
+     *   - It is not awaited, so START still starts the music within a frame.
+     *     Every lane plays the oscillator it always played until its samples
+     *     are resident, then one rebuild swaps them in. A 300 ms wait on a
+     *     title screen is a bug report; 300 ms of the old score is not.
+     *   - It cannot reject. Every failure path inside resolves to a report
+     *     with the failed roles marked, and those lanes keep their oscillator.
+     *     `.catch` is here only because an unhandled rejection would be logged
+     *     even from a promise nobody reads.
+     */
+    void beginSoundfontLoad(ctx).catch((err: unknown) => {
+      console.warn('[audio] soundfonts unavailable; every lane keeps its oscillator', err);
+    });
 
     // Quadratic faders. Linear gain sounds wrong when the director rides a
     // layer's level continuously: half the number is nowhere near half as loud.

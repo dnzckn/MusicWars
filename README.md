@@ -1,9 +1,20 @@
 # MusicWars
 
-A survivors-like whose soundtrack is not a file. There are no audio assets in
-this repository — not one sample, not one loop. Every kick, chord and riser is
-synthesised in the browser by [Strudel](https://strudel.cc) and arranged in real
-time from what is happening on screen.
+A survivors-like whose soundtrack is not a file. There is no recorded music in
+this repository — not one loop, not one bar. Every note is decided in the
+browser by [Strudel](https://strudel.cc) and arranged in real time from what is
+happening on screen.
+
+The drums, the sub and the risers are synthesised from oscillators and noise.
+The seven pitched lanes play **General MIDI instruments** — a fingered bass, a
+string section, a choir, two guitars and an oboe — fetched at runtime from
+[webaudiofontdata](https://felixroos.github.io/webaudiofontdata/), 343 KB
+gzipped across six files, about 0.9 s on a warm connection and 4 s cold. Nothing
+waits for them: the game starts on the oscillators those lanes used to use and
+swaps the instruments in underneath. **If the fetch fails the game keeps playing
+on the oscillators**, per lane, so it works with no network at all.
+See [`src/audio/soundfonts.ts`](src/audio/soundfonts.ts) for which instrument
+each lane plays and why, and `node tools/fontcheck.mjs` for the measurement.
 
 **The ensemble on stage is the mix.** Each weapon you hold is an instrument
 playing its part, each enemy archetype has a motif, and the density of the

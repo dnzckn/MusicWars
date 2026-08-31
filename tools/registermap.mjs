@@ -43,6 +43,14 @@ const strudel = await import('@strudel/core');
 const layers = await import('../src/audio/layers.ts');
 const { VOICE_TAGS } = layers;
 const { buildChord, PROGRESSIONS, LANE_RANGE, MIN_LANE_SPAN } = await import('../src/audio/theory.ts');
+/*
+ * The instrument table, IMPORTED. Six lanes are General MIDI soundfonts now and
+ * this file's harmonic model cannot describe a recording — see `FALLBACK_OSC`
+ * and the note above `harmonicAmp`.
+ */
+const SF = await import('../src/audio/soundfonts.ts');
+const FALLBACK_OSC = {};
+for (const role of SF.VOICE_ROLES) FALLBACK_OSC[SF.INSTRUMENTS[role].font] = SF.INSTRUMENTS[role].osc;
 
 const argv = process.argv.slice(2);
 const opt = (n, d) => {
@@ -467,7 +475,32 @@ const bandOf = (f) => {
  * in the wrong order. Sanity: summing a_k^2 / 2 over k reproduces each shape's
  * mean square (sine 0.5, saw 1/3, square 1, triangle 1/3).
  */
+/*
+ * A SAMPLED INSTRUMENT HAS NO FOURIER SERIES, and pretending otherwise was
+ * about to make this whole table fiction.
+ *
+ * Six lanes are `gm_*` soundfonts. The first run after that change returned 0
+ * from the `default` branch for every one of them, and the printed mix went
+ * from "the pad owns the 250 Hz band" to "the kick is 67% of the music" —
+ * because the six loudest pitched groups had silently dropped out of the sum.
+ * A readout that answers a question it cannot answer is worse than one that
+ * refuses.
+ *
+ * So a soundfont is modelled from THE OSCILLATOR IT REPLACED, taken from
+ * `soundfonts.ts` rather than from a copy here, and every such row is marked
+ * `~` with the count printed under the table. That is a stated approximation
+ * with a stated basis — the fallback was chosen as the nearest synthetic
+ * equivalent of each instrument — and it is NOT a measurement. The measurement
+ * is `tools/fontspectrum.mjs`, which decodes each font in a browser and reports
+ * its real octave bands.
+ *
+ * What this cannot see, on top of everything the header already lists: a
+ * recording's noise floor, its attack transient, and the fact that a sampled
+ * choir at 740 Hz is a formant structure and not a harmonic ladder at all.
+ */
 function harmonicAmp(src, k, pw, uni) {
+  const fb = FALLBACK_OSC[src];
+  if (fb) return harmonicAmp(fb.s, k, fb.pw ?? pw, fb.unison ?? uni);
   switch (src) {
     case 'sine':
       return k === 1 ? 1 : 0;
@@ -590,12 +623,23 @@ const grand = totalBands.reduce((a, b) => a + b, 0);
 console.log('');
 console.log('COMPUTED octave-band shares of the summed model (not a render; see the note in source)');
 console.log(`faders used: ${Object.entries(FADERS).map(([k, v]) => `${k}:${v.toFixed(2)}`).join(' ')}`);
+console.log("`~` = a sampled instrument, MODELLED from the oscillator it replaced. Not a measurement.");
 console.log('group                  31.5     63    125    250    500     1k     2k     4k     8k    16k   | share of mix');
+let modelled = 0;
+let modelledShare = 0;
+let printedGroups = 0;
 for (const g of rows) {
   const tot = g.bands.reduce((a, b) => a + b, 0);
   if (tot <= 0) continue;
+  printedGroups++;
+  const src = g.key.split('/')[1].split(':')[0];
+  const approx = FALLBACK_OSC[src] !== undefined;
+  if (approx) {
+    modelled++;
+    modelledShare += tot / grand;
+  }
   const cells = g.bands.map((v) => ((v / tot) * 100).toFixed(1).padStart(6)).join(' ');
-  console.log(`${g.key.padEnd(20)} ${cells}   | ${((tot / grand) * 100).toFixed(1).padStart(5)}%`);
+  console.log(`${approx ? '~' : ' '}${g.key.padEnd(19)} ${cells}   | ${((tot / grand) * 100).toFixed(1).padStart(5)}%`);
 }
 console.log(
   `MIX                  ${totalBands.map((v) => ((v / grand) * 100).toFixed(1).padStart(6)).join(' ')}   | 100.0%`,
@@ -603,6 +647,11 @@ console.log(
 const share250500 = ((totalBands[3] + totalBands[4]) / grand) * 100;
 const shareAir = ((totalBands[6] + totalBands[7] + totalBands[8] + totalBands[9]) / grand) * 100;
 console.log(`COMPUTED: 250+500 Hz ${share250500.toFixed(1)}%, above 2 kHz ${shareAir.toFixed(1)}%, over ${hapsSeen} haps in ${rows.length} groups`);
+console.log(
+  `   of which ${modelled} of ${printedGroups} printed groups are SAMPLED and modelled from their fallback ` +
+    `oscillator — ${(modelledShare * 100).toFixed(1)}% of the modelled energy. Those figures are an ` +
+    `approximation with a stated basis, not a spectrum. Measure with tools/fontspectrum.mjs.`,
+);
 
 console.log('');
 console.log('who owns the air: each group\'s share of the mix\'s total energy ABOVE 2 kHz');
@@ -831,13 +880,49 @@ const HEAVY = 9;
  * gate, it is a note. This one has now been seen at 4 and cannot go back to 5
  * without somebody arguing for it in this file.
  */
-const HEAVY_MAX = 4;
+/*
+ * THE RATCHET MOVED SIDEWAYS: the ceiling is on LANE PAIRS now, and a second
+ * assertion names them.
+ *
+ * The group-pair count went 4 -> 5 the moment six lanes became soundfonts, and
+ * NOT ONE NOTE MOVED. `buildBass` emits two parts — the ordinary figure and the
+ * halftime wobble — and both were `bass/sawtooth`, one group. The figure is
+ * `bass/gm_electric_bass_finger` now and the wobble is still a sawtooth, so the
+ * single collision "the bass line crosses the bed" is reported twice:
+ *
+ *     bass/gm_electric_bass_finger 45-64 vs chords/gm_synth_strings_1 47-57
+ *     chords/gm_synth_strings_1 47-57 vs bass/sawtooth 45-65
+ *
+ * Raising the ceiling to 5 would have been the relaxation `AGENTS.md` §3
+ * forbids, and it would also have left the metric gameable in a new way: split
+ * a lane's source and its collisions multiply, so every future source change
+ * would need the ceiling nudged again.
+ *
+ * So the count is taken over LANE PAIRS, which is what "multiple conflicting
+ * melodies" is actually about, and the same figure is 3 BEFORE and 3 AFTER this
+ * pass — measured on both trees, same 66-pair sweep. The ceiling is set at 3.
+ *
+ * A count alone is weaker than the old one in one respect: it cannot see a lane
+ * growing a second colliding part. `HEAVY_PAIRS` closes that — every heavy lane
+ * pair must be one of the three relationships named below, so an arp landing on
+ * the tune fails even though the count would not move. Two assertions where
+ * there was one, and neither can be satisfied by renaming an oscillator.
+ */
+const HEAVY_MAX = 3;
+/*
+ * The three relationships an arranger keeps, by stem pair, sorted and joined.
+ *   bass|chords  — the bass line crossing the bed
+ *   bass|lead    — the tune's octave doubling against the halftime growl
+ *   chords|lead  — the upper structure sitting under the tune
+ */
+const HEAVY_PAIRS = new Set(['bass|chords', 'bass|lead', 'chords|lead']);
 const pitchedRows = rows.filter((g) => PITCHED.has(g.lane) && g.notes.length >= 20);
 const winOf = (g) => {
   const ns = g.notes.slice().sort((a, b) => a - b);
   return [q(ns, 0.05), q(ns, 0.95)];
 };
 const heavy = [];
+const heavyLanes = new Map();
 let pairs = 0;
 for (let i = 0; i < pitchedRows.length; i++) {
   for (let j = i + 1; j < pitchedRows.length; j++) {
@@ -848,19 +933,36 @@ for (let i = 0; i < pitchedRows.length; i++) {
     const [al, ah] = winOf(a);
     const [bl, bh] = winOf(b);
     const ov = Math.min(ah, bh) - Math.max(al, bl);
-    if (ov >= HEAVY) heavy.push(`${a.key} ${al}-${ah} vs ${b.key} ${bl}-${bh} overlap ${ov}`);
+    if (ov >= HEAVY) {
+      heavy.push(`${a.key} ${al}-${ah} vs ${b.key} ${bl}-${bh} overlap ${ov}`);
+      const lp = [a.lane, b.lane].sort().join('|');
+      heavyLanes.set(lp, (heavyLanes.get(lp) ?? 0) + 1);
+    }
   }
 }
-console.log(`   cross-lane pairs compared: ${pairs}; overlapping by ${HEAVY}+ semitones: ${heavy.length}`);
+console.log(`   cross-lane pairs compared: ${pairs}; group pairs overlapping by ${HEAVY}+ semitones: ${heavy.length}`);
 for (const h of heavy) console.log(`      ${h}`);
+const lanePairs = [...heavyLanes.entries()].map(([k, n]) => `${k} (${n} group pair${n === 1 ? '' : 's'})`);
+console.log(`   distinct LANE pairs in near unison: ${heavyLanes.size} — ${lanePairs.join(', ') || '(none)'}`);
 if (pairs === 0) {
   console.log('   FAIL  no cross-lane pair was compared. A check with no denominator is not a pass.');
   contractFail = true;
-} else if (heavy.length > HEAVY_MAX) {
-  console.log(`   FAIL  ${heavy.length} cross-lane pairs share ${HEAVY}+ semitones; the ceiling is ${HEAVY_MAX} (was 12, then 6).`);
-  contractFail = true;
 } else {
-  console.log(`   ok    ${heavy.length} of ${pairs} cross-lane pairs overlap heavily; the ceiling is ${HEAVY_MAX}`);
+  if (heavyLanes.size > HEAVY_MAX) {
+    console.log(`   FAIL  ${heavyLanes.size} lane pairs share ${HEAVY}+ semitones; the ceiling is ${HEAVY_MAX} (was 12, then 6, then 4 group pairs).`);
+    contractFail = true;
+  }
+  const strangers = [...heavyLanes.keys()].filter((k) => !HEAVY_PAIRS.has(k));
+  if (strangers.length) {
+    console.log(`   FAIL  lane pair(s) in near unison that this file does not name: ${strangers.join(', ')}`);
+    contractFail = true;
+  }
+  if (heavyLanes.size <= HEAVY_MAX && strangers.length === 0) {
+    console.log(
+      `   ok    ${heavyLanes.size} of ${pairs} lane pairs overlap heavily (${heavy.length} group pairs); ` +
+        `the ceiling is ${HEAVY_MAX} and each is named in the source`,
+    );
+  }
 }
 
 /* ------------------------------------- the assertion; see `bothFilters` */

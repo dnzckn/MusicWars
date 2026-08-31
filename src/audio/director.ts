@@ -27,6 +27,7 @@ import { clamp, clamp01, damp, Latch, lerp, remap, StickyBucket } from '../core/
 import { BARS_PER_PHRASE, type Transport } from '../core/transport';
 import { ACT_SHAPE, Arranger, actForPhrase, type Act } from './arrangement';
 import { setTempo } from './engine';
+import { soundfontGeneration } from './soundfonts';
 import { ensureMasterCeiling, masterVolume, musicTrim } from './volume';
 import {
   MOVEMENT_MIX,
@@ -2311,6 +2312,24 @@ export class MusicDirector {
        */
       ['act', this.act],
       ['tacet', this.tacetLane ?? '-'],
+      /*
+       * WHICH INSTRUMENTS ARE PLAYING, and it belongs here for the same reason
+       * everything else does: "a cache key has to name everything the built
+       * pattern depends on", and a pattern's OSCILLATOR now depends on whether
+       * its samples have finished loading.
+       *
+       * `soundfontGeneration()` is a counter bumped by `soundfonts.ts` each
+       * time a role is promoted from its fallback oscillator to its real
+       * instrument. Without it the swap would land whenever some unrelated
+       * change next forced a rebuild — the same "noticed a median of 0.99 bars
+       * later but a worst case of 4.98" defect the abilities field records
+       * below, except that here the worst case is the whole intro.
+       *
+       * IMMEDIATE, and it costs at most seven rebuilds in a run: one when the
+       * load starts, one per role that lands, one when it finishes. They all
+       * happen inside the first second or two of the first wave.
+       */
+      ['voices', soundfontGeneration()],
       ['intensity', this.intensityBucket.update(this.intensity)],
       ['brightness', this.brightnessBucket.update(this.brightness)],
       ['mode', this.mode],
@@ -2376,7 +2395,7 @@ export class MusicDirector {
     // `movement` is immediate because the game announces it with a banner: a
     // stage that says FLANKED and goes on sounding like the last one is worse
     // than any glitch.
-    const IMMEDIATE = new Set(['section', 'mode', 'tonic', 'wave', 'boss', 'movement', 'act', 'tacet']);
+    const IMMEDIATE = new Set(['section', 'mode', 'tonic', 'wave', 'boss', 'movement', 'act', 'tacet', 'voices']);
     const LAZY = new Set(['health', 'grazing', 'bombs', 'combo', 'enemies']);
     const movedFields = names.filter((_, i) => prev[i] !== next[i]);
     const structural = this.lastKey === '' || movedFields.some((n) => IMMEDIATE.has(n));
