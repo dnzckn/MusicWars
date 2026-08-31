@@ -111,6 +111,82 @@ export const CRUISE_SPEED = 430;
  */
 export const TRIM_SPEED = 430;
 
+/*
+ * WHAT THE BACK OF THE THROTTLE DOES TO THE RAIL. The fraction of
+ * `CRUISE_SPEED` the stage still advances at with the stick at its rear stop.
+ *
+ * THE DEFECT THIS FIXES, reported as "moving backward feels sluggish, i want
+ * that same level of snappy control i had in the original arena". Every
+ * obvious suspect was innocent: the damping is 22-55ms, the band has MORE room
+ * behind the anchor (0.22 of a view) than ahead of it (0.18), and the trim is
+ * symmetric by construction. What was lopsided was structural. `world.ts` ends
+ * its step with
+ *
+ *     this.trackY = Math.min(this.trackY, this.player.y - VIEW_H*TRACK_AHEAD);
+ *
+ * which is a DRAG WITH NO COUNTERPART: push forward and the ship tows the
+ * window, so its travel is unbounded and the whole stage accelerates behind
+ * it. Pull back and the ship hits the `bounds.y1` clamp after a fifth of a
+ * screen and the rail carries on at exactly the speed it always did. Measured
+ * by `tools/throttlefeel.mjs` against the real `Player.update`:
+ *
+ *              screen travel   goes dead after   stage-speed swing
+ *   forward        201 px          0.61 s              67%
+ *   backward       246 px          0.78 s               0%
+ *
+ * So one half of the stick changed the speed of the world and the other half
+ * did nothing. No halflife could reach that, which is why four of them were
+ * checked first and left alone.
+ *
+ * NOT ZERO. The rail must never stop and must never reverse — the note at the
+ * drag call site is right that "a rail that could be pushed BACKWARDS by a
+ * ship drifting to the rear would be a rail that stops, and then the treadmill
+ * is just a camera again", and a rail that merely stops is the same failure one
+ * step earlier. The world still advances under the player at every stick
+ * position; the back of the throttle EASES it, which is the same verb the front
+ * applies in the other direction.
+ *
+ * 0.70 RATHER THAN 0.45, AND THE REASON IS A GATE I BROKE. 0.45 is the better
+ * number for this axis in isolation — backward swing 55%, screen travel
+ * symmetric at 1.07x, 1.71s before the stick goes dead. It also took
+ * `tools/warp.mjs` red, and the A/B was unambiguous: at `RAIL_FLOOR = 1.0`,
+ * which reproduces the old rail exactly, the dodge bot reached `WARP_DROP` on
+ * 1 of 2055 aft holds (0.03/min, bar 0.10); at 0.45, on 8 of 2002 (0.27/min,
+ * longest 2.68s).
+ *
+ * THE CAUSE IS THE FEATURE WORKING. Easing the rail makes the aft stop worth
+ * holding, so the bot held it far longer — 33394 aft steps against 20428 — and
+ * `WARP_DROP` is the same input held for the same 1.4s. "Slow the world down"
+ * and "get me out of warp" became one gesture. That is a collision a player
+ * would meet, not a harness artefact, so the floor is tuned against it rather
+ * than the bar being moved:
+ *
+ *   floor   backward swing   accidental warp drops
+ *   0.45         55%           0.27/min   RED
+ *   0.60         40%           0.10/min   exactly on the bar, would flap
+ *   0.70         30%           0.00/min   longest hold 1.35s
+ *   0.75         25%           0.03/min
+ *   1.00 (old)    0%           0.03/min
+ *
+ * 0.70 is where the back of the stick gets real authority — 30% of cruise,
+ * three times what `throttlefeel` demands, and the window before the stick goes
+ * dead widens from 0.78s to 1.28s — while accidental warp drops go to ZERO,
+ * which is better than the tree this replaced.
+ *
+ * WHAT WOULD LET THIS GO BACK TO 0.45: not easing the rail while warp is
+ * engaged, so the aft stop means exactly one thing in each mode. That is
+ * probably the right end state, and it is not done here because `warp.mjs`
+ * measures aft holds with a bot that never enters warp — the assertion would
+ * have to be REPLACED by one that drives a warping bot and counts its holds
+ * directly, and replacing a gate is not something to do in passing while
+ * chasing a different fix.
+ *
+ * PULLING BACK IS ALSO THE WARP BRAKE (`warpBrake`, `WARP_DROP`), so this eases
+ * the rail during the brake too — deliberately. Asking to come out of warp
+ * should slow the world immediately rather than only after the latch drops.
+ */
+export const RAIL_FLOOR = 0.70;
+
 
 /*
  * How hard the ship settles back to its station in the track window, and over

@@ -55,7 +55,7 @@
  */
 import './lib/ts.mjs';
 
-const { Player, CRUISE_SPEED } = await import('../src/game/player.ts');
+const { Player, CRUISE_SPEED, RAIL_FLOOR } = await import('../src/game/player.ts');
 const { TRACK_AHEAD, TRACK_BEHIND, TRACK_ANCHOR, VIEW_H } = await import('../src/game/field.ts');
 const { FIXED_DT } = await import('../src/core/loop.ts');
 
@@ -74,17 +74,28 @@ const RELEASE = 8.0;
 const stick = (y) => ({ x: 0, y, shoot: false, focus: false, throttle: -y });
 
 /*
- * The three lines of `world.ts`'s step that decide this, in their real order.
+ * The four lines of `world.ts`'s step that decide this, in their real order.
  * Reproduced rather than imported because `World` drags in the entire
  * simulation — but reproduced EXACTLY, and the header quotes the original so
  * the two can be diffed by eye when either moves.
+ *
+ * `RAIL_FLOOR` is IMPORTED rather than retyped, because a tool holding its own
+ * copy of a constant will lie: the first version of this file hardcoded the
+ * rail at `CRUISE_SPEED` and would have gone on reporting a 0% backward swing
+ * after `world.ts` was fixed, which is the exact failure it exists to catch.
+ * The formula below is still a duplicate of one line of `world.ts` and that is
+ * the residual risk here; it is one line, and it is quoted in the header.
  */
 function run(inputY, seconds, st) {
   const rows = [];
   const steps = Math.round(seconds / FIXED_DT);
   for (let i = 0; i < steps; i++) {
     const prevTrack = st.trackY;
-    st.trackY -= CRUISE_SPEED * FIXED_DT;
+    /* world.ts: stageSpeed = CRUISE_SPEED * (1 - max(0, -throttle) * (1 - RAIL_FLOOR))
+     * `throttle` is +1 forward / -1 back and this harness's `inputY` is the
+     * raw stick axis, -1 forward / +1 back, so `-throttle` IS `inputY`. */
+    const stageSpeed = CRUISE_SPEED * (1 - Math.max(0, inputY) * (1 - RAIL_FLOOR));
+    st.trackY -= stageSpeed * FIXED_DT;
     st.player.update(
       FIXED_DT,
       stick(inputY),
