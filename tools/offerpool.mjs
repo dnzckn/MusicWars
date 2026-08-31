@@ -45,6 +45,7 @@ import './lib/headless-audio.mjs';
 const R = new URL('../src/', import.meta.url).href;
 const P = await import(`${R}game/progression.ts`);
 const W = await import(`${R}game/weapons.ts`);
+const M = await import(`${R}game/meta.ts`);
 
 /*
  * The eight ids this pass ADDED to `InstrumentId`. Everything else in the
@@ -111,7 +112,7 @@ if (draftable.length === 0) fail('nothing is draftable — the pool is empty');
  * skipped by the same test `availableOptions` uses for fusion results, so this
  * is the generator's own exclusion path rather than a second copy of it.
  */
-function arm(label, blocked, policy) {
+function arm(label, blocked, policy, roster = null) {
   const totals = {
     cards: 0, offers: 0,
     newInstrument: 0, levelInstrument: 0, rigCard: 0, fusionCard: 0, other: 0,
@@ -119,13 +120,22 @@ function arm(label, blocked, policy) {
     waitSum: 0, waitRuns: 0,
   };
   for (let r = 0; r < RUNS; r++) {
-    const state = P.createProgression(1000 + r);
     /*
-     * The blocked ids are removed by BANISHING them, which is the one
-     * mechanism `availableOptions` already honours for "this id may not be
-     * dealt". Re-implementing the exclusion here would be a second copy of the
-     * generator's own rule.
+     * `roster` IS THE SHIPPED GATE; `blocked` IS A PROXY FOR ONE.
+     *
+     * The three historical arms hold ids out by BANISHING them, because when
+     * they were written there was no other mechanism `availableOptions`
+     * honoured and re-implementing the exclusion would have been a second copy
+     * of the generator's own rule. That is still true of them.
+     *
+     * The starting-roster arm is different in kind: `ProgressionState.unlocked`
+     * is the real filter the shipped game runs, so the arm uses it directly.
+     * Measuring the meta layer through the banish list would have been
+     * measuring a stand-in for the feature rather than the feature — and the
+     * two are not identical, since a banished id is also removed from
+     * `sacrificeFor`'s reasoning in a way a locked one is not.
      */
+    const state = P.createProgression(1000 + r, undefined, roster);
     for (const id of blocked) state.banished.push(id);
     let sawFusion = false;
     let firstSeen = -1;
@@ -174,13 +184,34 @@ const arms = [];
 const n30 = draftable.length;
 const n20 = n30 - ADDED_VS.length;
 const n12 = n20 - ADDED.length;
-for (const [label, blocked] of [
-  [`${n30} draftable (as shipped)`, []],
-  [`${n20} draftable (the ten VS deliveries held out)`, ADDED_VS],
-  [`${n12} draftable (both passes held out)`, [...ADDED_VS, ...ADDED]],
+/*
+ * A FOURTH ARM: THE STARTING ROSTER THE META LAYER SHIPS.
+ *
+ * `docs/plan-meta.md` §5 lists the zero-sum offer as the risk that could sink
+ * the whole feature and names this file as the instrument. Every arm above
+ * measures the pool getting WIDER; the meta layer makes it dramatically
+ * NARROWER — eight instruments and eight passives against thirty and twelve —
+ * and there is no reason at all to assume the fusion rate survives a 62% cut in
+ * the pool just because it survived the additions.
+ *
+ * The direction of the expected effect is genuinely unclear a priori, which is
+ * why it has to be measured rather than reasoned about. Fewer distractions in
+ * a four-card offer should CONCENTRATE picks onto the two things a builder is
+ * feeding, which would raise the fusion rate; but sixteen ids against four
+ * cards and eight slots is also thin enough that `makeOffer` may start padding
+ * with grace cards, which would lower it. Both stories are plausible and only
+ * one of them is true.
+ */
+const nBase = M.BASE_INSTRUMENTS.length;
+const baseRoster = M.unlockedRoster(M.defaultMeta());
+for (const [label, blocked, roster] of [
+  [`${n30} draftable (as shipped)`, [], null],
+  [`${n20} draftable (the ten VS deliveries held out)`, ADDED_VS, null],
+  [`${n12} draftable (both passes held out)`, [...ADDED_VS, ...ADDED], null],
+  [`${nBase} draftable (THE STARTING ROSTER: 8 weapons + 8 passives)`, [], baseRoster],
 ]) {
   for (const [pname, policy] of [['builder', builder], ['drifter', drifter]]) {
-    arms.push(arm(`${label} / ${pname}`, blocked, policy));
+    arms.push(arm(`${label} / ${pname}`, blocked, policy, roster));
   }
 }
 
@@ -256,6 +287,57 @@ console.log(`\n  'wait' is the mean number of offers before ${WATCH.toUpperCase(
   }
 }
 
+/*
+ * THE NARROWING, ASSERTED SEPARATELY AND IN BOTH DIRECTIONS.
+ *
+ * The three steps above all widen the pool and share one question: has adding
+ * cards crowded out the ones a builder needs. Cutting to sixteen is the
+ * opposite change and it has its own two failure modes, which is why this is
+ * two assertions rather than a fourth row of the same one:
+ *
+ *   COLLAPSED  the smaller pool costs a building player their fusions. The same
+ *              25% line the widening steps use, for the same reason — AGENTS.md
+ *              §5 records a change reverted for costing 31%.
+ *   HOLLOWED   the pool is so thin that `makeOffer` pads the offer with GRACE
+ *              cards, which are not abilities. That would not show up in the
+ *              fusion count at all — a builder can still fuse while half the
+ *              offer is consolation prizes — and it is the specific way a
+ *              sixteen-id pool goes wrong. Counted as the share of dealt cards
+ *              that were neither an instrument, a passive nor a fusion.
+ */
+{
+  const at = (needle, policy) => arms.find((x) => x.label.startsWith(needle) && x.label.endsWith(policy));
+  const full = at(`${n30} draftable`, 'builder');
+  const base = at(`${nBase} draftable`, 'builder');
+  const baseDrift = at(`${nBase} draftable`, 'drifter');
+  const a30 = full.fusionsTaken / RUNS;
+  const a8 = base.fusionsTaken / RUNS;
+  const drop = a30 > 0 ? (a30 - a8) / a30 : 0;
+  console.log(
+    `\n  the starting roster, ${n30} -> ${nBase} draftable: ` +
+      `${a30.toFixed(2)} -> ${a8.toFixed(2)} designed fusions per run, ` +
+      `${drop >= 0 ? 'down' : 'up'} ${Math.abs(drop * 100).toFixed(1)}%`,
+  );
+  if (a30 === 0) {
+    fail('the full-roster arm landed no fusions at all, so there is nothing to compare against');
+  } else if (drop > 0.25) {
+    fail(
+      `gating the pool ${n30} -> ${nBase} costs ${(drop * 100).toFixed(1)}% of a building player's fusions —` +
+        ' AGENTS.md §5 reverted a change that cost 31%',
+    );
+  }
+  for (const a of [base, baseDrift]) {
+    const grace = (a.other / Math.max(1, a.cards)) * 100;
+    console.log(`  ${a.label.padEnd(66)} grace cards ${grace.toFixed(1)}% of ${a.cards} dealt`);
+    if (grace > 5) {
+      fail(
+        `${a.label}: ${grace.toFixed(1)}% of dealt cards are GRACE — the sixteen-id pool is running dry and the ` +
+          'level-up screen is becoming a consolation menu',
+      );
+    }
+  }
+}
+
 console.log('');
 if (failures) { console.log(`OFFERPOOL BROKEN — ${failures} failure(s)`); process.exit(1); }
-console.log('OFFERPOOL HOLDS — the wider pool has not collapsed the fusion rate');
+console.log('OFFERPOOL HOLDS — the wider pool has not collapsed the fusion rate, and neither has the gated one');

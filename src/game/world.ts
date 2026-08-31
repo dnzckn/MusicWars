@@ -89,6 +89,8 @@ import {
   BOSS_EVERY,
   formationWidth,
   planWave,
+  STAGE_FLOOR,
+  stagePressure,
   type Formation,
   type SpawnRing,
   type WavePlan,
@@ -937,6 +939,20 @@ export class World {
   combo = 0;
   private comboTimer = 0;
   waveIndex = 0;
+  /**
+   * Which STAGE of the set list this run is being played at, 1-based.
+   *
+   * A FIELD ON THE WORLD, NOT AN ARGUMENT TO `start()`, and for the same reason
+   * `starter` is: `start()` is also the AGAIN path, and a player who chose
+   * stage 6 and lost should get stage 6 back rather than being silently
+   * returned to stage 1. Set it before `start()`.
+   *
+   * Stage 1 is the game exactly as it shipped — `waves.stagePressure` is 0
+   * there and every stage term multiplies by one — so the ~200 checks in
+   * `tools/` that never touch this are still measuring the same game they
+   * always were.
+   */
+  stage = 1;
   private plan: WavePlan = planWave(0);
   private phase: Phase = 'idle';
   private waveStartBeat = 0;
@@ -2073,7 +2089,36 @@ export class World {
    */
   starter: string | undefined = undefined;
 
+  /**
+   * Which abilities this run may draft, or `null` for the whole table.
+   *
+   * Held here, beside `starter`, for the identical reason: `start()` is also
+   * the AGAIN path, and a player who bought three weapons in the shop and
+   * pressed AGAIN must be playing with them.
+   *
+   * `null` IS THE DEFAULT AND MEANS EVERYTHING. Every headless check in
+   * `tools/` builds a `World` and never touches this, so every one of them
+   * measures the full thirty-and-twelve table exactly as it did before the meta
+   * layer existed. Only `main.ts` sets it, from `meta.unlockedRoster`.
+   *
+   * `src/game/` does not import `src/game/meta.ts` from here on purpose: the
+   * world takes a set of strings and has no opinion about where it came from,
+   * which keeps the simulation independent of the save format.
+   */
+  unlocked: ReadonlySet<string> | null = null;
+
   start(): void {
+    /*
+     * The stage is CLAMPED HERE and nowhere else.
+     *
+     * It is a public field set from the DOM, which means it can arrive as a
+     * string, a NaN, a 0 or a 99 — and `planWave` is called sixteen times a run
+     * from four places, so a bad value would be laundered through the whole
+     * run rather than rejected once. `stagePressure` already does the clamping
+     * arithmetic for `waves.ts`; running the same function here means the world
+     * and the plan cannot disagree about which stage this is.
+     */
+    this.stage = stagePressure(this.stage) + 1;
     this.score = 0;
     this.combo = 0;
     this.comboTimer = 0;
@@ -2180,7 +2225,7 @@ export class World {
     this.lastRiposte = -999;
     // In place, never reassigned: see the field's comment, and the
     // `everypowerup` entry in tools/README.md for the bug that taught us.
-    prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter);
+    prog.resetProgression(this.progression, this.rng.next() * 0xffffffff, this.starter, this.unlocked);
     this.mods = prog.modifiers(this.progression);
     this.rules = prog.rules(this.progression);
     // Which flank opens first is still a draw, so two runs of the same seed
@@ -2293,7 +2338,7 @@ export class World {
      * player top up first — waves.ts says so in as many words.
      */
     this.waveIndex = index;
-    this.plan = planWave(index);
+    this.plan = planWave(index, this.stage);
     if (index === 1 || this.plan.isBoss) {
       // Near the ship rather than at the top of the screen. `y: 70` was the
       // player's own half of a vertical field; in the round it is a corner.
@@ -5263,7 +5308,24 @@ export class World {
      * low floor becomes the thing capping the crowd instead of the thing
      * creating it. Raised together, measured together.
      */
-    return Math.round(24 + this.plan.difficulty * 42 + Math.min(10, this.plan.escalation) * 6);
+    /*
+     * THE STAGE RAISES THE FLOOR TOO, and this is the "faster waves" half of
+     * the stage lever rather than a second helping of the "more of them" half.
+     *
+     * The floor cannot manufacture enemies a wave does not contain — its own
+     * comment above says so, and the 24-to-36 sweep it records is the evidence
+     * — it can only pull SCHEDULED groups forward. A deep stage's wave contains
+     * far more groups (`waves.ts` `STAGE_GROUPS`), so raising the floor with it
+     * is what turns those extra groups into a bigger crowd on screen instead of
+     * a longer queue behind one. Leaving it at the stage-1 value would have
+     * made deep stages mostly LONGER rather than mostly HARDER, which is the
+     * failure mode this whole feature has to avoid: a stage that pays more for
+     * being slower is a stage nobody should attempt.
+     */
+    return Math.round(
+      (24 + this.plan.difficulty * 42 + Math.min(10, this.plan.escalation) * 6) *
+        (1 + this.plan.pressure * STAGE_FLOOR),
+    );
   }
 
   /**
