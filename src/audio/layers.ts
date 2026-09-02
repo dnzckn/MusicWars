@@ -16,7 +16,7 @@
 // filter across a bar. See the cymbal note in `buildFx`.
 import { note, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
-import { clamp01, remap } from '../core/math';
+import { clamp01, lerp, remap } from '../core/math';
 import type { Chord, ChordSpan, Extension, LaneId, ModeName } from './theory';
 import { LANE_RANGE, buildChord, contourForBar, degreeToSemitone, foldInto, laneTones } from './theory';
 import { articulate, type TouchName } from './articulation';
@@ -2714,6 +2714,14 @@ export function buildBass(m: MusicalState): Pattern {
   const opts = {
     shape,
     /*
+     * The crunch: post-filter distortion as a SIGNAL riding `drive`, so the
+     * bass is a clean filtered saw in a breakdown and saturated at the drop
+     * on the same notes. 0.4..3.4 is about 18 dB of harmonic travel; the
+     * fixed `'3.0:0.30'` this replaces sat at the top of that range always.
+     * `docs/research-dubstep.md` R2.
+     */
+    crunch: m.sig.drive.range(0.4, 3.4),
+    /*
      * The centre of the sweep, and the ceiling is deliberately low.
      *
      * With `lpdepth` at 1.9 the LFO swings to nearly twice the centre, so a
@@ -2747,7 +2755,17 @@ export function buildBass(m: MusicalState): Pattern {
      * `lpdepth` 1.95 that peaks around 2.2 kHz, still under the 2.5-6 kHz band
      * `audiocheck` fails on.
      */
-    cutoff: m.sig.openness.range(300, 1050).add(sine.range(-110, 110).slow(13)),
+    /*
+     * THE BUILD SUBTRACTS. During `build` the cutoff is clamped to the 200-400
+     * Hz the sources name for the run-up and only reopens across the last half
+     * of the build, so the drop's first bar is the first time the bass is fully
+     * open — `docs/research-dubstep.md` R10. `buildProgress` is a plain number
+     * per bar, so the build branch is a number too, not a signal.
+     */
+    cutoff:
+      m.section === 'build'
+        ? lerp(400, 1050, Math.max(0, m.buildProgress * 2 - 1))
+        : m.sig.openness.range(300, 1050).add(sine.range(-110, 110).slow(13)),
     /*
      * How far it swings is the intensity dial. At 1.15 it is a gentle
      * breathing; at 1.9 the filter slams shut between wobbles, which is the
@@ -3021,7 +3039,24 @@ export function buildBass(m: MusicalState): Pattern {
       // Saturation adds harmonics all the way up. The bass needs its second
       // and third to read on a laptop speaker, not its tenth.
       .drive(m.sig.drive.range(0.6, 1.35))
-      .distort(m.sig.drive.range(1.05, 1.8))
+      /*
+       * THE FLOOR IS GONE, AND THE HAZARD IT GUARDED WAS VERSION-STALE.
+       *
+       * This read `range(1.05, 1.8)` because AGENTS.md said `distort(0)`
+       * silences the voice. `docs/research-dubstep.md` §0.1 rendered it through
+       * real superdough 1.3.0: `distort(0)` and no distort at all are
+       * BIT-IDENTICAL (-22.69 dBFS both; the worklet computes
+       * `algorithm(x, expm1(distort))` and `expm1(0) === 0` is the identity).
+       * The old entry described a curve-table build that no longer exists.
+       *
+       * What the floor cost: the bass was saturated at its calmest bar exactly
+       * as much as at its loudest, so there was no clean state to drop FROM —
+       * the drop could only be "more", never "different". `range(0, 2.6)` is
+       * about 18 dB of harmonic travel on the same notes (h2 -14.5 / h3 -15.0
+       * relative to a -3.2 fundamental at the top; a clean filtered saw at the
+       * bottom), against roughly 4 dB before.
+       */
+      .distort(m.sig.drive.range(0, 2.6))
       /*
        * 0.86 IS NOW LOAD-BEARING IN A WAY IT WAS NOT BEFORE, and this is an
        * open question rather than a settled number.
@@ -4333,10 +4368,9 @@ export function buildLead(m: MusicalState): Pattern {
    * Both voices get identical rate and depth. They are a doubling, not two
    * players — detuning their vibrato against each other would beat.
    */
-  const vibDepth = 0.09 + (held - 0.55) * 0.9;
-  // A pushed singer vibrates a little faster. Narrow on purpose: a rate that
-  // moves audibly is heard as an effect, and this should only be missed.
-  const vibRate = m.boss ? 5.6 + m.bossPhase * 0.4 : 5.1;
+  // `vibDepth` and `vibRate` used to be computed here from `held` and the boss
+  // phase. The lead no longer has vibrato (see the note at the chain below), and
+  // nothing else read them.
 
   /*
    * THE LAVENDER TOWN BOSS TREATMENT IS GONE, at the owner's word: "lol the
@@ -4447,8 +4481,13 @@ export function buildLead(m: MusicalState): Pattern {
        * slot instead of all of it. One note still reaches the next; five no
        * longer stack.
        */
-      .vib(vibRate)
-      .vibmod(vibDepth)
+      /*
+       * NO VIBRATO. This carried `.vib(vibRate).vibmod(vibDepth)`, and vibrato
+       * is an acoustic-instrument gesture no dubstep lead has — it is also the
+       * single thing that makes a triangle at A4 read as "a woodwind in a video
+       * game", which is close to the owner's own words. `docs/research-dubstep.md`
+       * §6.1.
+       */
       /*
        * 4000 rather than 6500. Above about 4kHz a melody gains no pitch
        * information, only edge — the ear locates a note from its fundamental
