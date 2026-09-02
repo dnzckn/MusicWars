@@ -3156,35 +3156,38 @@ waveform in BOTH modes, in equal numbers, and to emit its font in neither.
 `registermap`'s `~` marker and its "N of M printed groups are SAMPLED" line
 track the same set: it reads one row now, not six.
 
-## `combine` is KNOWN RED, and it is nobody's recent change
+## `combine` was red for a session because it compared two ceilings
 
-Written down so the next person does not re-derive it. `combine` fails on:
+`combine`'s `power` check used to compare WAVE REACHED at a 900-second cap.
+It was red reproducibly — not noisily — while the tool's other half read
+identically to two decimals across commits, and a detached worktree from
+before the meta layer and the rail change failed the same way:
 
-    committing to a fusion build reaches wave 14.6 against 14.8 for a player
-    who ignores fusions — the tree is decoration
+    1e2cd30 (before both)   14.5 / 14.6   -1%
+    HEAD                    14.6 / 14.8   -1%
+    HEAD, repeat            14.4 / 14.6   -2%
+    HEAD, repeat            14.4 / 14.6   -2%
 
-**It is not new.** Measured in a detached worktree at `1e2cd30` with
-`node_modules` junctioned in, so the main tree never moved:
+The defect was the threshold, not the game. The run has an ending now
+(`FINAL_BOSS_WAVE`), a competent arm reaches it just inside the cap, and both
+arms pinned at 14-15 — two saturated numbers and a coin flip on the sign.
 
-    1e2cd30 (before the meta layer AND the rail change)   14.5 / 14.6   -1%
-    HEAD                                                  14.6 / 14.8   -1%
-    HEAD, repeat                                          14.4 / 14.6   -2%
-    HEAD, repeat                                          14.4 / 14.6   -2%
+**What `power` measures now: the ending itself.** `run:won` carries the game's
+own seconds-to-win, and the check asks two things a finite run can answer:
+(A) the committed arm wins at least as often as the control, counted with the
+denominator; (B) among winners, the committed arm is not slower than the
+control by more than the control's own seed-to-seed spread — one standard
+deviation of the control's times, derived from the run and printed, not a
+number the file invented. If either arm has fewer than two winners the gate
+FAILS on "power is unmeasured" rather than passing on an empty comparison.
 
-Same sign, same magnitude, same verdict. Three repeats on HEAD to separate
-reproducible from flaky: it is reproducible. And the tool's OTHER half is a
-control that says it is measuring the same game at both commits — `intent:
-committed lands 2.63 designed fusions per run against 1.13, 2.3x` reads
-identically to two decimals before and after.
-
-**The likely defect is in the threshold, not the game.** `power` compares WAVE
-REACHED at a 900-second cap, and both arms are pinned at 14-15 there — two
-numbers that have run out of room. A committed player spends picks on a plan and
-a drifter spends them on immediate throughput, so a 1% deficit at a time cap is
-what a HEALTHY tree would produce; the committed build's payoff is the 2.3x
-fusion count printed one line above. Whoever picks this up should consider
-whether the arms want playing to their own end (`finale`-style) rather than to a
-clock, which is the change that would give the column room to move.
+Measured on the tree that landed it: committed won 7 of 8, control
+7 of 8; mean seconds to win 874 against 854 with a margin of
+72. Fail-tested twice: `COMBINE_SECS=120` (no arm can reach the ending)
+fails on the guard with exit 1; and the win-count comparison, flipped by a
+second edit so that equal wins fail, went red on the same data and was
+restored by a third. The wave column is still printed per seed; it is a
+report.
 
 ## The meta layer: three new checks, and one silent re-baseline
 
