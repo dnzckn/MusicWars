@@ -1,5 +1,35 @@
 # Dubstep, for this score
 
+> **Status (2026-09-02): implemented.** Every ranked change below landed, each
+> verified off emitted haps and re-rendered through real superdough:
+>
+> | change | commit |
+> |---|---|
+> | R1 sidechain (kick ducks the low orbit); sub on its own orbit, growl at -9.7 dB | `fecfbfb`, `f6ce3b5` |
+> | R2 distortion floors removed; `distort(0)` re-measured as a bypass; AGENTS.md corrected | `fecfbfb` |
+> | R3 chebyshev mid-bass on the wub's notes | `624e193` |
+> | R4 distorttype: chebyshev on the mid layer, diode on the lead | `624e193`, `6926f0c` |
+> | R5 wobble rate written into the answering bars, aligned to the figure | `3b926c7` |
+> | R6 vowel walking a/e/o/a on the mid layer | `b8fa2d6` |
+> | R7 tremolo bite on the answering bars | `f6ce3b5` |
+> | R8 seeded stochastic ghosts; the bass partition seeded (see §0.3's cycle-0 edge) | `624e193`, `3b926c7` |
+> | R9 kick click + 40 Hz highpass | `fecfbfb` |
+> | R10 the build subtracts (sub/bass fade, cutoff clamp, timpani decrescendo) | `fecfbfb`, `6926f0c` |
+> | R11 reese width 0.20-0.44 on drive | `624e193` |
+> | R12 `lpdc(-1)` on the drop's answering bars (phaser not taken) | `624e193` |
+> | §6.1 lead vibrato gone; no metal in the drop; arp out of the drop, capped, quieter | `fecfbfb`, `6926f0c`, `2524fcb` |
+> | §6.2 the lead re-voiced: saturated 35% pulse, clean supersaw width | `6926f0c` |
+>
+> Not taken, deliberately: the master trim (the mix sits within 0.4 dB of its
+> own calibration in `volume.ts`; the -15 LUFS figure in §1 was a hotter
+> harness window, not the game), and `useRNG('precise')` (three stochastic
+> calls is not yet load-bearing enough to re-baseline the suite for).
+>
+> Two harness findings made while implementing this, both recorded in
+> `tools/README.md`: every gate queries cycle 0, where the legacy RNG draws
+> exactly 0; and `capture.mjs`'s standard window sits under the intro gate,
+> so arp/lead changes do not show in it.
+
 Research for the rewrite of `src/audio/`. Written so a builder can act on it
 without re-reading the sources.
 
