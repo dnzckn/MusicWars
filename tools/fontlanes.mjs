@@ -189,11 +189,36 @@ for (const role of Object.keys(SHIPPED)) {
 line('');
 line(
   `  ${tableChecked} roles in the table, ${rolesSharingAFont} of them sharing a font with another, ` +
-    `${wire} distinct bytes over the wire if every one loads`,
+    `${wire} distinct bytes if every one were enabled`,
 );
+/*
+ * ENABLED IS NOT THE SAME AS TABLED, and the difference is what the player
+ * actually downloads.
+ *
+ * `SAMPLED_ROLES` gates which roles may use their instrument at all. The rest
+ * keep an entry — re-enabling one is a single line — but they emit their
+ * oscillator, and the loader must not fetch a font nobody plays. Both halves
+ * are asserted below, because "the table lists seven instruments" and "the game
+ * plays one of them" are very different statements and only one of them is
+ * about what a player hears.
+ */
+const ENABLED = new Set(SF.ENABLED_ROLES);
+line(
+  `  ENABLED: ${SF.ENABLED_ROLES.join(', ') || '(none)'} — ${SF.TOTAL_WIRE_BYTES} bytes actually fetched, ` +
+    `against ${SF.TABLE_WIRE_BYTES} for the whole table`,
+);
+if (ENABLED.size === 0) {
+  fails.push(
+    'no role is enabled, so `@strudel/soundfonts` is installed, loaded and wired to nothing. That may be ' +
+      'deliberate, but it must be a decision somebody makes out loud rather than a table that quietly does nothing.',
+  );
+}
+for (const r of SF.ENABLED_ROLES) {
+  if (!SF.VOICE_ROLES.includes(r)) fails.push(`ENABLED_ROLES names "${r}", which is not in the table`);
+}
 if (tableChecked === 0) fails.push('the instrument table is empty. A check with no denominator is not a pass.');
-if (wire !== SF.TOTAL_WIRE_BYTES) {
-  fails.push(`TOTAL_WIRE_BYTES ${SF.TOTAL_WIRE_BYTES} disagrees with the table's own sum of ${wire}`);
+if (wire !== SF.TABLE_WIRE_BYTES) {
+  fails.push(`TABLE_WIRE_BYTES ${SF.TABLE_WIRE_BYTES} disagrees with the table's own sum of ${wire}`);
 }
 
 /* -------------------------------------------------- 2, 3, 4, 5. BOTH MODES */
@@ -222,9 +247,9 @@ const PULSE_ONLY = ['pw', 'pwrate', 'pwsweep'];
  * was measured on. Walking both modes together is what makes that readable.
  */
 const FONT_OF = {};
-for (const r of SF.VOICE_ROLES) FONT_OF[`${SF.INSTRUMENTS[r].font}|${SF.INSTRUMENTS[r].osc.s}`] = r;
-if (Object.keys(FONT_OF).length !== SF.VOICE_ROLES.length) {
-  fails.push('two roles share both a font AND a fallback oscillator; their haps cannot be told apart');
+for (const r of SF.ENABLED_ROLES) FONT_OF[`${SF.INSTRUMENTS[r].font}|${SF.INSTRUMENTS[r].osc.s}`] = r;
+if (Object.keys(FONT_OF).length !== SF.ENABLED_ROLES.length) {
+  fails.push('two enabled roles share both a font AND a fallback oscillator; their haps cannot be told apart');
 }
 
 SF.setSoundfontModeForTesting('written');
@@ -329,14 +354,51 @@ for (const b of BUILDERS) {
   }
 }
 
+/*
+ * A DISABLED ROLE'S LANE IS COUNTED TOO, and it has to be: "the lane went
+ * silent" and "the lane went back to its oscillator" look identical if nobody
+ * counts the oscillator haps. `oscOnly` is how many haps a disabled role's own
+ * builder emitted on that role's fallback waveform, in both modes.
+ */
+const oscOnly = {};
+for (const role of SF.VOICE_ROLES) {
+  if (ENABLED.has(role)) continue;
+  const b = BUILDERS.find((x) => x.roles.includes(role));
+  const inst = SF.INSTRUMENTS[role];
+  const count = (arr) => arr.filter((h) => h.s === inst.osc.s).length;
+  oscOnly[role] = { written: count(written.get(b.name)), fallback: count(fallback.get(b.name)) };
+}
+
 line('');
-line('  role        instrument                  haps   fallback                haps');
+line('  role        instrument                  haps   fallback                haps   enabled');
 let lanesChecked = 0;
 for (const role of SF.VOICE_ROLES) {
   const inst = SF.INSTRUMENTS[role];
   lanesChecked++;
+  if (!ENABLED.has(role)) {
+    const o = oscOnly[role];
+    line(
+      `  ${role.padEnd(10)} ${`(${inst.font})`.padEnd(26)} ${'-'.padStart(6)}   ${inst.osc.s.padEnd(20)} ${String(o.written).padStart(6)}   no`,
+    );
+    if (o.written === 0 || o.fallback === 0) {
+      fails.push(
+        `role "${role}" is DISABLED, so it must play "${inst.osc.s}" in both modes — measured ${o.written} ` +
+          `written and ${o.fallback} fallback haps. A disabled role that emits nothing is a silent lane.`,
+      );
+    }
+    if (o.written !== o.fallback) {
+      fails.push(
+        `role "${role}" is disabled but its oscillator hap count differs between modes ` +
+          `(${o.written} vs ${o.fallback}); a disabled role must not notice the mode at all`,
+      );
+    }
+    if (swapped[role] !== 0) {
+      fails.push(`role "${role}" is disabled but ${swapped[role]} haps carried "${inst.font}"`);
+    }
+    continue;
+  }
   line(
-    `  ${role.padEnd(10)} ${inst.font.padEnd(26)} ${String(swapped[role]).padStart(6)}   ${inst.osc.s.padEnd(20)} ${String(fellBack[role]).padStart(6)}`,
+    `  ${role.padEnd(10)} ${inst.font.padEnd(26)} ${String(swapped[role]).padStart(6)}   ${inst.osc.s.padEnd(20)} ${String(fellBack[role]).padStart(6)}   yes`,
   );
   if (swapped[role] === 0) {
     fails.push(`role "${role}": no hap carried "${inst.font}" in written mode. The lane is silent or misrouted.`);
@@ -350,6 +412,8 @@ for (const role of SF.VOICE_ROLES) {
    * the failure this catches is "made conditional and then lost".
    */
   const need = SHIPPED[role]?.extras ?? [];
+  // Only for an ENABLED role: a disabled one never became conditional, so there
+  // is nothing that could have been lost.
   const builder = BUILDERS.find((b) => b.roles.includes(role));
   for (const k of need) {
     const anywhere = fallback.get(builder.name).some((h) => h.s === inst.osc.s && h[k] !== undefined);

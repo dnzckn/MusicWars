@@ -55,11 +55,18 @@
  * MEASURED over the wire by `tools/fontcheck.mjs`, which reads the socket
  * through Playwright rather than the page's own Resource Timing (that reports
  * zero for a cross-origin response with no `Timing-Allow-Origin`, which GitHub
- * Pages does not send): SIX RESPONSES, 342,972 body bytes gzipped, for the
- * seven roles below — `leadTune` and `leadDecor` share the oboe. Cold, that
- * settled in 3,978 ms; with DNS and TLS warm, 873 ms, of which the first
- * playable note of each instrument arrives at 484-521 ms and the whole warm
- * range is resident by 645-873 ms.
+ * Pages does not send).
+ *
+ * With ALL SEVEN roles enabled, which is what the first build shipped and what
+ * the figures in the table below were taken on: six responses, 342,972 body
+ * bytes gzipped (`leadTune` and `leadDecor` share the oboe). Cold that settled
+ * in 3,978 ms; with DNS and TLS warm, 873 ms — first playable note of each
+ * instrument at 484-521 ms, whole warm range resident by 645-873 ms.
+ *
+ * With only the BASS enabled, which is the current configuration and the reason
+ * is in `SAMPLED_ROLES`: ONE response, 9,694 bytes. `TOTAL_WIRE_BYTES` is the
+ * enabled cost and `TABLE_WIRE_BYTES` is what the whole table would cost, so
+ * neither number can be quoted for the other by accident.
  *
  * `setSoundfontUrl` makes self-hosting a one-line change and `BASE_URLS` is
  * already a list, so vendoring is a follow-up and not a rewrite.
@@ -181,6 +188,12 @@ export interface Instrument {
  * ---------------------------------------------------------------------------
  * THE CHOICES, ONE LANE AT A TIME
  * ---------------------------------------------------------------------------
+ *
+ * READ `SAMPLED_ROLES` FIRST. Six of the seven entries below are currently
+ * SWITCHED OFF and their lanes emit the oscillator in the `osc` field; only the
+ * bass plays its instrument. The reasoning for each choice is kept in full
+ * because it is what a re-enable would be argued from, but nothing below should
+ * be read as a description of what the game sounds like today.
  *
  * Chosen on what the lane DOES. Every `wireBytes` and `zones` figure below was
  * measured by fetching the actual file, not read off a page: `zones` is

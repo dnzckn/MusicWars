@@ -287,9 +287,35 @@ export function sfxShoot(
   if (now - lastShotAt > SHOT_RESET_MS) shotStep = 0;
   lastShotAt = now;
 
-  const span = tones.length * 2;
+  /*
+   * ONE OCTAVE, NOT TWO - THE SHOT STREAM IS NOT A TUNE.
+   *
+   * This was `span = tones.length * 2` with `+ (idx >= tones.length ? 12 : 0)`,
+   * so consecutive shots walked the chord and then walked it again an octave
+   * up: a rising two-octave arpeggio, restarting every six or eight shots.
+   *
+   * In a bullet hell the fire button is HELD - `director.ts` records
+   * `playerFiring` measured true in 789 of 789 samples of real play - so that
+   * figure is not an accent, it is a continuous melodic line at several notes
+   * a second, at MIDI 81-93 (880-2200 Hz), on a square wave, generated
+   * entirely outside `layers.ts`. No stem fader touches it, no voice budget
+   * counts it, and no gate in `tools/` measures it as part of the mix. Four
+   * rounds of "the melody is a funny instrument" have been answered inside
+   * the score while this went on playing.
+   *
+   * The loadout stays audible - which is the game's premise and is not up for
+   * negotiation - because every chord tone and every per-instrument voice is
+   * unchanged. What goes is the CLIMB. Stating the chord in one octave is an
+   * articulation of firing; stating it in two is a phrase.
+   *
+   * NOT the whole of that suspicion acted on, deliberately: the register, the
+   * square wave and the gain are the game's own shot feedback and changing
+   * them is a game-feel decision rather than a score one. This is the half
+   * that is unambiguously a melody.
+   */
+  const span = tones.length;
   const idx = shotStep % span;
-  const note = tones[idx % tones.length] + (idx >= tones.length ? 12 : 0) + 24;
+  const note = tones[idx] + 24;
   shotStep = (shotStep + 1) % span;
 
   /*

@@ -101,7 +101,37 @@ export const STEM_ROLE: Record<StemId, Role> = {
  * so this is every stem that puts *pitched material a listener could follow*
  * into the foreground.
  */
-export const TONAL_LANES: readonly StemId[] = ['chords', 'lead', 'arp', 'motifs', 'power'];
+/*
+ * `power` IS NOT ONE OF THEM ANY MORE, AND A GATE FOUND THAT RATHER THAN A
+ * READING.
+ *
+ * `tools/heartbeat.mjs` went red the moment `SECTION_BUDGET` was cut for the
+ * genre change: "power stem not responding to bombs", measured at 0.09 with
+ * bombs held against 0.03 without, where the gate wants a gap of 0.2. `power`
+ * is LAST in every row of `rankTonal`, so with a budget of two it essentially
+ * never won a slot and took `YIELD_FAR` instead.
+ *
+ * The budget was not the defect; putting this lane inside it was. `power` is
+ * not a musical part competing for the foreground - it is THE PLAYER'S OWN
+ * STATE VOICED. It only sounds at all when a voiced powerup is held
+ * (`hasVoicedPowerup`: nova, blackhole, bomb, ward), and one of the things it
+ * carries is the low-health heartbeat. An arrangement rule that can make a
+ * warning inaudible because the music is busy is a bug wearing a design's
+ * clothes, and it is the same category as the drums and the floor being exempt:
+ * `STEM_ROLE`'s own comment says the exempt lanes are the ones where "taking
+ * them away to make room for a melody would be solving the wrong problem".
+ *
+ * Its own fader still governs it, and that fader already yields to the music:
+ * `updateLevels` computes `0.8 * room` where `room` falls to 0.38 as intensity
+ * rises, so a powerup voice still sits back on a busy stage. That is the right
+ * mechanism for this lane - a continuous duck it owns, not a discrete slot it
+ * loses.
+ *
+ * `ROLE_CAP.colour` goes with it, because it becomes unreachable: `fx` was
+ * never in this list, so `colour` had exactly one member and a cap of one on a
+ * set of one is a rule that cannot fire.
+ */
+export const TONAL_LANES: readonly StemId[] = ['chords', 'lead', 'arp', 'motifs'];
 
 /**
  * How many tonal lanes each section will admit.
@@ -113,11 +143,38 @@ export const TONAL_LANES: readonly StemId[] = ['chords', 'lead', 'arp', 'motifs'
  *
  * `intro` and `breakdown` get two, because both exist to expose the tune.
  */
+/*
+ * ...AND THE DROP IS THE SPARSEST SECTION IN THE FILE NOW, NOT THE DENSEST.
+ *
+ * That is an inversion, so it needs saying plainly. The note above is right
+ * about a drop in the idiom this table was written for: in an EDM arrangement a
+ * drop is the payoff and the payoff is everything at once. In dubstep it is the
+ * opposite — the drop is where the arrangement gets out of the way and the bass
+ * plays alone. The genre is defined as much by what is not sounding as by what
+ * is, and `drop: 4` was the single largest source of the wall.
+ *
+ * `tools/sections.mjs` is why this matters more than the number suggests: the
+ * drop is **48.6% of every run** (8 x 900 s, 3840 bars). A budget of four tonal
+ * lanes in the section that holds half the bars is a budget of four for half
+ * the game — and `tools/texture.mjs` duly measured the drop at **8.6 forward
+ * voices**, the densest section in the mix and the highest number in the table.
+ *
+ * `drop: 2` — a harmony and one other thing — while `bass`, `sub` and the three
+ * kit lanes are exempt from this budget entirely (see `STEM_ROLE`), so the
+ * growl, the sub and the drums are all untouched by it. That is precisely the
+ * shape wanted: five lanes carrying the section, two colours over the top.
+ *
+ * `sustain` goes 3 -> 2 for the same reason at lower stakes; it is the
+ * second-largest section and it is the one that is supposed to be the track
+ * simply running. `build` stays at 3 because a build is a crescendo and a
+ * crescendo needs somewhere to add from, and `fill` stays at 3 because it is
+ * one bar.
+ */
 const SECTION_BUDGET: Record<SectionName, number> = {
   intro: 2,
   build: 3,
-  drop: 4,
-  sustain: 3,
+  drop: 2,
+  sustain: 2,
   breakdown: 2,
   fill: 3,
   // On death everything is being taken away anyway; the budget just stops
@@ -186,7 +243,10 @@ const ROLE_CAP: Partial<Record<Role, number>> = {
   melody: 1,
   harmony: 1,
   counter: 1,
-  colour: 1,
+  // `colour` is gone: `power` left `TONAL_LANES` (see there) and `fx` was never
+  // in it, so the role had no members left inside the budget and the cap could
+  // not fire. A rule that cannot be evaluated is the defect this file keeps
+  // finding elsewhere.
 };
 
 /**
@@ -398,11 +458,11 @@ export interface ScoreContext {
  * theme.
  */
 export function rankTonal(ctx: ScoreContext): StemId[] {
-  if (ctx.boss) return ['lead', 'motifs', 'chords', 'arp', 'power'];
-  if (ctx.hushed) return ['lead', 'chords', 'arp', 'power', 'motifs'];
+  if (ctx.boss) return ['lead', 'motifs', 'chords', 'arp'];
+  if (ctx.hushed) return ['lead', 'chords', 'arp', 'motifs'];
   // A soloist wave is one enemy carrying the section: its voice is the point.
-  if (ctx.soloist) return ['lead', 'motifs', 'chords', 'power', 'arp'];
-  return ['lead', 'chords', 'motifs', 'arp', 'power'];
+  if (ctx.soloist) return ['lead', 'motifs', 'chords', 'arp'];
+  return ['lead', 'chords', 'motifs', 'arp'];
 }
 
 /**

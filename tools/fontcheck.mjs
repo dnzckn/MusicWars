@@ -214,7 +214,7 @@ if (!reportOnline) {
     );
   }
   line('');
-  line(`  ${okRoles} of ${reportOnline.roles.length} roles loaded`);
+  line(`  ${okRoles} of ${reportOnline.roles.length} enabled roles loaded`);
   if (reportOnline.roles.length === 0) {
     fails.push('the report names no roles at all. A check with no denominator is not a pass.');
   }
@@ -224,10 +224,38 @@ if (!reportOnline) {
         `a wrong variant index, or a warm-up that throws — not a fallback working as designed.`,
     );
   }
+  /*
+   * ONLY THE ENABLED ROLES ARE EXPECTED TO BE SAMPLED.
+   *
+   * `SAMPLED_ROLES` in `soundfonts.ts` gates which lanes may use an instrument
+   * at all; the rest keep a table entry and emit their oscillator. Asserting
+   * "every role is sampled" would fail the deliberate configuration, and
+   * asserting nothing would miss an enabled lane that quietly did not promote.
+   * Both directions are checked, and the enabled list is READ from the page
+   * rather than restated here.
+   */
   const live = await online.page.evaluate(() => window.__soundfonts.roles());
-  const notSampled = live.filter((r) => !r.sampled).map((r) => r.role);
+  const enabled = new Set(await online.page.evaluate(() => window.__soundfonts.enabled()));
+  line(`  enabled roles: ${[...enabled].join(', ') || '(none)'} of ${live.length} in the table`);
+  if (enabled.size === 0) fails.push('no role is enabled; the loader is wired to nothing');
+  const notSampled = live.filter((r) => enabled.has(r.role) && !r.sampled).map((r) => r.role);
   if (notSampled.length) {
-    fails.push(`after a successful load these roles are still on their oscillator: ${notSampled.join(', ')}`);
+    fails.push(`after a successful load these ENABLED roles are still on their oscillator: ${notSampled.join(', ')}`);
+  }
+  const unexpected = live.filter((r) => !enabled.has(r.role) && r.sampled).map((r) => r.role);
+  if (unexpected.length) {
+    fails.push(`these roles are NOT enabled but resolve to a soundfont: ${unexpected.join(', ')}`);
+  }
+  const fetched = new Set([...online.wire.keys()].map((u) => u.split('/').pop().replace('.js', '')));
+  const wanted = new Set(
+    live.filter((r) => enabled.has(r.role)).map((r) => r.s),
+  );
+  line(`  files fetched: ${[...fetched].join(', ') || '(none)'}`);
+  if (fetched.size > wanted.size) {
+    fails.push(
+      `${fetched.size} font files were fetched for ${wanted.size} enabled instrument(s). A font no lane plays ` +
+        `is bytes and latency spent on silence.`,
+    );
   }
 }
 

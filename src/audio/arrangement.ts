@@ -87,6 +87,19 @@ export interface ActShape {
    * tension; this clamps it. Measured at HEAD, peak BPM per two-minute window
    * ran 134-150 from the first window onward, so the tempo's top was available
    * in minute one and there was nowhere left for a late run to go.
+   *
+   * RE-CENTRED ON THE GENRE, AND IT IS NEARLY A FLAT COLUMN NOW. See
+   * `director.DUBSTEP_BPM`: the whole tempo range is 136-146 rather than
+   * 122-150, so a ceiling of 132 in the exposition — which was one of the four
+   * dials the arc was built out of — would have clamped the FIRST THREE
+   * MINUTES OF EVERY RUN eight BPM under the tempo the genre is defined at.
+   * That is not reserving the top of the range, it is playing the wrong music
+   * until minute three.
+   *
+   * So tempo stops being much of an arc dial. It still moves 140 -> 146, which
+   * is real but small; the arc's weight now sits entirely on `budget`, `sub`,
+   * `ninth`, `shape` and `restAfter`, which are all changes of MATERIAL and are
+   * the half of the form this file's own header calls the point.
    */
   tempo: number;
   /** Is the sub accent unlocked yet? See `STEM_CURVES.sub` for what it is. */
@@ -113,7 +126,8 @@ export interface ActShape {
  *
  * Read down a column and you get the arc. Budget -1, -1, 0, 0: the opening is
  * genuinely a smaller band and the second half is genuinely the full one.
- * Tempo 132, 140, 150, 150: there is somewhere for a late run to go. The sub
+ * Tempo 140, 142, 146, 146: there is still somewhere for a late run to go, but
+ * it is eight BPM rather than eighteen — see `ActShape.tempo`. The sub
  * and the ninth are RESERVED — a form is largely a schedule of things you have
  * not used yet, and before this the only reserved material in the whole system
  * was the boss leitmotif.
@@ -125,12 +139,12 @@ export interface ActShape {
  * classical name.
  */
 export const ACT_SHAPE: Record<Act, ActShape> = {
-  exposition: { budget: -1, tempo: 132, sub: false, ninth: false, shape: 'period', restAfter: 24 },
-  development: { budget: -1, tempo: 140, sub: true, ninth: false, shape: 'turn', restAfter: 24 },
-  intensification: { budget: 0, tempo: 150, sub: true, ninth: true, shape: 'climb', restAfter: 32 },
+  exposition: { budget: -1, tempo: 140, sub: false, ninth: false, shape: 'period', restAfter: 24 },
+  development: { budget: -1, tempo: 142, sub: true, ninth: false, shape: 'turn', restAfter: 24 },
+  intensification: { budget: 0, tempo: 146, sub: true, ninth: true, shape: 'climb', restAfter: 32 },
   // Home: the opening sentence, the opening key, the opening groove, at the
   // forces the run has earned. See `MusicDirector.onWaveStart`.
-  recapitulation: { budget: 0, tempo: 150, sub: true, ninth: true, shape: 'period', restAfter: 28 },
+  recapitulation: { budget: 0, tempo: 146, sub: true, ninth: true, shape: 'period', restAfter: 28 },
 };
 
 /**
