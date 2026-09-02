@@ -276,6 +276,8 @@ declare module '@strudel/core' {
     tremolodepth(v: Patternable): Pattern;
     tremoloshape(v: Patternable): Pattern;
     tremoloskew(v: Patternable): Pattern;
+    /** Phase offset of the tempo-synced tremolo, in cycles of its own rate. */
+    tremolophase(v: Patternable): Pattern;
 
     // ---- routing / levels -------------------------------------------------
     gain(v: Patternable): Pattern;
