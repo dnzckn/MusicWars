@@ -401,7 +401,12 @@ export const INSTRUMENTS: Record<VoiceRole, Instrument> = {
      * note. Twelve extra pitches cost about 120 ms of decode, once.
      */
     warm: [66, 104],
-    osc: { s: 'triangle' },
+    /*
+     * pulse at 35% — mono, mid-focused, the layer you would solo and still
+     * recognise the hook from. The triangle this replaces was the "flute",
+     * and the fourth sweet re-voicing in a row; see `buildLead`'s `voice()`.
+     */
+    osc: { s: 'pulse', pw: 0.35 },
     why: 'a double reed is the most penetrating melodic voice at 440-988 Hz; 3 corpus songs',
   },
 

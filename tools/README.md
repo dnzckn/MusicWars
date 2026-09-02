@@ -3156,6 +3156,36 @@ waveform in BOTH modes, in equal numbers, and to emit its font in neither.
 `registermap`'s `~` marker and its "N of M printed groups are SAMPLED" line
 track the same set: it reads one row now, not six.
 
+## `combine` is KNOWN RED, and it is nobody's recent change
+
+Written down so the next person does not re-derive it. `combine` fails on:
+
+    committing to a fusion build reaches wave 14.6 against 14.8 for a player
+    who ignores fusions — the tree is decoration
+
+**It is not new.** Measured in a detached worktree at `1e2cd30` with
+`node_modules` junctioned in, so the main tree never moved:
+
+    1e2cd30 (before the meta layer AND the rail change)   14.5 / 14.6   -1%
+    HEAD                                                  14.6 / 14.8   -1%
+    HEAD, repeat                                          14.4 / 14.6   -2%
+    HEAD, repeat                                          14.4 / 14.6   -2%
+
+Same sign, same magnitude, same verdict. Three repeats on HEAD to separate
+reproducible from flaky: it is reproducible. And the tool's OTHER half is a
+control that says it is measuring the same game at both commits — `intent:
+committed lands 2.63 designed fusions per run against 1.13, 2.3x` reads
+identically to two decimals before and after.
+
+**The likely defect is in the threshold, not the game.** `power` compares WAVE
+REACHED at a 900-second cap, and both arms are pinned at 14-15 there — two
+numbers that have run out of room. A committed player spends picks on a plan and
+a drifter spends them on immediate throughput, so a 1% deficit at a time cap is
+what a HEALTHY tree would produce; the committed build's payoff is the 2.3x
+fusion count printed one line above. Whoever picks this up should consider
+whether the arms want playing to their own end (`finale`-style) rather than to a
+clock, which is the change that would give the column room to move.
+
 ## The meta layer: three new checks, and one silent re-baseline
 
 The between-runs layer gates the draft pool from thirty instruments and twelve
@@ -3229,10 +3259,10 @@ is a decision made per tool instead of something that happened to everybody.
 `builds` takes the same decision the other way and for a stated reason: its
 recorded baselines (0.73, 0.37, 0.29, 0.12, 0.22) are all full-roster, so
 `ROSTER=full` stays the default there and `ROSTER=base` is the opt-in. Measured
-at both: divergence **2.01 at thirty instruments, 0.85 at eight**, against a bar
-of 0.25. Read the decomposition rather than the headline — the policy spread in
-WAVE REACHED roughly tripled (0.27 -> 0.79) while the damage spread compressed
-(6.5x -> 2.2x), because a sixteen-id pool has no super-safe corner in it. The
+at both on the same tree: divergence **2.08 at thirty instruments, 0.85 at
+eight**, against a bar of 0.25. Read the decomposition rather than the headline — the policy spread in
+WAVE REACHED rose (0.51 -> 0.79) while the damage spread compressed
+(8.5x -> 2.2x), because a sixteen-id pool has no super-safe corner in it. The
 pick decides progress more and punishment less; it has not gone cosmetic.
 
 `offerpool` grew a fourth arm for the same question and it came out the other
@@ -3243,3 +3273,35 @@ fixed-size offer; removing them concentrates a builder's picks rather than
 starving them. That arm uses `ProgressionState.unlocked` — the shipped filter —
 where the three historical arms use the banish list, because measuring the
 feature through a stand-in for the feature is not measuring the feature.
+
+## `fontlanes`'s two `bass` rows are KNOWN RED, and they predate every recent score change
+
+Written down so the next person does not re-derive it. `fontlanes` fails on:
+
+    FAIL  role "bass": no hap carried "gm_electric_bass_finger" in written mode. The lane is silent or misrouted.
+    FAIL  role "bass": no hap fell back to "sawtooth". THE FALLBACK IS UNPROVEN for this lane.
+
+Measured, not reasoned. A detached worktree at `b5e05b1` — the last commit
+before the score agent's checkpoint `e996e34` and before any of the
+research-driven score commits (`fecfbfb`, `624e193`, the lead re-voicing) —
+with `node_modules` junctioned in, gives the SAME two failures word for word.
+So they belong to none of those commits.
+
+What they say: in every state `fontlanes` sweeps, `buildBass`'s pluck lane —
+`played(voice(...))`, the only recording in the score — emits NO haps at all.
+Not a font hap, not a fallback hap. A hap probe of `buildBass` in a
+drop/halftime state agrees: 14 haps = 11 wobbled + 3 chebyshev mid-bass, zero
+pluck. Either the pluck's figure is empty in these states or something gates
+it to nothing, and the gate is right to call the fallback unproven either way.
+
+Not fixed here because it is not what the score work was doing, and because
+fixing it blind risks re-introducing the very lane the owner said "sounds so
+bad" — the sampled fingered bass. Worth deciding on purpose: either the pluck
+comes back with a figure that actually sounds, or the lane and its font are
+retired and `SHIPPED`/`INSTRUMENTS` say so. Until then these two rows are
+expected red and every other `fontlanes` row is green.
+
+The `leadTune` row that went red on the lead re-voicing is a different case
+and is resolved: `SHIPPED.leadTune` now records `pulse 0.35` as a DELIBERATE
+third sound with the reason (`docs/research-dubstep.md` §6.2), which is the
+mechanism that table exists for.
