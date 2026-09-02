@@ -159,6 +159,26 @@ const LEVEL_RELEASE = 0.75;
 const BPM_MIN = 100;
 const BPM_MAX = 150;
 /**
+ * THE TEMPO OF THE GENRE. 140, and it is not negotiable by anything above it.
+ *
+ * Dubstep is one of the very few popular forms with a canonical BPM rather than
+ * a range: 140, half-time, so the bar reads at 70. Everything the genre does
+ * with energy it does in the BASS — the LFO rate, the filter depth, the drive —
+ * and not in the clock. That is the opposite of how this score has always
+ * escalated, and it is the change that had to be made first, because a tempo
+ * curve running 122-150 makes every other decision here a decision about a
+ * different piece of music.
+ *
+ * `base` was `122 + 16 * wave/(wave + 20)` — 122 at wave 0, 138 asymptotically
+ * — plus `tension * 10`, which is a 28 BPM working range. It is now a 12 BPM
+ * one centred here. See `updateTempo` for the arithmetic and for what was kept.
+ *
+ * BPM_MIN and BPM_MAX are unchanged and still bind: the breakdown's -20 and the
+ * collapse still reach down out of dance tempo entirely, which is the one thing
+ * in this score allowed to leave the genre.
+ */
+const DUBSTEP_BPM = 140;
+/**
  * Largest tempo change allowed in one bar. Bigger steps read as a mistake.
  *
  * 4, and the history matters because 5 was tried and REJECTED earlier the same
@@ -348,6 +368,38 @@ export class MusicDirector {
 
   /** True while the tempo is completing a move — see `updateTempo`. */
   private tempoMoving = false;
+  /* ==========================================================================
+   * THE DROP, AS TWO BARS THE MIX TREATS DIFFERENTLY FROM EVERY OTHER BAR.
+   * ==========================================================================
+   *
+   * -1 ordinary   0 the GAP   1 the SLAM
+   *
+   * The genre is built on one gesture and this score did not have it. A drop is
+   * BUILD, then a bar where almost everything stops, then the heaviest bar in
+   * the track — and the silence is the load-bearing half. Without it the
+   * "drop" is only the arrangement continuing at a slightly higher gate, which
+   * is exactly what `tools/sections.mjs` has been measuring: the drop is
+   * **48.6% of every run**, entered a couple of times a minute, and a listener
+   * cannot hear it arrive.
+   *
+   * WHY IT IS HERE AND NOT IN A BUILDER. Every builder sees `section` but none
+   * of them sees how many bars into that section it is, and the fader layer
+   * does (`ArrangementState.barsIn`). Adding `barsInSection` to `MusicalState`
+   * would have been the other route and it was rejected: sixteen tools in
+   * `tools/` construct that interface as an object literal, so a new required
+   * field arrives at all sixteen as `undefined` and every comparison against it
+   * silently reads false. A gesture that is invisible to the gates measuring
+   * the thing it changes is not one worth having.
+   *
+   * It is also the right layer on its own terms. The gap is not a change of
+   * material — every lane goes on playing exactly what it was playing, and
+   * comes back mid-phrase without a rebuild. It is the mix being pulled out
+   * from under the track for one bar, which is what a hand on a fader does.
+   *
+   * See `updateLevels` for the two rules and for why they SET the level rather
+   * than damping toward it.
+   */
+  private dropPhase = -1;
 
   /** Set by a boss telegraph: take the whole tempo change on the next bar. */
   private tempoSnap = false;
@@ -882,7 +934,44 @@ export class MusicDirector {
      * rather than `as any`, so a future version that changes it fails here
      * instead of silently doing nothing.
      */
-    const filterable = master as Pattern & {
+    /* ========================================================================
+     * THE GROOVE, AND IT IS ONE LINE FOR THE WHOLE BAND.
+     * ======================================================================
+     *
+     * `all(x => x.late("[0 .033]*4"))` is the last line of the reference track
+     * the owner sent, and it is the difference between a sequencer and a band:
+     * every voice in the piece is nudged behind the grid on alternate eighths,
+     * TOGETHER. Counted across `src/audio` before this, the score had exactly
+     * ONE `.late()` in it, on one line of one lane.
+     *
+     * `late` IS IN CYCLES, not seconds, and the existing call site has a
+     * comment ("sixteen milliseconds behind the grid") that reads as though
+     * somebody believed otherwise - `pattern.mjs:2081` documents the parameter
+     * as "number of cycles to nudge right". A cycle here is a bar, so at the
+     * 140 BPM this score is now anchored at, 1 cycle is 1.714 s:
+     *
+     *     0.033 cycles  = 57 ms   (the reference's value, at our tempo)
+     *     0.018 cycles  = 31 ms   <- this
+     *
+     * An eighth note at 140 is 214 ms, so 31 ms is about 14% swing on the
+     * offbeat eighths. The reference's own figure would be 26%, which is a
+     * shuffle you hear as a shuffle; half-time wants the pocket rather than the
+     * swing, because the whole feel depends on the hits being far apart and
+     * landing exactly where the ear is waiting for them.
+     *
+     * `[0 0.018]*4` is eight values across the bar: the on-beat eighths stay on
+     * the grid and the off-beat ones are late. Applied to the MASTER STACK, so
+     * the kick, the wobble and everything else move as one - a groove that only
+     * some lanes have is not a groove, it is a timing error.
+     *
+     * NO GAMEPLAY EFFECT. Every beat-locked system in the game reads the
+     * transport (`core/transport.ts`), not the audio graph: `beatlock` gates
+     * weapons on the transport's own beat, enemy volleys are scheduled in
+     * beats, and none of them can see a hap's onset. Verified green after this
+     * change rather than assumed.
+     */
+    const grooved = master.late('[0 0.018]*4');
+    const filterable = grooved as Pattern & {
       filterValues(f: (v: Record<string, unknown>) => boolean): Pattern;
     };
     /*
@@ -1282,6 +1371,13 @@ export class MusicDirector {
     this.p.openness = damp(this.p.openness, clamp01(openness), this.collapsing ? 0.35 : 0.16, dt);
 
     // --- faders ------------------------------------------------------------
+    /*
+     * `barsIn` is floored to the bar, so each of these holds for a whole bar
+     * and then releases on its own. A drop is at least `MIN_BARS.drop` = 4
+     * bars long, so the gap and the slam always both fit inside one.
+     */
+    this.dropPhase =
+      arr.section === 'drop' && arr.barsIn <= 1 && !this.collapsing ? arr.barsIn : -1;
     this.updateLevels(this.energy, arr.section, snap, dt);
 
     // --- bar-quantised structural work -------------------------------------
@@ -1597,7 +1693,29 @@ export class MusicDirector {
        * not a gate being worked around — a lane at exactly zero is *gone*, not
        * quiet, and cannot return until the next rebuild.
        */
-      if (id === 'sub' && !shape.sub) want *= 0.3;
+      /*
+       * ...AND IT IS 0.8 NOW, NOT 0.3. The form still reserves the bottom
+       * octave; it no longer reserves it by taking it away.
+       *
+       * Everything above is right about WHY the sub is the thing to hold back —
+       * it is the only source in the 63 Hz octave apart from the kick, so
+       * withholding it is a change to the spectrum rather than to the note
+       * count. It is wrong about how much, now that the genre is dubstep. 0.3
+       * on the fader is 0.09 on the energy, about 21 dB, and stacked on the old
+       * `STEM_CURVES.sub` (`in: 0.44`, ceiling 0.52) it meant the first three
+       * minutes of every run had no bottom octave at all. The owner heard
+       * exactly that: "its missing a base,/ kick".
+       *
+       * 0.8 is -1.9 dB of fader and -3.9 dB of energy. Audible as the
+       * exposition being a little less deep than the development, which is what
+       * an arc dial is supposed to be, and it cannot make the lane absent.
+       *
+       * `ActShape.sub` therefore still does something and is still a live
+       * field, which is the other reason for a multiplier rather than deleting
+       * the reservation outright: a boolean that is true in all four rows is
+       * dead content wearing a design's clothes.
+       */
+      if (id === 'sub' && !shape.sub) want *= 0.8;
 
       // The low end is where health lives. As the player gets hurt the bottom
       // of the mix is pulled out from under them; combined with the rising
@@ -1807,12 +1925,76 @@ export class MusicDirector {
       if (this.glue > 0 && target > AUDIBLE_FLOOR) {
         target += (glueMean - target) * this.glue;
       }
-      this.levels[id] = damp(
-        this.levels[id],
-        target,
-        target > this.levels[id] ? LEVEL_ATTACK : LEVEL_RELEASE,
-        dt,
-      );
+      /* ======================================================================
+       * THE GAP AND THE SLAM. See `dropPhase`.
+       * ==================================================================== */
+      if (this.dropPhase === 0) {
+        /*
+         * BAR ONE OF EVERY DROP: the arrangement stops.
+         *
+         * `sub` is not merely spared, it is PUSHED — to 0.9, well above any
+         * ceiling `STEM_CURVES` would give it. A bar of nothing but the low
+         * sine under the room tail is the sub drop, and it is the half of this
+         * gesture that makes the next bar land: the ear needs something to
+         * measure the silence against or it reads as a dropout.
+         *
+         * `fx` is spared at its own level so the crash and the room tail from
+         * the section boundary ring through the hole instead of being cut off
+         * by it.
+         *
+         * NOT A HARD ZERO for anything else, and the reason is architectural
+         * rather than musical — the sub's reservation forty lines above states
+         * it in full. A lane at exactly zero drops its `active` latch,
+         * `drainRebuild` replaces its cached pattern with `silence`, and it
+         * cannot return until the next rebuild — so a hard zero here would not
+         * be a one-bar gap, it would be a lane leaving for the rest of the
+         * phrase. 0.03 is the floor and it is -60 dB after `postgain` squares
+         * it: inaudible, and still comfortably above the 0.02 the latch
+         * watches.
+         *
+         * The `target > 0.05` guard preserves every hard zero written above —
+         * the tacet rota, the player's TACET/REST items, the breakdown's kit —
+         * so this cannot resurrect a lane something else has silenced.
+         */
+        if (id === 'sub') target = Math.max(target, 0.9);
+        else if (id !== 'fx' && target > 0.05) target = Math.max(target * 0.06, 0.03);
+      } else if (this.dropPhase === 1) {
+        /*
+         * BAR TWO: the heaviest bar in the track.
+         *
+         * The three lanes that carry weight get a quarter more than the
+         * arrangement asked for, clamped. Everything else simply arrives at
+         * full at once, which after a bar at -60 dB is the whole gesture — the
+         * lift is there so that the bar is measurably bigger than the drop's
+         * own third and fourth bars rather than merely un-muted.
+         */
+        if (id === 'bass' || id === 'kick' || id === 'sub') target = clamp01(target * 1.25);
+      }
+      /*
+       * THE TWO DROP BARS SET THE LEVEL INSTEAD OF DAMPING TOWARD IT.
+       *
+       * `LEVEL_RELEASE` is a 0.75 s halflife and a bar at 140 BPM is 1.71 s, so
+       * a damped gap would spend its first half fading out — which is a duck,
+       * and a duck is the thing a drop is not. `LEVEL_ATTACK` is 0.22 s, gentle
+       * enough that the slam's downbeat would arrive at about half level and
+       * grow into itself.
+       *
+       * These are the only two bars in the run where a level is assigned. Every
+       * other transition in this file is damped on purpose, because "a lane
+       * that vanishes and reappears is a cut, and cuts are what this project
+       * has spent its life removing" — the exception is legitimate exactly
+       * because here the cut IS the music, it is quantised to the bar, and it
+       * lasts one of them.
+       */
+      this.levels[id] =
+        this.dropPhase >= 0
+          ? target
+          : damp(
+              this.levels[id],
+              target,
+              target > this.levels[id] ? LEVEL_ATTACK : LEVEL_RELEASE,
+              dt,
+            );
 
       // `active` only decides whether a pattern is worth *building*; the latch
       // deadband stops a level hovering near zero from thrashing rebuilds.
@@ -2087,7 +2269,23 @@ export class MusicDirector {
      * ramp has no natural maximum, do not calibrate the ramp against a measured
      * one. Measure again and it will have moved.
      */
-    const base = 122 + 16 * (this.wave / (this.wave + 20));
+    /*
+     * ...AND THEN THE GENRE FIXED IT AT 140, which is a smaller change to this
+     * expression than the four paragraphs above it suggest.
+     *
+     * Everything those notes establish about the SHAPE of the ramp is kept —
+     * `wave/(wave + 20)` has no wall, `wave` stays a live input at wave 200,
+     * and the diminishing return is still the right curve. What changes is the
+     * range it spans. It was 122 -> 138, sixteen BPM of climb; it is now
+     * 136 -> 144, eight BPM of climb centred on `DUBSTEP_BPM`. Wave 8 reads
+     * 138.3, wave 20 reads 140.0, wave 60 reads 142.0.
+     *
+     * The escalation the sixteen BPM was buying does not disappear, it moves:
+     * `wobble.ts`'s LFO rate phrase and `lpdepth` are what get faster and
+     * harder now, and those are the genre's own escalation. A dubstep track
+     * that answered pressure by speeding up would stop being one.
+     */
+    const base = DUBSTEP_BPM - 4 + 8 * (this.wave / (this.wave + 20));
     /*
      * A boss opens SLOWER than the wave that led to it, and accelerates.
      *
@@ -2106,19 +2304,39 @@ export class MusicDirector {
      * use turns from a heavy dotted march into a genuine Castlevania drive
      * without a single note changing.
      */
-    let target = base + tension * 10 + (this.boss ? -16 + this.bossPhase * 9 : 0);
     /*
-     * Dubstep is anchored to 140, which is where the genre actually lives.
+     * `tension * 4`, not `tension * 10`, and the boss drop is -10 rather
+     * than -16.
      *
-     * A pull toward it rather than an offset, because it has to work in both
-     * directions: an early wave would otherwise play half-time at 124, which is
-     * a dirge, and a late high-tension one at 148, where the sixteenth-note
-     * triplet wobble on the fill bar turns into a buzz and the ghost notes stop
-     * being separate events. Half-time is the one feel here whose whole effect
-     * depends on there being room between the hits, so this is the one place a
-     * tempo ceiling is a musical decision rather than a restraint.
+     * Same reason as `base`: the working range is the genre's, not the
+     * arrangement's. Ten BPM of tension on top of sixteen of wave meant the
+     * tempo was the score's loudest escalation dial, and it is now its
+     * quietest. Four still moves — 136 to 146 across the whole run — which is
+     * inside what a listener hears as one track getting more urgent rather
+     * than as a different track.
+     *
+     * The boss keeps its SHAPE, which is the part that was measured and right:
+     * it opens under the wave that led to it and takes the tempo back a phase
+     * at a time, ending faster than it began. -16 at 122 was a move to 106;
+     * -10 at 140 is a move to 130, which is the same gesture as a fraction of
+     * the clock and still well clear of the half-time floor where the ghost
+     * notes stop being separate events.
      */
-    if (this.feel === 'halftime') target = lerp(target, 140, 0.5);
+    let target = base + tension * 4 + (this.boss ? -10 + this.bossPhase * 6 : 0);
+    /*
+     * THE HALF-TIME PULL IS GONE, and its absence is the point.
+     *
+     * It was `if (feel === 'halftime') target = lerp(target, 140, 0.5)` — a
+     * per-feel correction, because half-time was one entry in a rota of five
+     * and the other four were being played at 122-138. Half-time is now the
+     * posture of the whole score (`FEEL_CYCLE`, and every boss), and `base` is
+     * anchored at `DUBSTEP_BPM`, so the correction has nothing left to correct:
+     * it would be pulling 140 halfway toward 140.
+     *
+     * Deleted rather than left as a no-op, because a conditional that cannot
+     * change its output is exactly the dead control this project keeps finding.
+     * The reasoning it carried is preserved in `DUBSTEP_BPM`.
+     */
     if (this.arranger.section === 'drop') target += 4;
     /*
      * A breakdown drops 20 BPM, not 6.

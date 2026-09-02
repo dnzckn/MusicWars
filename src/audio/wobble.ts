@@ -24,8 +24,8 @@
  * is — the bass part is written in filter movement, not in note onsets.
  */
 
-import { note, stack, type Pattern, type Patternable } from '@strudel/core';
-import { ORBIT_LOW } from './kit';
+import { note, perlin, sine, stack, type Pattern, type Patternable } from '@strudel/core';
+import { ORBIT_LOW, ORBIT_ROOM } from './kit';
 
 /** LFO waveform, as superdough's `lpshape` numbers them. */
 export const WUB_TRI = 0;
@@ -66,26 +66,54 @@ export interface Wub {
  * and it arrives somewhere different every bar, which is indistinguishable from
  * sloppy.
  */
+/*
+ * ---------------------------------------------------------------------------
+ * RE-CUT FOR CHEW: "i want my dubstep to be, chrunchy, munchy, juicy,
+ * delicious wubs and dubs".
+ * ---------------------------------------------------------------------------
+ *
+ * The SHAPE of the phrase is unchanged - statement, answer, three-against-four
+ * in the middle, run-up on the fill bar - and the reasoning above it stands.
+ * What changed is the ARTICULATION of every bar, which is `skew` and `shape`,
+ * and it is the half of this table that carries "munchy".
+ *
+ * `lpskew` is where the LFO turns around, 0..1. At 0.5 the sweep is symmetric:
+ * the filter takes as long to open as it does to close, which is a wobble that
+ * BREATHES. Below that it snaps open and closes slowly, which is a wobble that
+ * BITES - an accent with a decay rather than a swell. The old table sat at 0.5
+ * on four of its eight bars and never went below 0.24; it is now 0.20-0.42 on
+ * seven of eight, with the square gate the one thing left at 0.5 (a square has
+ * no ramp for a skew to shorten, so the control does nothing there anyway).
+ *
+ * Two waveform swaps for the same reason. `WUB_SAW` is a ramp with a hard
+ * reset - the filter falls away and then snaps back - which is the single most
+ * characteristic wobble shape there is, and it appeared on exactly one bar of
+ * eight. Bars 2 and 4 take it, so the phrase now alternates sweep and snap
+ * rather than only changing speed.
+ *
+ * NOT HEARD. This is a written change to eight rows of a table.
+ */
 export const WUB_PHRASE: readonly Wub[] = [
-  // 1 — state it plainly. Quarter notes, symmetric, nothing clever.
-  { rate: 4, shape: WUB_SINE, skew: 0.5 },
-  // 2 — same rate, snapped. Identical rhythm, harder edge: the first thing that
-  // changes in the phrase is articulation, not speed.
-  { rate: 4, shape: WUB_SINE, skew: 0.3 },
-  // 3 — dotted eighths. Six against four is where the funk gets in.
-  { rate: 6, shape: WUB_TRI, skew: 0.42 },
-  // 4 — the answer, at eighths.
-  { rate: 8, shape: WUB_SINE, skew: 0.38 },
-  // 5 — the lurch. Three per bar is a dotted quarter, so the wobble crosses the
-  // barline's own pulse and drags.
-  { rate: 3, shape: WUB_SINE, skew: 0.5 },
-  // 6 — back to six, snapped hard.
-  { rate: 6, shape: WUB_TRI, skew: 0.24 },
-  // 7 — square. Not a sweep at all any more; a gate.
+  // 1 - state it plainly. Quarter notes, nearly symmetric, nothing clever.
+  { rate: 4, shape: WUB_SINE, skew: 0.42 },
+  // 2 - same rate, snapped, and on a ramp. Identical rhythm, hard edge: the
+  // first thing that changes in the phrase is articulation, not speed.
+  { rate: 4, shape: WUB_SAW, skew: 0.26 },
+  // 3 - dotted eighths. Six against four is where the funk gets in.
+  { rate: 6, shape: WUB_TRI, skew: 0.34 },
+  // 4 - the answer, at eighths, and it bites rather than breathes.
+  { rate: 8, shape: WUB_SAW, skew: 0.3 },
+  // 5 - the lurch. Three per bar is a dotted quarter, so the wobble crosses
+  // the barline's own pulse and drags.
+  { rate: 3, shape: WUB_SINE, skew: 0.4 },
+  // 6 - back to six, snapped as hard as this table goes.
+  { rate: 6, shape: WUB_TRI, skew: 0.2 },
+  // 7 - square. Not a sweep at all any more; a gate. Skew is inert on a square
+  // and is left at 0.5 to say so.
   { rate: 8, shape: WUB_SQUARE, skew: 0.5 },
-  // 8 — the run-up. Twelve is a sixteenth-note triplet, and it lands on the
+  // 8 - the run-up. Twelve is a sixteenth-note triplet, and it lands on the
   // fill bar, so the bass tips into the next phrase with everything else.
-  { rate: 12, shape: WUB_SAW, skew: 0.5 },
+  { rate: 12, shape: WUB_SAW, skew: 0.28 },
 ];
 
 /**
@@ -151,13 +179,49 @@ export interface WubOpts {
 export function wub(notes: Patternable, o: WubOpts): Pattern {
   return (
     note(notes)
-      .s('sawtooth')
+      /*
+       * TWO OSCILLATORS, ONE VOICE — taken from the reference track the owner
+       * sent (`dubbyflux`'s "dub"), whose bass is `.s("sawtooth,sine")`.
+       *
+       * A comma in `s()` is a mini-notation STACK, so this is the same note
+       * sounded twice in the same lane, through the same ladder, the same LFO
+       * and the same saturation. It costs one hap and no fader, and it is the
+       * thing the genre is built on: a fundamental with body underneath the
+       * part the filter is chewing. When the LFO slams the cutoff shut the
+       * sawtooth's harmonics go with it and a sine at 110-220 Hz barely
+       * notices, so the note keeps its weight through the closed half of every
+       * wobble instead of disappearing into it.
+       *
+       * NOT THE SUB, and the distinction matters because the sub must stay
+       * clean: `buildSub` is a separate lane, two octaves down, with no
+       * distortion anywhere in its chain (`kit.sub`). This is the bass's own
+       * fundamental and it is meant to be driven.
+       */
+      .s('sawtooth,sine')
       // 32 ms, not 5. See the note above: at 110 Hz, 5 ms is half a cycle.
       .attack(0.032)
       .decay(0.04)
       .sustain(1)
       .release(0.08)
-      .clip(1)
+      /*
+       * `clip(0.72)`, NOT 1, AND THIS IS "MUNCHY".
+       *
+       * superdough starts the release at `begin + duration * clip`, so this is
+       * how long the note actually IS. At 1 the note holds its whole slot and
+       * the next one begins where it ends: the lane is a continuous tone that a
+       * filter happens to be moving over. At 0.72, a quarter note at 140 BPM
+       * (428 ms) sounds for 308 ms and releases over 80, leaving about 40 ms of
+       * air before the next - so each note of the figure is a separate BITE
+       * with the wobble inside it, rather than one unbroken sound with the
+       * wobble printed across the bar.
+       *
+       * The paragraph below still holds: the amplitude envelope must not fight
+       * the LFO for the rhythm. It does not. The LFO runs at four to twelve
+       * cycles a bar and the figure is three or four events a bar, so what
+       * `clip` cuts is the JOIN between notes and not the wobble inside one -
+       * every note still gets a complete sweep at the phrase's slowest rate.
+       */
+      .clip(0.72)
       /*
        * NO HIGHPASS. There was a `.hpf(74)` here, "out of the sub's way, same
        * as the house bass" — and it was the same bug as the house bass, with
@@ -200,7 +264,38 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * bass talking. It stays under 2.2kHz (see the cutoff range in
        * `buildBass`) so it never parks in the fatigue band.
        */
-      .lpq(7)
+      /* ====================================================================
+        * ...AND IT DRIFTS, WHICH IS THE FIRST CONTINUOUS MODULATOR IN THE SCORE.
+        * ==================================================================
+        *
+        * Counted across `src/audio` before this line: `sine.range` 0 uses,
+        * `saw.range` 0, `tri.range` 0, `perlin` 0. **Every dial in five
+        * thousand lines of score is driven top-down from game state or from
+        * the bar number.** So every one of them is predictable, and a
+        * standing hypothesis for why this music keeps reading as generated
+        * through four rounds of re-voicing is not the timbres at all — it is
+        * that nothing moves except when the game moves it.
+        *
+        * `perlin` is smooth random: a deterministic function of cycle time
+        * (`@strudel/core/signal.mjs`, `getRandsAtTime(t, ...)` — no
+        * `Math.random`, no wall clock, so every gate and every
+        * `capture --verify-determinism` run still reproduces exactly). Over
+        * seven bars it wanders the resonance between a firm peak and a very
+        * sharp one, so no two passes of the eight-bar wobble phrase have the
+        * same voice even where they have the same rate.
+        *
+        * The RANGE is the constraint. 7 is the number every paragraph in this
+        * file is written about: `k = min(8, q * 0.13)` makes it 0.91 of
+        * feedback in the ladder, which is a peak you follow rather than a
+        * whistle. 5.5-8.5 keeps that character at both ends — 0.72 to 1.10 of
+        * feedback — and 8.5 is where a ladder starts to sing rather than
+        * merely resonate, which on a bass is the "juicy" the owner asked for
+        * and is why it is the top of the range and not the middle.
+        *
+        * Seven bars, and the reese below runs eleven. Coprime, so the pair
+        * never lines up inside a run.
+        */
+      .lpq(perlin.range(5.5, 8.5).slow(7))
       .ftype('ladder')
       .drive(o.drive)
       .lpsync(o.shape.rate)
@@ -213,7 +308,43 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * unity and adds the second and third harmonics that let a bass read on a
        * laptop speaker at all.
        */
-      .distort('1.15:0.42')
+      /*
+       * 3.0, not 1.15 — AND THIS IS WHERE THE CRUNCH ACTUALLY IS, which was
+       * settled by a render rather than by reading the source.
+       *
+       * superdough's voice chain is oscillator -> gain -> FILTER -> vowel ->
+       * coarse -> crush -> DISTORT, so everything this makes is post-filter:
+       * the ladder never sees it and the LFO cannot sweep across it. That
+       * argues for putting the crunch in `.drive()` instead — and `buildBass`
+       * records, with numbers, that doing so made the lane darker in every
+       * band and 1.4 dB quieter, because the ladder's four poles sit after its
+       * own saturation.
+       *
+       * Measured through the real chain, level-matched, this control does what
+       * the drive could not: +6.1 dB at 2 kHz, +13.3 at 4 kHz, +19.4 at 8 kHz,
+       * against +2.7 at the fundamental. See `buildBass` for the full table.
+       *
+       * THE SECOND NUMBER IS THE POSTGAIN AND IT IS DOING REAL WORK. At the
+       * old 0.42 this change was +8 dB of overall level, which is a different
+       * mix rather than a different timbre. 0.30 puts the lane 2.2 dB above
+       * where it was and leaves the harmonics where the table above says.
+       * `distortvol` is squared by superdough's gain curve, so it moves faster
+       * than it looks.
+       *
+       * `distorttype` IS DELIBERATELY NOT SET, so this stays superdough's
+       * default `scurve` soft clipper. `fold`, `sinefold` and `chebyshev` make
+       * far more upper-order content and there is nothing after this node to
+       * remove it; at 4 kHz this already reads -59 dBFS soloed, and the
+       * 2.5-6 kHz band is the one `audiocheck` fails on and the one recorded
+       * human complaint about this score's high end. A soft clipper's
+       * harmonics fall away fast, which is the property that makes this
+       * amount safe.
+       *
+       * AND NEVER NEAR ZERO: `distort(0)` does not mean "no distortion", it
+       * SILENCES the voice — the waveshaper curve is built from the value and
+       * collapses to all-zeros. AGENTS.md §4.
+       */
+      .distort('3.0:0.30')
       .gain(o.level)
       /*
        * The same small room `buildBass` sends to, for the same reason.
@@ -226,7 +357,7 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * cuts, and the gaps ARE the part.
        */
       .room(0.1)
-      .roomsize(2)
+      .roomsize(ORBIT_ROOM[ORBIT_LOW])
       .orbit(ORBIT_LOW)
   );
 }
@@ -273,22 +404,40 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .decay(0.1)
     .sustain(0.95)
     .release(0.12)
-    .clip(1)
+    // Shorter than the fundamental's 0.72, so the growl lets go before the note
+    // underneath it does and the join between notes is the fundamental alone.
+    // See the `clip` note in `wub`.
+    .clip(0.66)
     .lpf(o.cutoff)
-    .lpq(5)
+    /*
+     * 6.5, not 5 - "juicy" is resonance, and this is the voice that can afford
+     * it. A ladder turns q into a feedback coefficient (`k = min(8, q * 0.13)`,
+     * so 6.5 is 0.845) which is a peak you follow, rather than the ~16 dB spike
+     * a biquad would give at the same number. It stays under the fundamental's
+     * 7 so the two peaks are not sitting on top of each other.
+     */
+    /*
+     * 5.2-7.4 on an eleven-bar sine, against the fundamental's seven-bar
+     * perlin. Two resonances drifting on coprime periods is the same trick as
+     * the two LFO rates below and for the same reason: one modulator is an
+     * effect, two that never line up are a voice. It stays under the
+     * fundamental's range so the two peaks are not sitting on top of each
+     * other. See the note in `wub`.
+     */
+    .lpq(sine.range(5.2, 7.4).slow(11))
     .ftype('ladder')
     .drive(o.drive)
     .lpsync(rate)
     .lpdepth(o.depth)
     .lpshape(WUB_TRI)
     .lpskew(0.5)
-    .distort('1.2:0.4')
+    .distort('3.2:0.28')
     .gain(o.level)
     // See `wub`. The growl sits an octave up and takes slightly more of the
     // room for it, which is the ordinary way a mix is depth-staged: the higher
     // a source, the more of the space you hear around it.
     .room(0.14)
-    .roomsize(3)
+    .roomsize(ORBIT_ROOM[ORBIT_LOW])
     .orbit(ORBIT_LOW);
 }
 

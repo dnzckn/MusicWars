@@ -5,16 +5,20 @@ this repository — not one loop, not one bar. Every note is decided in the
 browser by [Strudel](https://strudel.cc) and arranged in real time from what is
 happening on screen.
 
-The drums, the sub and the risers are synthesised from oscillators and noise.
-The seven pitched lanes play **General MIDI instruments** — a fingered bass, a
-string section, a choir, two guitars and an oboe — fetched at runtime from
-[webaudiofontdata](https://felixroos.github.io/webaudiofontdata/), 343 KB
-gzipped across six files, about 0.9 s on a warm connection and 4 s cold. Nothing
-waits for them: the game starts on the oscillators those lanes used to use and
-swaps the instruments in underneath. **If the fetch fails the game keeps playing
-on the oscillators**, per lane, so it works with no network at all.
-See [`src/audio/soundfonts.ts`](src/audio/soundfonts.ts) for which instrument
-each lane plays and why, and `node tools/fontcheck.mjs` for the measurement.
+Almost all of it is synthesis — oscillators and noise, no recordings. The one
+exception is the **bass**, which plays a sampled fingered electric bass
+(`gm_electric_bass_finger`) fetched at runtime from
+[webaudiofontdata](https://felixroos.github.io/webaudiofontdata/): one file,
+9.7 KB gzipped. Nothing waits for it — the game starts on the sawtooth that lane
+always used and swaps the instrument in underneath once the samples are decoded,
+measured at 0.5 s with a warm connection and 3.3 s cold — and **if the fetch
+fails the lane keeps its sawtooth**, so the game works with no network at all.
+
+Six other instruments are mapped and ready in
+[`src/audio/soundfonts.ts`](src/audio/soundfonts.ts) and are switched OFF: a
+build that put an oboe on the melody and a choir on the harmony was heard and
+described as "carnival". The table records what each would be and why; enabling
+one is a single line. `node tools/fontcheck.mjs --spectrum` is the measurement.
 
 **The ensemble on stage is the mix.** Each weapon you hold is an instrument
 playing its part, each enemy archetype has a motif, and the density of the

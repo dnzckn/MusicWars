@@ -14,7 +14,7 @@
 
 // `saw` went with the downlifter — the only thing in this file that swept a
 // filter across a bar. See the cymbal note in `buildFx`.
-import { note, s, silence, stack, type Pattern, type Patternable } from '@strudel/core';
+import { note, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp01, remap } from '../core/math';
 import type { Chord, ChordSpan, Extension, LaneId, ModeName } from './theory';
@@ -56,16 +56,22 @@ import { articulate, type TouchName } from './articulation';
  * own step sets, so importing them would be importing the thing that was the
  * problem.
  */
-import { clap, hatLayer, impact, kick, metal, ORBIT_AIR, ORBIT_HARMONY, ORBIT_LOW, snare, sub } from './kit';
-import { reese, wub, wubFor } from './wobble';
 import {
-  applyVoice,
-  INSTRUMENTS,
-  type ResolvedVoice,
-  type SynthOnly,
-  type VoiceRole,
-  voiceSource,
-} from './soundfonts';
+  clap,
+  hatLayer,
+  impact,
+  kick,
+  metal,
+  ORBIT_AIR,
+  ORBIT_DRUMS,
+  ORBIT_HARMONY,
+  ORBIT_LOW,
+  ORBIT_ROOM,
+  snare,
+  sub,
+} from './kit';
+import { reese, wub, wubFor } from './wobble';
+import { applyVoice, type ResolvedVoice, type SynthOnly, type VoiceRole, voiceSource } from './soundfonts';
 
 export type StemId =
   | 'sub'
@@ -255,7 +261,45 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * mix, the emptiest band in the score. See `KICK_NOTE` for the other half of
    * that hole.
    */
-  sub: { in: 0.44, full: 0.8, ceiling: 0.52, floor: 0.26 },
+  /* ==========================================================================
+   * ...AND THEN THE OWNER LISTENED: "its missing a base,/ kick, lets add more
+   * base". THE SUB IS A BED AGAIN, AND EVERY PARAGRAPH ABOVE IS WHY IT WAS NOT.
+   * ==========================================================================
+   *
+   * Read the five notes above as one argument and they are internally
+   * consistent and, for the score they were written for, right: a permanent
+   * sub "is a dance-music object", nothing in the 8/16-bit canon has sustained
+   * energy below 45 Hz, and "it is felt rather than heard, continuously" was
+   * listed as the FAULT.
+   *
+   * Every one of those sentences is an argument against dubstep. The genre's
+   * whole identity is the bottom of the spectrum; "felt rather than heard,
+   * continuously" is not a defect there, it is the specification. This is the
+   * clearest case in the file of a decision that was correct under one brief
+   * and inverted by the next, so the old reasoning is kept above rather than
+   * deleted — if the target ever moves back, it moves back with it.
+   *
+   * WHAT THE OLD ROW ACTUALLY PRODUCED, which is worse than "an accent":
+   *   in 0.44        measured energy has a median of 0.62 and a p99 of 0.79, so
+   *                  the lane existed only in roughly the top third of play.
+   *   ceiling 0.52   about 16 dB under the bass after `postgain` squares it.
+   *   ActShape.sub   FALSE for the whole exposition, and `updateLevels`
+   *                  multiplied by 0.3 for it — another 21 dB down. So for the
+   *                  first three minutes of every run, which is most runs, the
+   *                  sub was 37 dB under the bass whenever it was audible at
+   *                  all, and silent the rest of the time.
+   *
+   *   in 0        it is a bed. There is no dubstep without one.
+   *   full 0.5    reached in ordinary play rather than in extremis.
+   *   ceiling 0.86  under the bass's 0.95 and above the kick's, which is the
+   *                 order these three want: growl on top, sub under it, kick
+   *                 punching through both.
+   *   floor 0.55  the moment it opens it is already a floor, not a hint.
+   *
+   * The one thing that has NOT changed is that it is a sine two octaves under
+   * the chord root and it stays one. See `kit.sub`.
+   */
+  sub: { in: 0, full: 0.5, ceiling: 0.86, floor: 0.55 },
   /*
    * The kick reaches full at 0.68, not 0.52 — because it was a switch.
    *
@@ -277,7 +321,28 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * section of `session` for why a `full` value has to be read against measured
    * tension rather than against the 0..1 the table appears to offer.
    */
-  kick: { in: 0.1, full: 0.68, ceiling: 0.74, floor: 0.3 },
+  /*
+   * ...AND THE OTHER HALF OF "its missing a base,/ kick".
+   *
+   * The reasoning above about `full` stands untouched — it is about the SHAPE
+   * of the curve and it was measured. What moves is where the curve sits.
+   *
+   *   in 0.1 -> 0.02   half-time is kick-on-1, snare-on-3. There is no
+   *                    intensity at which that kick should be absent; it is the
+   *                    clock the whole feel is read against.
+   *   ceiling 0.74 -> 0.92  level with the bass rather than 4 dB under it.
+   *                    `KICK_NOTE` is `g1` = 49 Hz and the wobble's lowest
+   *                    fundamental is 110 Hz, so these two are an octave and a
+   *                    bit apart and are not competing for the same band — the
+   *                    kick was simply quiet.
+   *   floor 0.3 -> 0.44  a kick that fades up is not a kick.
+   *
+   * VERIFIED RATHER THAN ASSUMED, because the pitch is the thing that made
+   * this lane inaudible once already: `KICK_NOTE` is still `g1`. The move off
+   * `c1` (32.7 Hz, under the reproduction range of every speaker this game is
+   * played on) survived this pass — see the long note on that constant.
+   */
+  kick: { in: 0.02, full: 0.68, ceiling: 0.92, floor: 0.44 },
   /*
    * `clap` IS THE WHOLE KIT ABOVE THE KICK, and since `percGrid` that is more
    * than a name.
@@ -298,7 +363,29 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * `MOVEMENT_MIX`, `INTRO_ENTRY`, `STEM_CURVES` and a dozen tools, and still
    * buys no music.
    */
-  clap: { in: 0.26, full: 0.68, ceiling: 0.66, floor: 0.22 },
+  /*
+   * ...AND IT COMES UP, BECAUSE THE AIR HAS TO COME FROM SOMEWHERE.
+   *
+   * Rendered through the real chain (`tools/capture.mjs --bars=4`, full mix)
+   * after the melody was demoted and the bass promoted, the spectrum reads
+   * 63 Hz 18.7%, 125 Hz 49.7%, 250 Hz 25.0% — **93.4% of the mix below 500 Hz**
+   * — and 1.7% above 2 kHz. The low end is what the owner asked for twice and
+   * it stays; the top is a hole, and this project has measured a dull mix
+   * before and knows what it costs.
+   *
+   * This lane is where the answer is. It is the whole kit above the kick — the
+   * backbeat, the ghost snares, the sixteenth hat grid, its thirty-second
+   * ratchets and the bell — and `registermap` reads it as **98.6% of all the
+   * energy in the mix above 2 kHz**. It is the only broadband source left, and
+   * a transient one, which is exactly the kind of air a half-time track wants:
+   * the space between the hits is the arrangement, so the thing filling the top
+   * has to be the hits themselves rather than a sustained line.
+   *
+   * `in` 0.26 -> 0.18 and ceiling 0.66 -> 0.82. The hat grid arrives earlier and
+   * the kit sits about 4 dB up after gain-squaring. Nothing sustained was added
+   * to do it, which is the constraint that made this the right lane.
+   */
+  clap: { in: 0.18, full: 0.68, ceiling: 0.82, floor: 0.26 },
   /*
    * The motor is the CLOCK, so it is very nearly flat.
    *
@@ -313,13 +400,150 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * stops. A continuous sixteenth line at hi-hat level is a buzz; the same line
    * under everything else is a pulse you feel rather than listen to.
    */
-  hats: { in: 0, full: 0.62, ceiling: 0.4, floor: 0.32 },
-  bass: { in: 0.24, full: 0.72, ceiling: 0.6, floor: 0.22 },
-  chords: { in: 0.1, full: 0.82, ceiling: 0.9, floor: 0.3 },
-  // `full` was 0.8, which energy reaches only in extremis, so the arp lived in
-  // the bottom of its own curve. 0.62 lets a busy passage actually open it up.
-  arp: { in: 0.32, full: 0.62, ceiling: 0.76, floor: 0.26 },
-  lead: { in: 0.2, full: 0.84, ceiling: 0.95, floor: 0.34 },
+  /*
+   * ...AND IT COMES DOWN, BECAUSE IT IS SITTING ON THE BASSLINE.
+   *
+   * `tools/masking.mjs` names it: over 660 states and 1.7 million overlapping
+   * cross-lane pairs, **bass+motor is the worst pair in the mix** — 23,769
+   * collisions, 39% of all of them, carrying 40% of the total audible weight.
+   * The motor's own window is MIDI 57-69 and the bass now plays 45-69 with a
+   * plucked electric bass ON the line rather than under it. Two pitched parts
+   * in one octave, one of which never stops, is the collision no fader
+   * ordering fixes and the exact thing the owner reached for when he wrote
+   * "the second lead synth could be improved... need a baseline, not just
+   * leads".
+   *
+   * DEMOTED, NOT DELETED, and the argument above is why: it is the clock, and
+   * a metronome that fades out takes the floor from under the arrangement. It
+   * keeps `in: 0` and a floor two thirds of its ceiling, so it is still always
+   * there; it is simply no longer competing with the part it sits on top of.
+   * 0.4 -> 0.26 is about -7 dB after gain-squaring.
+   *
+   * The kick at 0.92 and the hats in `clap` are what keep time now, which they
+   * can afford to do in half-time in a way they could not at four-to-the-floor.
+   */
+  hats: { in: 0, full: 0.62, ceiling: 0.26, floor: 0.2 },
+  /*
+   * THE BASS IS THE PROTAGONIST, and this row is where that is actually true.
+   *
+   * `buildBass` is the wobble on four feels of five now, but a part is only the
+   * centre of a mix if its FADER says so, and this row said the opposite: an
+   * `in` of 0.24 meant the bass did not exist at all until the game was a
+   * quarter of the way up its danger scale, and a ceiling of 0.6 put it a
+   * distant third behind `chords` (0.9) and `lead` (0.95).
+   *
+   * Read those three as ENERGY, which is what they are — `postgain` is squared
+   * by `setGainCurve(x => x*x)`, so the table's apparent range is doubled in
+   * dB. 0.6 against 0.95 is not 4 dB down, it is 8. The lane the brief calls
+   * the protagonist was 8 dB under the tune.
+   *
+   *   in 0.04     it is the FLOOR of the arrangement. There is no dubstep
+   *               without the bass, so it arrives with the first bar rather
+   *               than being earned; only the intro's entry order holds it
+   *               back now (`INTRO_ENTRY.bass`).
+   *   full 0.58   just under the measured median energy of 0.62, so the lane
+   *               spends most of a run at or near its ceiling. That is the
+   *               opposite of what a fader is normally for and it is correct
+   *               here for the same reason `hats` is nearly flat: this is the
+   *               part, not a colour on it. The wobble's own dynamics come
+   *               from `lpdepth` and `drive`, which are continuous and inside
+   *               the voice.
+   *   ceiling 0.95  level with what the lead used to hold. The two swap.
+   *   floor 0.4   audible the instant it opens; a wobble fading up from 0.22
+   *               is a synth pad.
+   */
+  bass: { in: 0.04, full: 0.58, ceiling: 0.95, floor: 0.4 },
+  /*
+   * THE PAD COMES DOWN 0.9 -> 0.62, and it is the second-largest subtraction
+   * in this table after the melody.
+   *
+   * `buildChords` is three parts — a sustained open-fifth bed, a sustained
+   * colour pair, and a comping stab — and all three are CONTINUOUS. A bed that
+   * never stops is the thing the genre has least of: dubstep is defined as much
+   * by what is not playing as by what is, and a sustained supersaw under a
+   * half-time wobble fills exactly the gaps the LFO is cutting. The gaps ARE
+   * the part (`wobble.ts` says so about its own reverb send).
+   *
+   * Not deleted, and deliberately not: the harmony is what stops the wobble
+   * being one note, `harmony` holds seven assertions over this lane's voicing,
+   * and `breakdown`/`intro`/HUSHED are built out of it opening up. It goes from
+   * the loudest sustained thing in the mix to a bed you notice when the bass
+   * lets go of it.
+   */
+  chords: { in: 0.1, full: 0.82, ceiling: 0.62, floor: 0.24 },
+  /*
+   * `full` was 0.8, which energy reaches only in extremis, so the arp lived in
+   * the bottom of its own curve. 0.62 lets a busy passage actually open it up.
+   *
+   * THE CEILING CAME DOWN 0.76 -> 0.44 AND THE ENTRY WENT UP 0.32 -> 0.5.
+   * `registermap` measures this lane at 19.4% of all the air in the mix and
+   * the second-loudest source above 2 kHz after the hats — a continuous
+   * sixteenth-note sparkle at 1.1-2.5 kHz over a half-time wobble is the
+   * "bing bong" complaint almost by definition, and the genre has no
+   * arpeggio in it. It is not deleted: it is a colour that arrives when the
+   * screen is genuinely busy, which is what `in: 0.5` buys.
+   */
+  /*
+   * ...AND AGAIN, AFTER THE FOURTH MELODY COMPLAINT: `in` 0.5 -> 0.66 and
+   * the ceiling 0.44 -> 0.26.
+   *
+   * Measured energy has a median of 0.62 and a p99 of 0.79, so an `in` of
+   * 0.66 means this lane is SILENT for a little over half of a run and
+   * present only when the screen is genuinely full. At 0.26 against the
+   * bass's 0.95 it is 22 dB down after gain-squaring.
+   *
+   * WHY THE STEM IS NOT DELETED, since that is what a reading of the
+   * complaint would suggest. Removing an id from `STEM_IDS` touches the HUD
+   * lane readout, `MOVEMENT_MIX`, `INTRO_ENTRY`, `TONAL_LANES`, the long
+   * rota in `orchestration.ts` and about a dozen tools that address lanes by
+   * name - and `registermap`, `masking`, `motion` and `interlock` all sweep
+   * `section: 'sustain'` only, so a lane that emits no haps there loses its
+   * coverage in four gates at once. A fader that is at zero for half the run
+   * and 22 dB down for the rest is the same music with none of that cost.
+   *
+   * `buildArp` also drops its second line per pod - see there.
+   */
+  /*
+   * ...AND `in` COMES BACK DOWN TO 0.4, BECAUSE 0.66 KILLED THE LANE OUTRIGHT.
+   *
+   * `tools/faders.mjs` caught it over a four-minute run in a real browser: this
+   * lane sat at **zero for 100% of the samples**, mean 0.01, range 0.01 against
+   * the gate's floor of 0.15 — "BARELY MOVES: arp range 0.01". Measured energy
+   * has a median of 0.62 and a p99 of 0.79, so an entry of 0.66 is inside the
+   * top fifth of what play produces and in practice the lane simply never
+   * arrived. `tools/subtraction.mjs` saw the same thing from the other side:
+   * there were not enough audible samples left to measure the focus duck.
+   *
+   * That is a lane deleted by the back door, and this file has a name for it —
+   * a threshold set past the end of the signal, which it has now found five
+   * times (`STEM_CURVES.sub`'s old 0.55, the kick's `full`, the fx `full`, the
+   * build's tension arm). The DEMOTION is the ceiling, and the ceiling stays:
+   * 0.26 against the bass's 0.95 is 22 dB down after gain-squaring, and
+   * `buildArp` plays half the notes it used to. What `in: 0.4` restores is the
+   * lane's ability to answer the game at all, which is the difference between a
+   * quiet colour and dead content.
+   */
+  arp: { in: 0.4, full: 0.72, ceiling: 0.26, floor: 0.12 },
+  /*
+   * THE MELODY IS NO LONGER THE LOUDEST THING IN THE GAME.
+   *
+   * "sounds so whack like carnival, its got beats in the background, then a
+   * foreground melody offa funny instrument it's just no" — that is a
+   * description of an ARRANGEMENT, not of a timbre: a rhythm section with a
+   * tune on top is a pop shape, and this row is where the shape was written
+   * down. A ceiling of 0.95 was the highest in the table, above the bass, the
+   * pad and the kick.
+   *
+   * In this genre the bass carries the hook and a lead is a stab that answers
+   * it. `buildLead` is now sparse by construction (see the mask there); this
+   * makes it quiet as well, and the two together are the demotion. 0.52
+   * against the bass's 0.95 is about 10 dB after gain-squaring.
+   *
+   * `in` rises 0.2 -> 0.34 so the tune is something the run reaches rather
+   * than something it opens with — except during the intro, where
+   * `INTRO_ENTRY` and the intro floor still stage it deliberately.
+   */
+  lead: { in: 0.34, full: 0.84, ceiling: 0.4, floor: 0.2 },
   // `motifs` and `power` are driven by events rather than by tension: the
   // director replaces their level outright in `updateLevels`.
   //
@@ -354,7 +578,30 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
    * shooting on a busy stage. See the comment there. Near-constant is the
    * intent — leave the curve alone and read the override instead.
    */
-  motifs: { in: 0.0, full: 0.5, ceiling: 0.6, floor: 0.34 },
+  /*
+   * ...AND THE CEILING COMES DOWN 0.6 -> 0.36.
+   *
+   * Three of the eight rows in `MOTIFS` - `arpeggiator`, `echo` and `pluck` -
+   * are TRIANGLE STABS AT `chord.root + 12`, which is MIDI 69, 440 Hz: the
+   * melody's own register and the melody's own waveform. Two of them can
+   * sound at once (`MAX_MOTIFS`), two to four notes a bar each, continuously,
+   * for as long as those enemies are on the field. Summed, that is a second
+   * melody the score never wrote down, and it survived every demotion of the
+   * `lead` lane because it is not in that lane.
+   *
+   * NOT DELETED AND NOT RE-VOICED, and both halves of that are deliberate.
+   * The layer is DIEGETIC - it is how a player hears which archetypes are on
+   * screen, which is the premise of the whole game - and `tools/bosscheck.mjs`
+   * pins two of these rows to specific waveforms, so a re-voicing takes that
+   * gate red and owes it a replacement assertion. Level is the change that
+   * costs nothing it should not cost: -8.9 dB after gain-squaring, still
+   * plainly audible as signalling, no longer a line you would follow.
+   *
+   * NAMED FOR THE NEXT PASS: if a melodic complaint survives this, these
+   * three rows are the first place to look, and the answer there is to make
+   * them percussive rather than pitched.
+   */
+  motifs: { in: 0.0, full: 0.5, ceiling: 0.36, floor: 0.22 },
   power: { in: 0.0, full: 0.5, ceiling: 0.85, floor: 0.6 },
 };
 
@@ -367,6 +614,20 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
  * which is the opposite of how the rest of the run behaves and makes the intro
  * feel like an intro.
  */
+/*
+ * THE ORDER IS REVERSED FOR THE TWO LANES THAT SWAPPED ROLES.
+ *
+ * The note above is still exactly right about what an intro is for — one thing
+ * first, everything else earned — and the ORDER is still harmony before rhythm.
+ * What changed is which part the intro exists to introduce. It used to be the
+ * tune, entering at 0.16, before the kick, before the bass, before everything
+ * except the pad and the sub; the bass came in at 0.68, seventh of nine.
+ *
+ * The bass is the hook now, so the bass is what gets introduced: 0.2, third,
+ * straight after the two beds. The tune goes last of the pitched lanes at 0.72
+ * — a stab arriving over an established groove, which is how this genre states
+ * a lead when it states one at all. Nothing else in the order moves.
+ */
 const INTRO_ENTRY: Record<StemId, number> = {
   // Negative, so these two are already partly present on the very first bar.
   // Ramping them from exactly zero measured as a full bar of literal silence
@@ -374,13 +635,10 @@ const INTRO_ENTRY: Record<StemId, number> = {
   // as an intro.
   sub: -0.14,
   chords: -0.06,
-  // Earlier than the drums by a wide margin: the intro exists to state the
-  // theme, and a tune that arrives a third of the way through its own
-  // introduction has not been introduced.
-  lead: 0.16,
+  bass: 0.2,
   hats: 0.42,
   kick: 0.55,
-  bass: 0.68,
+  lead: 0.72,
   clap: 0.8,
   arp: 0.9,
   fx: 0,
@@ -830,37 +1088,64 @@ const fanPans = (count: number, width: number): number[] => {
 export type Feel = 'boomchick' | 'chase' | 'gallop' | 'shuffle' | 'halftime';
 
 /**
- * Home base recurs; the excursions are spaced so they stay events.
+ * HALF-TIME IS THE POSTURE, and the other four are excursions from it.
  *
- * Dubstep gets three of the eight slots, which makes it the most common groove
- * BY WAVE — more than four-to-the-floor. That is a deliberate change of centre
- * of gravity rather than another excursion added to the rota: it is the groove
- * the game was asked for, it arrives on the second wave so nobody has to play
- * for four minutes to meet it, and it is the only feel here whose bass part is
- * written in filter movement instead of in note onsets, so it does not blur
- * into the ones either side of it.
+ * ---------------------------------------------------------------------------
+ * WHAT CHANGED AND WHY, because this rota has been re-weighted twice
+ * ---------------------------------------------------------------------------
  *
- * BY BAR IT IS NOT THE MOST COMMON, and the difference is worth writing down
- * because the rota alone does not predict it. `feelForWave` returns `gallop`
- * for every boss regardless of the cycle, and a boss fight is long — so
- * measured over five ten-minute runs, the share of BARS came out gallop 30.3%,
- * halftime 27.8%, boomchick 23.2%, chase 10.6%, shuffle 8.1%. Both decisions
- * are deliberate and both stay; what was wrong was this comment claiming an
- * outcome the boss override takes back. Counting slots is not counting time.
+ * It was eight slots with three of them `halftime`, and the comment that stood
+ * here called that "a deliberate change of centre of gravity". It was — for a
+ * score with no named genre. There is one now: **"i mean it should be like dub
+ * step lol"**, which is the first time in seven rounds of feedback that the
+ * target has been a thing rather than the absence of a complaint.
+ *
+ * Half-time at 140 IS the genre. Kick on 1, snare on 3, so the bar reads at 70
+ * against a grid running at 140 — that single relationship is what a listener
+ * identifies dubstep by before any timbre arrives. A groove rota that spends
+ * two thirds of its slots somewhere else is not a dubstep score with variety in
+ * it; it is a variety score that visits dubstep.
+ *
+ * Twelve slots, eight of them half-time. The other four are one each, spaced so
+ * that no two excursions are adjacent and every one of them is a single wave —
+ * you leave home, you notice, you come back. `basscheck` asserts all five are
+ * reachable FROM THE ROTA (not merely from the boss override), which is what
+ * stops this collapsing to one entry.
+ *
+ * AND THE BOSS IS HALF-TIME NOW, not `gallop`. That is the larger half of this
+ * change by BARS rather than by waves: bosses are long, and the previous
+ * override made `gallop` the most-played groove in the game — measured over
+ * five ten-minute runs, the share of BARS was gallop 30.3%, halftime 27.8%,
+ * boomchick 23.2%, chase 10.6%, shuffle 8.1%. So the single heaviest, longest
+ * stretch of every run was the one groove furthest from the brief.
+ *
+ * A boss is the drop. In this genre that is not an analogy — the drop is where
+ * the bass takes over completely, and a boss fight is the only event in the
+ * game long enough and loud enough to be one. `gallop` stays in the rota as an
+ * excursion so nothing is deleted and `basscheck` still reaches it.
+ *
+ * WRITTEN, NOT MEASURED: the bar shares above are from the old rota. The new
+ * expected share by WAVE is halftime 67%, everything else 8.3% each, and by BAR
+ * it will be higher still because the boss override now points here. Nothing in
+ * this change has been heard.
  */
 const FEEL_CYCLE: readonly Feel[] = [
-  'boomchick',
+  'halftime',
   'halftime',
   'chase',
   'halftime',
+  'halftime',
   'boomchick',
+  'halftime',
   'gallop',
   'halftime',
+  'halftime',
   'shuffle',
+  'halftime',
 ];
 
 export function feelForWave(wave: number, isBoss: boolean): Feel {
-  return isBoss ? 'gallop' : FEEL_CYCLE[wave % FEEL_CYCLE.length];
+  return isBoss ? 'halftime' : FEEL_CYCLE[wave % FEEL_CYCLE.length];
 }
 
 /**
@@ -872,15 +1157,31 @@ export function feelForWave(wave: number, isBoss: boolean): Feel {
  * the groove means the trap waves look like trap waves, and the change lands on
  * the same bar the rhythm does.
  */
+/*
+ * THE TWO HUES SWAPPED WHEN THE ROTA DID, and this is a real cost avoided
+ * rather than a tidy-up.
+ *
+ * `halftime` held 82 — acid lime — because it was an excursion, and an
+ * excursion is allowed a loud room. It is now two thirds of the waves and every
+ * boss, so leaving it there would have painted about three quarters of a
+ * twenty-minute run lime. A palette is a sense of PLACE (that is what the note
+ * below it says), and a place you never leave is not one.
+ *
+ * So home base keeps the home hue: 205, the blue the arena has always mostly
+ * been, moves onto `halftime`, and `boomchick` — now one slot of twelve —
+ * takes the lime. No new colours, the same five values, and the lime's own
+ * constraint is unaffected: it is still clear of the 130-170 band the green
+ * collectible shards live in, and so is 205.
+ */
 export const FEEL_HUES: Record<Feel, number> = {
-  boomchick: 205,
-  chase: 282,
-  gallop: 8,
-  shuffle: 42,
   // Acid lime, and kept clear of 130-170 on purpose: the collectible notes are
   // green, and a green room to pick green shards out of is a palette that costs
   // the player information.
-  halftime: 82,
+  boomchick: 82,
+  chase: 282,
+  gallop: 8,
+  shuffle: 42,
+  halftime: 205,
 };
 
 /*
@@ -1504,7 +1805,7 @@ export function buildClap(m: MusicalState): Pattern {
     layers.push(
       snare(m.fillBar ? '~ ~ x [x x x]' : '~ ~ x ~', 0.72)
         .room(0.44)
-        .roomsize(5),
+        .roomsize(ORBIT_ROOM[ORBIT_DRUMS]),
     );
     /*
      * Ghost sixteenths, and this is where the funk is.
@@ -2019,13 +2320,13 @@ export function buildMotor(m: MusicalState): Pattern {
     articulate(
       tagVoice(note(pattern), VOICE_TAGS.motor, { pwrate: 0.35, pwsweep: 0.3 })
       /*
-       * THE DUTY CYCLE MOVES — ON THE FALLBACK. This lane is an overdriven
-       * guitar unless its samples failed to load, and `pwrate`/`pwsweep` are
-       * pulse-only, so they are handed to `tagVoice` and applied only when the
-       * pulse is what is actually sounding. The paragraphs below are the
-       * argument for the pulse's duty sweep and they still hold for the lane's
-       * fallback; the sweep was an attempt to make ONE waveform stop sounding
-       * like a harpsichord jack, and a sampled guitar does not need it.
+       * THE DUTY CYCLE MOVES. `pwrate`/`pwsweep` are pulse-only (AGENTS.md
+       * §4) and are handed to `tagVoice` rather than chained, so they apply
+       * only when a pulse is what is actually sounding. Today it always is:
+       * this lane's `motor` role maps to `gm_overdriven_guitar` and is NOT in
+       * `SAMPLED_ROLES`, so that instrument is mapped and switched off. If it
+       * is ever switched on these two go with the waveform, which is the whole
+       * reason they are passed in rather than chained.
        *
        * `pw(0.5)` is a 25% duty (superdough maps duty as `(1 - pw)/2`) held
        * perfectly still for the whole project's life, on the most-heard sound
@@ -2101,7 +2402,7 @@ export function buildMotor(m: MusicalState): Pattern {
        * smallest send in the file and it is deliberately the smallest.
        */
       .room(m.sig.space.range(0.15, 0.4))
-      .roomsize(3)
+      .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
       .orbit(ORBIT_HARMONY),
       touch,
       { slots, bpm: m.bpm, shade: m.sig.openness },
@@ -2271,208 +2572,314 @@ export function buildBass(m: MusicalState): Pattern {
    */
   const low = mag > 0 ? root - 12 : root;
   const fifthLow = mag >= 2 ? fifth - 12 : fifth;
-  const intensity = half ? 0.3 : 1;
-
-  if (m.feel === 'halftime') {
-    /*
-     * The wobble, and it is the reason this feel exists.
-     *
-     * Every other bass part in this file is written as note onsets. This one is
-     * not: the notes are two per bar and they are held, and the rhythm is
-     * played by an LFO on the filter cutoff. That is not a stylistic flourish,
-     * it is what the genre IS — the part is composed in filter movement, and if
-     * you write it as onsets you get a synth bass playing eighths, which is a
-     * different and much older kind of music.
-     *
-     * It also happens to be the best fit for this project's own constraints
-     * that any layer has had. The rate table in `wobble.ts` is indexed by the
-     * bar, so the part develops across the eight-bar phrase without depending
-     * on game state at all; and the two things the game DOES drive — how far
-     * the filter swings and how hard it is driven — are continuous signals, so
-     * intensity moves them without a single note being replaced. A dial that
-     * changes how a part sounds rather than which notes it contains is exactly
-     * what `tools/retention.mjs` was written to ask for, and here it comes for
-     * free rather than having to be engineered around.
-     */
-    const w = wubFor(m.barInPhrase, m.section === 'drop');
-    // TIMEWARP halves the wobble rather than the tempo, for the same reason it
-    // halves everything else: the battlefield is scheduled in beats, so the
-    // clock may not move. A wobble at half rate over an unchanged kick is
-    // exactly what "half-time" means to a listener.
-    const shape = half ? { ...w, rate: Math.max(1, w.rate / 2) } : w;
-    // Two notes: three beats of root, then somewhere to go. MAGNET still drops
-    // the first one an octave, so the floor sags as it sucks.
-    const line = `${low}@3 ${leading ? approach : fifthLow}`;
-    const opts = {
-      shape,
-      /*
-       * The centre of the sweep, and the ceiling is deliberately low.
-       *
-       * With `lpdepth` at 1.85 the LFO swings to 1.9x the centre, so a centre of
-       * 1050 peaks near 2kHz — under the 2.5-6kHz band `npm run audiocheck`
-       * fails on. A resonant peak at Q7 parked in that band is the single most
-       * fatiguing thing this mix could contain, and the wobble would otherwise
-       * be reaching into it four to twelve times a bar.
-       */
-      cutoff: m.sig.openness.range(300, 1050),
-      // How far it swings is the intensity dial. At 1.15 it is a gentle
-      // breathing; at 1.85 the filter slams shut between wobbles, which is the
-      // sound of the drop.
-      depth: m.sig.drive.range(1.15, 1.85),
-      drive: m.sig.drive.range(0.7, 1.4),
-      level: 0.82,
-    };
-    return stack(
-      wub(line, opts),
-      // The growl, an octave up on its own LFO. Fades in with drive rather than
-      // being switched on, so a calm passage is one clean sweep and a busy one
-      // is two beating against each other.
-      reese(line, { ...opts, level: m.sig.drive.range(0.08, 0.3) }),
-      /*
-       * The funk: an octave pop on the last sixteenth of the bar.
-       *
-       * One short, bright note in the gap before the downbeat, which is where a
-       * bass player's thumb goes and where nothing else in this arrangement is
-       * playing. Its own layer riding `sig.fill`, so it is added to a bar that
-       * is already complete rather than replacing anything in it.
-       */
-      wub(`~ ~ ~ [~ ~ ~ ${octave}]`, {
-        ...opts,
-        // No wobble on a sixteenth — there is not time for one, and a partial
-        // sweep on a stab reads as a wrong note. Fast and shallow so it pops.
-        shape: { rate: 16, shape: shape.shape, skew: 0.5 },
-        depth: 0.6,
-        level: m.sig.fill.range(0, 0.55),
-      }),
-    );
-  }
-
-  /*
-   * THE BASS IS A TUNE.
-   *
-   * This block used to be four one-line patterns built from `root`, `fifth` and
-   * `octave` — three pitch classes and a chromatic approach note. That is a
-   * functional dance bass: it states the harmony and it keeps time, and it is
-   * categorically not the same part as the basslines in the music this score is
-   * aiming at. Those are hooks you could sing:
-   *
-   *   Corridors of Time      the bass IS the piece — a melodic ostinato running
-   *                          cross-rhythms against the tune
-   *   Battle 1               a syncopated sixteenth riff with octave leaps
-   *   Vampire Killer         continuous eighths with chromatic passing tones
-   *   Wily Stage 1           the triangle arpeggiating 1-5-8-10 through each
-   *                          chord, which is why three voices sound full
-   *   Frog's Theme           boom-chick: root on the beat, CHORD TONES on the
-   *                          off, so the low register outlines the triad itself
-   *
-   * The existing comment above about the approach note is right that it is "the
-   * single cheapest thing that makes a bass part sound played". It just is not
-   * enough on its own, and everything else here was root.
-   *
-   * So: a library of five named figures, chosen by feel. And — this is the part
-   * worth stealing wholesale from Pokémon R/B — INTENSITY CHOOSES THE NOTE
-   * LENGTH, NOT THE PITCHES. Its four battle themes run essentially the same
-   * bass pitches at four energy levels and vary only the rhythm and how long
-   * each note is held. That is exactly the retention property
-   * `tools/retention.mjs` exists to measure: a busier passage must ADD to the
-   * part rather than replace it, and a figure whose pitches are invariant under
-   * the intensity dial passes that by construction rather than by tuning.
-   */
   const third = root + degreeToSemitone(m.mode, 2);
   const tenth = root + 12 + degreeToSemitone(m.mode, 2);
   // The chromatic neighbour below the next chord — a leading tone for the bass.
   const lead = leading ? approach : root;
-
-  let pattern: string;
-  let layered = false;
-  switch (m.feel) {
-    case 'chase':
-      /*
-       * PEDAL. The tonic held while the motor moves above it — Pokémon's
-       * Champion theme, and the one figure here that is deliberately static.
-       * It reads as menace precisely because everything else is moving.
-       */
-      pattern = intensity < 0.5 ? `${low}@4` : `${low}@3 ${lead}`;
-      break;
-    case 'gallop':
-      /*
-       * ARP UP — 1-5-8-10, the Wily Stage 1 triangle. The single most useful
-       * bass figure in the chiptune canon: it never rests, it spells the whole
-       * chord including its third, and it climbs, so a repeated chord still
-       * has somewhere to go.
-       */
-      pattern =
-        intensity < 0.5
-          ? `${low} ${fifthLow} ${octave} ${fifth}`
-          : `${low} ${fifthLow} ${octave} ${tenth}`;
-      break;
-    case 'shuffle':
-      /*
-       * BOOM-CHICK, in twelve. Root on the dotted beat, third and fifth on the
-       * offs — Frog's Theme. The chord tones in the low register are what makes
-       * this sound like a band rather than a bass patch.
-       */
-      pattern = `[${low}@2 ${third}] [${fifthLow}@2 ${third}] [${low}@2 ${fifth}] [${fifthLow}@2 ${lead}]`;
-      break;
-    default:
-      /*
-       * OCTAVE PEDAL with a walk out — the Castlevania eighth-note engine.
-       * Continuous, octave-displaced, and it leans onto the next chord on the
-       * last beat rather than restating the root a fourth time.
-       *
-       * This replaces `~ low ~ root`, which was an offbeat house anchor: the
-       * literal "where a house bass sits", as its own comment said.
-       */
-      pattern = `${low} ${octave} ${fifthLow} ${lead}`;
-      layered = true;
-  }
   /*
-   * The 808: a sine with a pitch slide into each note.
-   *
-   * APPLIED LAST, and that is the fix rather than a style choice. This used to
-   * be the INNERMOST call — `glide(shaped(note(line))).s('sawtooth').ds(...)` —
-   * so every control it set that the chain below also set was overwritten two
-   * lines later. `.s('sine')` lost to `.s('sawtooth')`; `.decay(0.7)` and
-   * `.sustain(0.35)` lost to `.ds('0.3:0.42')`. Only `attack`, `release` and
-   * the pitch envelope survived, because nothing downstream restated those.
-   *
-   * `tools/attackfloor.mjs` is what proves it, and this is exactly the kind of
-   * claim that has to be proven off haps rather than read off the source. Its
-   * BY VOICE table lists `bass·sawtooth` and `bass·supersaw` over a 720s sweep
-   * and there is NO `bass·sine` row — while that same sawtooth row carries an
-   * attack high of 6ms and a release high of 400ms, which are `glide`'s own
-   * numbers and appear nowhere else in this function. So the chase haps really
-   * do run through here, really do wear this envelope, and have never once been
-   * rendered on the oscillator the comment names. An 808 is a sine; this has
-   * been a sawtooth wearing an 808's envelope for as long as the line existed.
-   *
-   * Wrapping the finished chain instead of seeding it means every control here
-   * is the last writer, so the feel gets the timbre AND the long tail it says
-   * it does.
+   * The last beat, and it is what makes every figure below a LINE rather than
+   * a loop: on the odd bars it is the chromatic approach to the next chord's
+   * root, and otherwise the fifth. Either way the bar goes somewhere.
    */
-  const glide = (p: Pattern): Pattern =>
+  const walk = leading ? approach : fifthLow;
+
+  /* ==========================================================================
+   * THE BASS IS A LINE, AND IT IS PLAYED TWICE.
+   * ==========================================================================
+   *
+   * TWO ROUNDS OF FEEDBACK BUILT THIS AND THE SECOND CORRECTED THE FIRST, so
+   * both are recorded.
+   *
+   * ROUND ONE was "i mean it should be like dub step lol", and the answer was
+   * to make the wobble the bass on every feel. The genre's bass part is
+   * composed in FILTER MOVEMENT: superdough runs a real LFO on the ladder
+   * cutoff (`lpsync`/`lpdepth`/`lpshape`/`lpskew`) inside an AudioWorklet,
+   * phase-locked to the cycle, so a held note is swept continuously rather
+   * than re-struck. Write the same rhythm as note onsets and you get a synth
+   * bass playing eighths with an amplitude envelope retriggering under every
+   * one of them, which is a different and much older kind of music. That is
+   * right and it stands. See `wobble.ts`.
+   *
+   * ROUND TWO was the owner hearing it: **"nice progress toward music, i like
+   * the dub step direction, its missing a base,/ kick, lets add more base,
+   * also the second lead synth could be improved, maybe a base guitar instead?
+   * need a baseline, not just leads"**.
+   *
+   * "NEED A BASELINE, NOT JUST LEADS" IS THE PART THAT CHANGED THE CODE, and
+   * it is the same complaint as "beats in the background, then a foreground
+   * melody" arriving from underneath. The first pass took each feel's figure
+   * down to its skeleton — one or two held notes a bar, a pedal on `chase` —
+   * on the reasoning that the LFO would supply the rhythm. It does supply the
+   * rhythm. It does not supply a PART. A bassline has notes that move, lands
+   * on the chord changes, and is the thing you would hum if you hummed the
+   * bottom of the track; a wobbled pedal tone is a texture, and the owner
+   * named the difference exactly.
+   *
+   * So the figures come back as figures — three or four notes a bar, chord
+   * tones, every one of them walking onto the next chord — and the LFO plays
+   * ACROSS them instead of instead of them. A quarter note at 140 BPM is
+   * 428 ms and the phrase's slowest LFO rate is four cycles a bar, so every
+   * note still gets at least one complete sweep. That is the constraint the
+   * figures are written to: this is why they are quarters and not eighths, and
+   * why the sixteenth-note pop at the end of the bar sets its own rate of 16
+   * (a partial sweep on a short note reads as a wrong note, not as a wobble).
+   *
+   * AND THE LINE IS DOUBLED BY A PLUCKED ELECTRIC BASS, which is the other
+   * half of the owner's note — "the second lead synth could be improved, maybe
+   * a base guitar instead?". `gm_electric_bass_finger` was already wired and
+   * already the only entry in `SAMPLED_ROLES`; it used to be the bass on four
+   * feels and then, for one pass, on `gallop` alone. It now plays the SAME
+   * NOTES as the growl, on every feel, as the layer that supplies the attack.
+   *
+   * That is not a compromise between two designs, it is how a dubstep bass is
+   * actually built: a transient layer that states the note, a growl that gives
+   * it character, and a sine underneath that gives it weight. Three layers,
+   * one line. A sawtooth through a ladder cannot fake a plucked string's
+   * attack (26da78d's reason for keeping this font, unchanged), and a plucked
+   * string cannot growl.
+   *
+   *   pluck    `gm_electric_bass_finger`, touch `played`, the notes
+   *   wub      sawtooth -> resonant ladder + LFO, the growl
+   *   reese    two detuned saws an octave up, quiet, the beating
+   *   pop      one sixteenth before the downbeat, the thumb
+   *   (and `buildSub` two octaves down, which is a separate lane and a sine)
+   *
+   * THE REESE IS THE "SECOND LEAD SYNTH" AND IT IS CUT BACK RATHER THAN
+   * REMOVED. It is a detuned supersaw an octave above the bass, at 220-500 Hz,
+   * and the first pass raised it from a peak of 0.30 to 0.66 — at which point
+   * it is a synth line sitting over the bass, which is the thing the owner
+   * asked to replace with a bass guitar. It is the interference between its
+   * LFO rate and the main one that makes a wobble sound alive rather than like
+   * a siren, so it stays; at 0.10-0.34 it is a colour on the growl instead of
+   * a part of its own.
+   *
+   * `gallop` IS NO LONGER AN EXCEPTION. It kept the plucked bass alone for one
+   * pass, as the last consumer of the soundfont path. Now every feel has the
+   * pluck, so the font reaches 100% of the game instead of 8% of the waves,
+   * and `fontlanes` measures the fallback on a lane that is always sounding.
+   *
+   * WHAT IS STILL DELETED: the `chase` 808 (see the tombstone below), and the
+   * boom-chick's two extra layered fill lines. Getting busier now adds
+   * `lpdepth`, `drive` and the pop rather than two more plucked lines — a dial
+   * that changes how a part SOUNDS rather than which notes it contains, which
+   * is the property `tools/retention.mjs` exists to ask for.
+   */
+  const figure =
     m.feel === 'chase'
       ? /*
-         * The 808's PITCH slide survives; its envelope does not, and that is
-         * the whole point of `articulation.ts`. This used to set attack 6 ms,
-         * decay 700 ms, sustain 0.35 and release 400 ms right here, which made
-         * `chase` the one feel whose bass wore a different envelope from every
-         * other feel for reasons nobody could see from the touch table. What
-         * makes an 808 an 808 is `penv(-7).pattack(0.11)` - the pitch falling
-         * a fifth into the note - and that is a statement about pitch, so it
-         * stays. The amplitude shape is `played`, like every other bass note.
+         * PEDAL, but a pedal with a pulse. Pokémon's Champion theme: the tonic
+         * restated while everything above it moves, and it reads as menace
+         * precisely because it does not go anywhere until the last beat.
          */
-        p.s('sine').penv(-7).pattack(0.11).pcurve(1)
-      : p;
+        `${low}@2 ${low} ${walk}`
+      : m.feel === 'boomchick'
+        ? /*
+           * OCTAVE PEDAL with a walk out — the Castlevania eighth-note engine
+           * at quarters. Four notes, all of them moving, and it leans onto the
+           * next chord on the last beat rather than restating the root.
+           */
+          `${low} ${octave} ${fifthLow} ${lead}`
+        : m.feel === 'shuffle'
+          ? /*
+             * The one figure that spells the chord in the low register — root,
+             * THIRD, walk. Frog's Theme, and the third is what makes a bass
+             * part sound like a band rather than like a bass patch.
+             */
+            `${low}@2 ${third} ${walk}`
+          : m.feel === 'gallop'
+            ? /*
+               * ARP UP — 1-5-8-10, the Wily Stage 1 triangle. The single most
+               * useful bass figure in the chiptune canon: it never rests, it
+               * spells the whole chord including its third, and it climbs, so a
+               * repeated chord still has somewhere to go.
+               */
+              `${low} ${fifthLow} ${octave} ${leading ? approach : tenth}`
+            : /*
+               * HALF-TIME, home base, and the figure the whole score is built
+               * on now. Root through the first half of the bar, the octave on
+               * three where the snare is, and the walk on four. Two thirds of
+               * the game plays this.
+               *
+               * MAGNET still drops the bar's first note an octave (`low`), so
+               * the floor sags as it sucks.
+               */
+              `${low}@2 ${octave} ${walk}`;
+
+  const w = wubFor(m.barInPhrase, m.section === 'drop');
+  // TIMEWARP halves the wobble rather than the tempo, for the same reason it
+  // halves everything else: the battlefield is scheduled in beats, so the
+  // clock may not move. A wobble at half rate over an unchanged kick is
+  // exactly what "half-time" means to a listener.
+  const shape = half ? { ...w, rate: Math.max(1, w.rate / 2) } : w;
+  const opts = {
+    shape,
+    /*
+     * The centre of the sweep, and the ceiling is deliberately low.
+     *
+     * With `lpdepth` at 1.9 the LFO swings to nearly twice the centre, so a
+     * centre of 1050 peaks near 2kHz — under the 2.5-6kHz band `npm run
+     * audiocheck` fails on. A resonant peak at Q7 parked in that band is the
+     * single most fatiguing thing this mix could contain, and the wobble would
+     * otherwise be reaching into it four to twelve times a bar.
+     *
+     * UNCHANGED BY THE PROMOTION, on purpose. Making this lane the loudest
+     * thing in the mix is a LEVEL decision; moving the cutoff up as well would
+     * have spent the same change twice and put the resonant peak exactly where
+     * the one recorded human complaint about this score's high end lives.
+     */
+    /*
+     * ...PLUS A SLOW DRIFT, which is the reference track's own idiom:
+     * `cutoff(sine.range(400, 2000).slow(16))`.
+     *
+     * `sig.openness` is a game signal — it answers the play, which is the
+     * point of this project — but it is the ONLY thing that moved this centre,
+     * so a stretch of steady play was a stretch of identical wobbles. A slow
+     * sine added on top means the sweep is never twice in the same place: the
+     * LFO's swing is unchanged and where it swings drifts under it.
+     *
+     * +/-110 Hz over thirteen bars. Small against a 300-1050 range because the
+     * game's own answer has to stay legible through it, and thirteen because it
+     * is coprime with the eight-bar wobble phrase, the seven-bar resonance
+     * drift and the eleven-bar reese drift — four modulators, no common period
+     * shorter than a run.
+     *
+     * The CEILING argument below is unaffected: 1050 + 110 = 1160, and at
+     * `lpdepth` 1.95 that peaks around 2.2 kHz, still under the 2.5-6 kHz band
+     * `audiocheck` fails on.
+     */
+    cutoff: m.sig.openness.range(300, 1050).add(sine.range(-110, 110).slow(13)),
+    /*
+     * How far it swings is the intensity dial. At 1.15 it is a gentle
+     * breathing; at 1.9 the filter slams shut between wobbles, which is the
+     * sound of the drop.
+     *
+     * AND IT IS THE ESCALATION THE TEMPO USED TO BE. `updateTempo` gave up
+     * sixteen BPM of wave ramp and six of tension when the score was anchored
+     * at `DUBSTEP_BPM`; this is where that energy went. A dubstep track that
+     * answered pressure by speeding up would stop being one.
+     */
+    depth: m.sig.drive.range(1.3, 1.95),
+    /* ======================================================================
+     * CRUNCH, AND THE FIRST ANSWER WAS MEASURABLY WRONG.
+     * ====================================================================
+     *
+     * "i want my dubstep to be, chrunchy, munchy, juicy, delicious wubs and
+     * dubs." Crunch is saturation, not level. WHERE the saturation sits
+     * relative to the filter decides what it sounds like, and superdough's
+     * answer is not the one reasoning from first principles gives you.
+     *
+     * READ OFF THE SOURCE. `superdough.mjs` builds the voice chain as
+     * oscillator -> gain -> LOWPASS -> vowel -> `coarse` -> `crush` -> `shape`
+     * -> `distort`. Every one of superdough's distortion controls is
+     * POST-FILTER. `.drive()` is the exception: it is the LADDER'S OWN
+     * parameter, read only inside the `ladder-processor` worklet
+     * (`worklets.mjs:370`), applied inside the filter's feedback loop as
+     * `p0 += (fast_tanh(input * drive - k * out) - ...)` with a `fast_tanh` at
+     * all four poles, and exponential — `clamp(Math.exp(drive), 0.1, 2000)`,
+     * so 1.5 is 4.5x and 3.7 is 40x. It is also level-compensated:
+     * `makeupgain = (1 / drive) * min(1.75, 1 + k)`.
+     *
+     * FROM THAT I CONCLUDED THAT `drive` WAS WHERE THE CRUNCH HAD TO GO —
+     * saturation inside the filter, so the LFO sweeps across the harmonics it
+     * makes — AND PUT IT AT 1.9-3.7. Rendered through the real chain
+     * (`tools/capture.mjs --bars=4 --stem=bass`, four bars, real superdough
+     * worklets in an OfflineAudioContext) that is what it did:
+     *
+     *                       125Hz   250    500     1k     2k     4k     8k    rms
+     *   drive 0.7-1.5      -34.5  -35.2  -40.3  -45.8  -57.4  -72.5  -88.1  -31.1
+     *   drive 1.9-3.7      -35.2  -36.8  -44.7  -51.8  -61.8  -78.9  -95.5  -32.5
+     *
+     * **Every band got DARKER and the lane got 1.4 dB quieter.** The model was
+     * wrong in a way that is obvious once measured: the four poles are AFTER
+     * each tanh, so the harmonics a hard drive creates are removed by the
+     * filter that created them, and what is left is a rounder wave at the
+     * cutoff with the makeup gain pulling the level down. Driving a ladder hard
+     * COMPRESSES; it does not brighten.
+     *
+     * So the crunch is the POST-FILTER `distort`, which is exactly the control
+     * the paragraph above talked me out of, and for exactly the reason it gave:
+     * nothing filters what it makes. Same render, level-matched:
+     *
+     *                       125Hz   250    500     1k     2k     4k     8k    rms
+     *   before             -34.5  -35.2  -40.3  -45.8  -57.4  -72.5  -88.1  -31.1
+     *   after              -31.8  -33.2  -40.0  -44.6  -51.3  -59.2  -68.7  -28.9
+     *   delta               +2.7   +2.0   +0.3   +1.2   +6.1  +13.3  +19.4   +2.2
+     *
+     * The fundamental moves with the level and the upper harmonics move six to
+     * nineteen decibels more than it does, which is the signature of harmonic
+     * generation rather than of a fader. That is measured crunch. `wobble.ts`
+     * carries the `distort` numbers and the reason `scurve` is kept.
+     *
+     * `drive` STAYS, at 1.0-2.2 rather than 0.7-1.5 or 1.9-3.7: some saturation
+     * inside the filter is the difference between a sweep and a growl, and the
+     * measurement says a lot of it is a loss. It rides `sig.drive` so a calm
+     * passage growls and a drop tears, and it never goes near zero at either
+     * end — the other half of AGENTS.md §4's distortion trap.
+     *
+     * The bands above are a SOLOED lane rendered offline. Nothing has been
+     * heard.
+     */
+    drive: m.sig.drive.range(1.0, 2.2),
+    /*
+     * 0.9. `registermap`'s summed model measured this voice at **2.6% of the
+     * mix** and its growl at **0.0%** while the melody's triangle took 9.1% —
+     * the lane the brief calls the protagonist was the quietest pitched thing
+     * in the file. The lane fader moved too (`STEM_CURVES.bass`, 0.6 -> 0.95)
+     * and that is the larger half, because `postgain` is squared; both are
+     * stated so the change is not mistaken for one dial.
+     */
+    /*
+     * 0.62, not 0.9, and the reason is the second oscillator rather than a
+     * change of mind. `wobble.ts` now sounds `s('sawtooth,sine')` - the same
+     * note twice in one voice - and the sine sits exactly on the fundamental,
+     * so it adds coherently: measured through the real chain, four bars soloed,
+     * adding it took this lane from -28.9 to -22.1 dBFS rms and its peak to
+     * -12.1. That is 6.8 dB of level for a timbre change, which is a different
+     * mix rather than a fatter bass.
+     *
+     * 0.62 puts the soloed lane back at about -28.6. The promotion this lane
+     * was given is in `STEM_CURVES.bass` (ceiling 0.6 -> 0.95), which is where
+     * it belongs: the fader is the arrangement's decision about how loud the
+     * bass is, and this number is the voice's own staging.
+     */
+    level: 0.62,
+  };
+  /*
+   * THE 808 IS DELETED, and this is the fourth and last disposition of it.
+   *
+   * What stood here was `glide`: `p.s('sine').penv(-7).pattack(0.11).pcurve(1)`
+   * applied on the `chase` feel only, wrapping the finished chain so that it
+   * would be the LAST writer — which is itself a fix this file records at
+   * length, because for the project's whole life it had been the innermost
+   * call and `.s('sine')` was silently overwritten by `.s('sawtooth')` two
+   * lines below (AGENTS.md §4, "later writes win, silently"). The evidence
+   * that it had never once sounded came off `attackfloor`'s BY VOICE table:
+   * `bass·sawtooth` and `bass·supersaw` over a 720 s sweep, and no
+   * `bass·sine` row at all.
+   *
+   * It goes because `chase` is a wobble now. Every reason it was kept — a
+   * pitch slide is a statement about PITCH and not about amplitude, and an 808
+   * is a sine — is still true, and none of them survives the lane it lived on
+   * becoming a held sawtooth through a resonant ladder. A pitch envelope on a
+   * note whose entire content is a filter sweep fights the LFO for the part
+   * and wins, and then there is no wobble.
+   *
+   * The sine is not lost. `buildSub` is one, two octaves down, and the sub
+   * staying separate from the growl is a rule of the genre rather than an
+   * accident of this refactor. What this lane actually had was two low sines
+   * a note apart.
+   */
   const shaped = (p: Pattern): Pattern =>
     mag > 0
       ? // Filter opens *into* the note rather than out of it — a suck, not a pluck.
         p.lpq(6 + mag * 1.5).lpattack(0.14).lpenv(3.2).lpdecay(0.3)
       : p.lpq(5).lpenv(2).lpdecay(0.09);
   const voice = (line: string): Pattern =>
-    glide(
+    (
       /*
-       * A FINGERED ELECTRIC BASS, not a sawtooth — see `soundfonts.ts`.
+       * A FINGERED ELECTRIC BASS, not a sawtooth — see `soundfonts.ts`. THE ONE
+       * LANE IN THE SCORE THAT IS A RECORDING, and the only role in
+       * `SAMPLED_ROLES`.
        *
        * The part was already written as a bass guitar part: the default figure
        * is an octave pedal in eighth notes that walks onto the next chord,
@@ -2484,9 +2891,9 @@ export function buildBass(m: MusicalState): Pattern {
        * amp, and a bass guitar goes through one; the measurement that removed
        * this lane's highpass (33-52 dB across its own range) is about the
        * filter chain and is untouched by the source changing. The `chase`
-       * feel's 808 also stays, because `glide` is applied outside this and
-       * re-sets `.s('sine')` as the last writer — a drum machine is not an
-       * instrument and no sample of one belongs here.
+       * `chase` feel's 808 is GONE rather than moved: that feel plays the
+       * wobble now, and the paragraph above this function records why a pitch
+       * envelope cannot share a lane with an LFO that is playing the rhythm.
        */
       applyVoice(shaped(note(line)), 'bass')
     /*
@@ -2658,40 +3065,153 @@ export function buildBass(m: MusicalState): Pattern {
        * this only puts the lane in the same building as the rest of the band.
        */
       .room(m.sig.space.range(0.12, 0.3))
-      .roomsize(2)
-      .orbit(ORBIT_LOW),
+      .roomsize(ORBIT_ROOM[ORBIT_LOW])
+      .orbit(ORBIT_LOW)
     );
 
   /*
    * `articulate` is applied HERE, outside `voice`, and that is deliberate: it
    * has to be the last writer for all five of the controls it owns
    * (AGENTS.md 4, "later writes win, silently" - the defect that cost this very
-   * lane its 808 for the project's whole life). `glide` wraps the finished
-   * chain and sets `s`, `penv` and `pattack`; nothing after it touches an
-   * envelope except this.
+   * lane its 808 for the project's whole life, and the reason the 808 was
+   * applied outside this chain right up until it was deleted).
    *
-   * `slots: 8`. This lane's FASTEST note is an eighth - the `~ octave ~ ~ ~
-   * root ~ ~` fill layer below, and the shuffle's `[low@2 third]` - and a touch
-   * is scaled by the fastest note rather than the average one, so the busiest
-   * bar a lane can play is the one whose notes still fit inside their slots.
+   * `slots: 4`, not 8. Every figure this lane plays is now four quarter-note
+   * slots (see `figure` above) and the eighth-note fill layers that set the
+   * old value of 8 are gone. A touch is scaled by the FASTEST note a lane can
+   * play, so leaving it at 8 would have gone on articulating a sixteenth-note
+   * lane that no longer exists - every note half as long as the part is.
    */
   const played = (p: Pattern): Pattern =>
     articulate(p, 'played', {
-      slots: 8,
+      slots: 4,
       bpm: m.bpm,
       shade: m.sig.drive,
-      ring: 1 + (m.section === 'breakdown' ? 0.3 : 0),
+      /*
+       * NO BREAKDOWN `ring`, AND IT WAS AN INERT CONTROL AS WELL AS A DEFECT.
+       *
+       * This was `1 + (section === 'breakdown' ? 0.3 : 0)`, and `attackfloor`
+       * caught it the moment `slots` went 8 -> 4: at four slots and 140 BPM a
+       * slot is 428 ms, so `played`'s tail hits its own 250 ms ceiling, and
+       * 250 x 1.3 = 325 ms — five milliseconds past the 320 ms the recalibrated
+       * tail window allows. 1% of this lane's haps, and the gate is zero
+       * tolerance, correctly.
+       *
+       * The reason it can simply GO rather than needing a smaller number is
+       * better: `director.updateLevels` sets this lane's fader to exactly zero
+       * during a breakdown (`section === 'breakdown' && id === 'bass'`). So the
+       * multiplier was lengthening notes on a lane that is silent whenever the
+       * condition is true. It has never been audible and it never could be.
+       *
+       * A control that cannot change its own output is the shape of defect this
+       * project keeps finding, and this is the first time one has been found by
+       * a threshold rather than by reading.
+       */
       hold: m.sig.hold,
     });
-  const core = played(voice(pattern));
-  if (!layered) return core;
   return stack(
-    core,
-    // Fills in the beats the anchor leaves open.
-    played(voice(`${low} ~ ${fifth} ~`).gain(m.sig.density.range(0, 0.86))),
-    // Driving eighths underneath, last to arrive.
-    played(voice(`~ ${octave} ~ ~ ~ ${root} ~ ~`).gain(m.sig.fill.range(0, 0.7))),
-  );
+    /* ======================================================================
+     * THE ANCHOR. One note a bar, and it is a TRANSIENT, not a part.
+     * ====================================================================
+     *
+     * This played the whole figure for exactly one pass, and the owner heard it
+     * immediately: **"what is the curently melody instrument? is that trying to
+     * be a guitar? lol it sounds so bad"**.
+     *
+     * `gm_electric_bass_finger` is the only recording in the entire score. It
+     * is a fingered electric bass, and a fingered electric bass is a very good
+     * rhythm-section instrument and a very bad lead: a fixed pluck transient,
+     * almost no sustain, and no way to change its tone with a filter because
+     * the harmonics are baked into the sample. Give it a moving line in the
+     * foreground and it reads as a badly played guitar, which is precisely the
+     * sentence above.
+     *
+     * So it goes back to the one job a sample does better than synthesis here,
+     * which is 26da78d's own reason for keeping it: THE ATTACK. One note on the
+     * downbeat, dark, and under the growl. You hear a finger on a string at the
+     * top of the bar and then the wobble takes the bar; the LINE is the
+     * wobble's, which is a synthesised, distorted, filter-swept voice and is
+     * what the genre wants carrying it.
+     *
+     * Kept rather than deleted because a sample is genuinely the right tool for
+     * a transient, and because `SAMPLED_ROLES` and the whole loader path behind
+     * it are measured through this lane by `fontlanes` - which fails a declared
+     * role that emits no haps. One note a bar is a real note.
+     */
+    played(voice(`${low} ~ ~ ~`).gain(0.62)),
+    /*
+     * THE GROWL, on the same notes. Held through the ladder with the LFO
+     * playing across them - see `wobble.ts` and the `drive` note above for
+     * where the crunch comes from.
+     */
+    wub(figure, opts),
+    /*
+     * THE BEATING. Two detuned saws an octave up on a related-but-different
+     * LFO rate, so the two sweeps drift in and out of phase across the bar.
+     * One LFO is a siren; the interference is what makes a wobble sound alive.
+     *
+     * 0.10-0.34, down from the 0.24-0.66 the first pass gave it. At the higher
+     * figure it stopped being a colour on the bass and became a synth line
+     * above it, which is what "the second lead synth could be improved, maybe
+     * a base guitar instead?" is pointing at. The bass guitar took that job;
+     * this went back to being the growl's own texture.
+     */
+    reese(figure, { ...opts, level: m.sig.drive.range(0.1, 0.34) }),
+    /*
+     * THE THUMB: an octave pop on the last sixteenth of the bar.
+     *
+     * One short, bright note in the gap before the downbeat, which is where a
+     * bass player's thumb goes and where nothing else in this arrangement is
+     * playing. Its own layer riding `sig.fill`, so it is ADDED to a bar that is
+     * already complete rather than replacing anything in it - which is how this
+     * lane answers a busier stage now that the two extra plucked fill lines are
+     * gone.
+     */
+    wub(`~ ~ ~ [~ ~ ~ ${octave}]`, {
+      ...opts,
+      // No wobble on a sixteenth - there is not time for one, and a partial
+      // sweep on a stab reads as a wrong note. Fast and shallow so it pops.
+      shape: { rate: 16, shape: shape.shape, skew: 0.5 },
+      depth: 0.6,
+      level: m.sig.fill.range(0, 0.62),
+    }),
+  )
+    /* ======================================================================
+     * A STUTTER THAT IS NOT ON THE GRID — the score's first stochastic control.
+     * ====================================================================
+     *
+     * Counted across `src/audio` before this line existed: `sometimesBy` 0,
+     * `sometimes` 0, `rarely` 0, `often` 0. **Not one probabilistic operator in
+     * five thousand lines of score.** Every variation in this project is a
+     * function of game state or of the bar number, which means every variation
+     * is predictable, which is a large part of why a generated score reads as
+     * generated. The reference track the owner sent has two of these in eight
+     * lines: `sometimesBy("0 .5", add(note("12")))` and `rarely(ply("2"))`.
+     *
+     * `ply(2)` retriggers the hap in place - one note becomes two of half the
+     * length - so a wobbled quarter occasionally comes out as a pair of
+     * stuttered eighths. That is the genre's own gesture and it is the right
+     * one to randomise here, because it changes RHYTHM and not PITCH: an
+     * `add(note(12))` would put the bass on `chord.root + 24` on the bars where
+     * the figure is already at the octave, which `basscheck` correctly calls a
+     * note belonging to no chord in the bar.
+     *
+     * THE PROBABILITY IS ITSELF A PATTERN, which is the part worth stealing.
+     * `'0 0 0.22 0.34'` is silent through the first half of the bar and gets
+     * steadily more likely through the second, so the stutters cluster where a
+     * player would put them - into the turnaround - rather than being sprinkled
+     * evenly, which is what randomness sounds like when it is applied flat.
+     *
+     * Applied to the STACK rather than to any one layer, so the pluck, the
+     * growl and the reese all stutter together. Strudel samples `rand` at the
+     * hap's own whole-time, so three voices sharing an onset get the same
+     * draw - they cannot disagree about whether a note doubled.
+     *
+     * Deterministic, which the gates need: the draw is a function of cycle
+     * position, so `capture --verify-determinism` and `basscheck`'s figure
+     * comparison both still hold.
+     */
+    .sometimesBy('0 0 0.22 0.34', (x) => x.ply(2));
 }
 
 /**
@@ -2738,9 +3258,33 @@ const COMP_STRUCT: Record<Feel, { readonly core: string; readonly fill: string |
    * that played it is gone; the upper structure plays it now, on the same
    * filtered saw every other feel uses.
    */
+  /*
+   * ...AND THEN IT DID NOT SURVIVE ITS INSTRUMENT AFTER ALL. The paragraph
+   * above is kept because its reasoning is the thing that turned out to be
+   * wrong, and that is worth more than a tidy row.
+   *
+   * The claim was that "the owner's complaint was never about the rhythm ...
+   * what was wrong was the SOUND". Four hits a bar on the sixteenth grid, plus
+   * four more on the fill, at MIDI 68-79 (415-830 Hz), on a sawtooth through a
+   * resonant filter envelope - that is not an accompaniment, it is a
+   * syncopated line in the register a listener calls the melody, and it went on
+   * playing through every demotion of the `lead` lane because it is not in that
+   * lane. Measured on the current tree, `chords` was the BUSIEST pitched voice
+   * group in the score: 144 haps over 12 bars against the lead's 6.
+   *
+   * The clavinet was deleted three complaints ago and its FIGURE was kept. Of
+   * course it still sounded like the clavinet.
+   *
+   * Two hits a bar now, both in the hole the half-time drums leave. The
+   * downbeat belongs to the kick and beat 3 to the snare, so the core lands on
+   * the "and" of 3 - the single most characteristic stab placement in the genre
+   * - and the fill adds one on 2 when the stage is busy. `COMP_SLOTS` follows
+   * it down from 16 to 8, because a touch is scaled by the fastest note a lane
+   * can play and this lane can no longer play a sixteenth.
+   */
   halftime: {
-    core: '[~ ~ x ~] ~ [~ ~ x ~] [x ~ x ~]',
-    fill: '~ [~ x ~ x] [~ ~ ~ x] ~',
+    core: '~ ~ [~ x] ~',
+    fill: '~ x ~ ~',
   },
 };
 
@@ -2757,7 +3301,9 @@ const COMP_SLOTS: Record<Feel, number> = {
   chase: 8,
   gallop: 8,
   shuffle: 12,
-  halftime: 16,
+  // 8, not 16 — see the note on `COMP_STRUCT.halftime`. The sixteenth grid went
+  // with the figure that needed it.
+  halftime: 8,
 };
 
 export function buildChords(m: MusicalState): Pattern {
@@ -2930,10 +3476,12 @@ export function buildChords(m: MusicalState): Pattern {
        * 14 cents. Wide enough to beat slowly, narrow enough that a held fourth
        * is still a fourth — past about 0.3 the chord goes sour.
        *
-       * Passed to `tagVoice` rather than chained, because both controls are
-       * supersaw-only and this lane is a sampled string section unless the
-       * samples failed to load. A real ensemble brings its own beating; the
-       * detune was always an imitation of one.
+       * Passed to `tagVoice` rather than chained, because both are
+       * supersaw-only (AGENTS.md §4) and this lane has a `pad` role in
+       * `soundfonts.ts` mapping it to `gm_synth_strings_1`. That role is
+       * switched off, so the supersaw and both controls are live; if it is ever
+       * switched on they go with the waveform instead of sitting inert on a
+       * sample, which is what `session` counts.
        */
       tagVoice(note(`${n}`).struct(m.section === 'intro' ? 'x x' : 'x'), VOICE_TAGS.pad, {
         detune: 0.14,
@@ -2968,7 +3516,16 @@ export function buildChords(m: MusicalState): Pattern {
         // sustained source it should be nearly flat.
         .lpq(m.sig.ring.range(0.9, 3.4))
         .room(m.sig.space.range(m.section === 'breakdown' ? 0.78 : 0.58, 0.95))
-        .roomsize(m.section === 'breakdown' ? 8 : 6)
+        /*
+         * The size no longer moves with the section, and that removal is the
+         * point rather than a simplification. `roomsize(breakdown ? 8 : 6)`
+         * rebuilt this orbit's whole impulse response on the first hap of
+         * every section change and again on the way out - see `ORBIT_ROOM`.
+         * The breakdown still opens up: `.room()` above is the SEND and it
+         * still goes 0.58 -> 0.78 there, which is the same gesture and costs
+         * nothing, because the send is not part of superdough's IR key.
+         */
+        .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
         .gain(m.section === 'breakdown' ? 0.36 : 0.3)
         .orbit(ORBIT_HARMONY),
       'bowed',
@@ -3021,7 +3578,8 @@ export function buildChords(m: MusicalState): Pattern {
       tagVoice(
         note(String(foldInto([pitch], LANE_RANGE.colour.lo, LANE_RANGE.colour.hi)[0] ?? pitch)),
         VOICE_TAGS.colour,
-        // supersaw-only; see `tagVoice`. A sampled choir has its own ensemble.
+        // supersaw-only; see `tagVoice`. Live today — the `colour` role maps to
+        // `gm_choir_aahs` and is switched off (`SAMPLED_ROLES`).
         { detune: 0.06, spread: 0.9 },
       )
         // Slow, and slower than the bed's: an inner voice moving faster than
@@ -3032,7 +3590,7 @@ export function buildChords(m: MusicalState): Pattern {
         .hpf(m.sig.thin.range(420, 900))
         .lpq(m.sig.ring.range(0.9, 3.4))
         .room(m.sig.space.range(0.62, 0.95))
-        .roomsize(7)
+        .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
         .gain(level)
         .pan(clamp01(0.5 + pan * (0.18 + wide)))
         .orbit(ORBIT_HARMONY),
@@ -3105,7 +3663,13 @@ export function buildChords(m: MusicalState): Pattern {
    * `lpattack(0.006)`, `lpdecay(0.16)` were doing almost nothing to a pulse
    * whose harmonics stop at the 7th. On a saw they are the instrument.
    */
-  const stabLevel = 0.4;
+  /*
+   * 0.3, not 0.4. The stab is two hits a bar now rather than eight (see
+   * `COMP_STRUCT.halftime`), and a sparse part is heard more clearly at the
+   * same level than a busy one - so the level comes down with the note count
+   * rather than being left to compensate for it.
+   */
+  const stabLevel = 0.3;
   const grid = COMP_STRUCT[m.feel];
   const stabChord = `[${stabVoiced.join(',')}]`;
   const stabVoice = (rhythm: string, level: Patternable): Pattern =>
@@ -3325,15 +3889,23 @@ export function buildArp(m: MusicalState): Pattern {
   });
   if (step === 0) return silence;
   /*
-   * Offbeats always; the even gaps fade in as it gets busy.
+   * OFFBEATS, AND NOTHING ELSE ANY MORE.
    *
-   * Previously `density > 0.7` switched the even gaps on and off. Splitting the
-   * same pitches into two lines lets that be a fader — the arp thickens instead
-   * of being re-written — and the two together are exactly the line the busy
-   * case used to play.
+   * There were two lines here: `core` on the odd slots and a `fill` on the even
+   * ones, faded in by `sig.fill` as the stage got busy, and together they were a
+   * continuous sixteenth-note line. The `fill` half is deleted - see the note on
+   * `pod` below, and `STEM_CURVES.arp`. What is left is the half that was always
+   * sounding and the half that interlocks with the tune rather than filling in
+   * around it: `arpGapsFor` gives this lane the melody's silences, and the odd
+   * slots are where those silences are.
+   *
+   * The old note, kept because the reasoning is still the right shape for
+   * anything else in this file: `density > 0.7` used to switch the even gaps on
+   * and off, and splitting one line into two made that a FADER instead of a
+   * rewrite. That trade was correct; the lane simply should not be playing both
+   * halves of it at all now.
    */
   const core = pitchAt.map((n, i) => (n !== null && i % 2 === 1 ? n : '~')).join(' ');
-  const fill = pitchAt.map((n, i) => (n !== null && i % 2 === 0 ? n : '~')).join(' ');
 
   const voice = (line: string, transpose: number, pan: number, level: Patternable, sync: number): Pattern =>
     note(line)
@@ -3519,7 +4091,7 @@ export function buildArp(m: MusicalState): Pattern {
        * high filigree part should sound like.
        */
       .room(m.sig.space.range(0.24, 0.55))
-      .roomsize(4)
+      .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
       .gain(level)
       .pan(pan)
       .orbit(ORBIT_HARMONY);
@@ -3558,9 +4130,24 @@ export function buildArp(m: MusicalState): Pattern {
       ring: 1 + (half ? 0.3 : 0) + homing * 0.12,
       hold: m.sig.hold,
     });
+  /*
+   * ONE LINE PER POD, NOT TWO.
+   *
+   * `core` and `fill` are the same lattice split into odd and even slots, so
+   * a pod sounding both is a continuous sixteenth-note line at 1245-2489 Hz.
+   * `registermap` measured this lane at **19.4% of all the air in the mix**,
+   * second only to the snare's noise burst, and a continuous high sparkle
+   * over a half-time wobble is the "bing bong" complaint almost by
+   * definition. The genre has no arpeggio in it.
+   *
+   * Dropping `fill` halves the note count and turns the line from sixteenths
+   * into eighths, which is the difference between a texture and a
+   * decoration. `arpGapsFor` still decides WHERE those eighths fall, so the
+   * interlocking with the tune - the property `interlock` measures - is
+   * unchanged in kind.
+   */
   const pod = (transpose: number, pan: number, level: number, sync: number): Pattern[] => [
     plucked(voice(core, transpose, clamp01(pan - wing), level, sync)),
-    plucked(voice(fill, transpose, clamp01(pan + wing), m.sig.fill.range(0, level), sync)),
   ];
   /*
    * EVERY POD LEVEL GOES UP BY HALF, and the reason is where this lane sits
@@ -3615,7 +4202,88 @@ export function buildLead(m: MusicalState): Pattern {
    */
   const base = m.tonic + 12;
   const laser = m.powerups.laser ?? 0;
-  const lines = melodyForBar(theme, m.phrase, m.barInPhrase, base, m.mode);
+  const written = melodyForBar(theme, m.phrase, m.barInPhrase, base, m.mode);
+  /* ==========================================================================
+   * IN A DROP THE BASS IS THE LEAD, AND THE TUNE GETS OUT OF ITS WAY.
+   * ==========================================================================
+   *
+   * This is the one place in the score where a whole lane stops emitting for a
+   * structural reason rather than a dynamic one, and it is the thing the genre
+   * is actually built on: at the drop, everything except the bass and the kit
+   * gets out of the way, and the growl carries the eight bars on its own.
+   *
+   * `tools/sections.mjs` measures the drop at **48.6% of every run** (8 x 900 s,
+   * 3840 bars; per-seed 43-55%). So this is not a rare gesture: for about half
+   * of a run there is now no continuous melody at all, which is the arrangement
+   * the owner asked for described as a number.
+   *
+   * NOT ALL OF IT. The tune still sounds on the CADENCE BAR of each four-bar
+   * group — `barInPhrase % 4 === 3`, the bar the themes are written to arrive
+   * on (three of the six cells reach it through a prepared suspension; see
+   * `melodyForBar`). One bar in four is a stab answering the bass, which is
+   * what a lead is for in this music. Every theme therefore still states its
+   * cadences during a drop, and outside the drop nothing is masked at all — the
+   * material is untouched, which is why `tune`, `motif` and `rondo` read the
+   * same tables they always have.
+   *
+   * A BOSS IS EXEMPT, and it is the only exemption. The leitmotif is the one
+   * piece of reserved material in the whole system (`themeForWave`), the boss
+   * stack below is the one place the melody is scored for weight rather than
+   * for prettiness, and a fight is where a tune earns the right to be over the
+   * bass. Every boss is half-time now, so without this the leitmotif would have
+   * been silent for half of every fight.
+   *
+   * A rest string rather than a `silence` return, so the lane keeps its shape:
+   * the fader, the room, the delay and the articulation all still exist and the
+   * director never sees the level collapse, which is what would force a rebuild
+   * and turn a written rest into an audible cut.
+   */
+  /*
+   * ...AND IT IS `sustain` AS WELL AS `drop`, WHICH IS THE FOURTH TIME.
+   *
+   * The owner, having heard the build: **"the meleody is driven by an
+   * instrumen that sounds stupid lol"**. That is the same complaint for the
+   * fourth time in one session, in four different sets of words:
+   *
+   *   "too muc hsynth to much bing bong"
+   *   "a foreground melody offa funny instrument i'ts just no"
+   *   "need a baseline, not just leads"
+   *   "the meleody is driven by an instrumen that sounds stupid"
+   *
+   * Four rounds of RE-VOICING this lane have not answered it - supersaw to
+   * triangle, triangle to oboe, oboe back to triangle. The signal in that is
+   * that the patch was never the problem: a foreground tune over a beat is a
+   * pop arrangement, and it is the ARRANGEMENT that keeps reading as wrong.
+   * So the melody stops being the protagonist rather than being dressed
+   * differently again.
+   *
+   * `drop` and `sustain` are **65.6% of every run** by `tools/sections.mjs`
+   * (48.6 + 17.0, over 8 x 900 s). Across those bars the tune sounds on the
+   * CADENCE BAR of each four-bar group and nowhere else - one bar in four, a
+   * stab answering the bass, which is what a lead is for in this music. The
+   * other 34.4% - build, breakdown, intro, fill, collapse - keeps the whole
+   * melody, because those are the sections that exist to expose it.
+   *
+   * TWO EXEMPTIONS, and no more. A BOSS keeps its leitmotif: it is the one
+   * piece of reserved material in the system and the one place the melody is
+   * scored for weight rather than for prettiness. A HUSHED or SOLOIST wave
+   * keeps the tune because both movements are announced by a banner and both
+   * are built around the melody coming forward; taking it away there would
+   * leave the gesture with nothing to be.
+   *
+   * NOTHING IS MASKED OUT OF THE MATERIAL. Every theme still states every
+   * bar it has, somewhere - which is why `tune`, `motif` and `rondo` are
+   * still reading the tables they always did.
+   */
+  const yieldToBass =
+    (m.section === 'drop' || m.section === 'sustain') &&
+    !m.boss &&
+    m.movement !== 'hush' &&
+    m.movement !== 'elite' &&
+    m.barInPhrase % 4 !== 3;
+  const lines = yieldToBass
+    ? { skeleton: '~', filigree: '~' }
+    : written;
 
   // Two voices an octave apart, the lower one quieter: a single thin saw line
   // sounds like a test tone, and the octave is what makes it read as a lead.
@@ -3716,18 +4384,19 @@ export function buildLead(m: MusicalState): Pattern {
    */
   const isBody = (osc: string): boolean => osc === 'sawtooth';
   /*
-   * THE TUNE IS AN OBOE — see `soundfonts.ts`, role `leadTune`.
+   * THE SOURCE IS A TOKEN, NOT A WAVEFORM — see `soundfonts.ts`.
    *
-   * `'tune'` is a token rather than a waveform name, because the answer is now
-   * a runtime one: `gm_oboe` when its samples are resident, the triangle this
-   * lane always had when they are not. Everything else in this function that
-   * branches on the oscillator (`isBody`, `decor`) is unchanged and still
-   * branches on `'sawtooth'` and `'tune'`, so the boss stack and the
-   * octave-down body are untouched.
+   * `'tune'` and `'decor'` resolve at build time to the role's instrument when
+   * it is enabled and its samples are resident, and to the oscillator this lane
+   * always had when it is not. Everything else here that branches on the source
+   * (`isBody`, `decor`) still branches on `'sawtooth'` and the tokens, so the
+   * boss stack and the octave-down body are untouched.
    *
-   * This function's own comment says the melody "has to stay legible over a
-   * busy stage" and then plays it on the least penetrating waveform there is.
-   * An oboe is the instrument an orchestra tunes to for exactly that property.
+   * TODAY BOTH TOKENS RESOLVE TO OSCILLATORS. `leadTune` maps to `gm_oboe` and
+   * `leadDecor` to the same, and neither is in `SAMPLED_ROLES`: the tune is the
+   * triangle it always was and the decoration the 25%-duty pulse. The mapping
+   * is kept rather than unwound because the mapping is the thing being argued
+   * about, and deleting it would delete the argument along with it.
    */
   const tuneVoice = voiceSource('leadTune');
   const decorVoice = voiceSource('leadDecor');
@@ -3923,11 +4592,18 @@ export function buildLead(m: MusicalState): Pattern {
    *     gm_oboe                   3.7   58.3   34.7    3.4    0.0   |  38.1%
    *     pulse pw0.5 (theory)     32.9   39.7   16.2    5.9    3.7   |  27.4%
    *
-   * The oboe is brighter than the pulse by half again, so the objection is
-   * gone and the arranger's answer stands: three lines of one melody are one
-   * instrument. `leadDecor` is a separate role from `leadTune` purely so that
-   * the FALLBACK is right — a player whose fonts do not load still gets the
-   * 25%-duty pulse the air measurement was taken on, not a second triangle.
+   * The oboe is brighter than the pulse by half again, so the AIR objection is
+   * gone. `leadDecor` is a separate role from `leadTune` purely so that the
+   * fallback is right — a lane not playing its sample gets the 25%-duty pulse
+   * the air measurement was taken on, not a second triangle.
+   *
+   * BOTH ROLES ARE CURRENTLY SWITCHED OFF (`SAMPLED_ROLES` in `soundfonts.ts`),
+   * so this function plays the triangle and the pulse it always did. The oboe
+   * was heard and rejected — "a foreground melody offa funny instrument it's
+   * just no". The measurement above is kept because it is still true and is
+   * what a re-enable would argue from, but it should be read for what it is: it
+   * was never evidence that an oboe SUITS this game, only that it is not darker
+   * than the pulse, which is a far smaller claim than the swap needed.
    *
    * The old argument, kept because it is the argument for the pulse if this is
    * ever revisited: the melody channels on an NES are the two PULSE channels
@@ -3939,15 +4615,88 @@ export function buildLead(m: MusicalState): Pattern {
    * dark (`isBody` gives them a 500-1400 Hz lowpass).
    */
   const decor = (osc: string): string => (osc === 'tune' ? 'decor' : osc);
-  const trio = (transpose: number, level: number, osc: string, pan: number): Pattern[] => [
+  /* ==========================================================================
+   * THE TRIO IS A DUO, AND OUTSIDE THE OPEN SECTIONS IT IS ONE LINE.
+   * ==========================================================================
+   *
+   * "its got beats in the background, then a foreground melody offa funny
+   * instrument it's just no." Read that as a description of a SHAPE and not of
+   * a timbre — it is a rhythm section with a tune sitting on top of it, which
+   * is a pop arrangement, and it is what this function built. Dubstep is not
+   * that: the bass carries the hook and a lead, when there is one, answers it.
+   *
+   * WHAT WAS HERE. Three lines per call — skeleton on the even slots, filigree
+   * on the odd ones, ornament on top — and `trio` was called TWICE
+   * unconditionally, once on the tune and once an octave down on a sawtooth
+   * "body". So an ordinary bar of ordinary play was SIX simultaneous melodic
+   * lines, going to twelve during a boss and fifteen with a descant. The
+   * melody's own stem also held the highest ceiling in `STEM_CURVES` (0.95).
+   *
+   * WHAT IS LEFT:
+   *
+   *   - THE SKELETON, always. `melodyForBar`'s own note says the even slots are
+   *     the tune and "whatever a bar is *about* has to land on a beat", so the
+   *     skeleton alone is not a fragment of the theme — it IS the motif, with
+   *     the connective tissue taken out. Every bar of every theme still sounds;
+   *     nothing has been masked out of the material, which is why `tune`,
+   *     `motif` and `rondo` are measuring the same tables they always were.
+   *   - THE FILIGREE, in the OPEN sections only — breakdown, intro and a HUSHED
+   *     wave. Those are the three moments the arrangement exists to expose the
+   *     tune ("the moment the kit drops away is the moment the tune is most
+   *     exposed"), and they are the only places a continuous melodic line still
+   *     belongs. Everywhere else the odd slots are rests, and the rests are
+   *     what make this a motif rather than a line.
+   *   - THE ORNAMENT IS DELETED. It was a third line at up to 55% of the
+   *     tune's own level on the fourth slot of each group, which is the
+   *     definition of decoration on a part that is no longer the subject.
+   *
+   * THE OCTAVE-DOWN SAWTOOTH BODY IS DELETED OUTRIGHT, and that is the single
+   * biggest subtraction in this function. Its own comment above records what it
+   * measured as: three sawtooth lines at MIDI 57-68 — 220-415 Hz, the motor's
+   * octave and now the WOBBLE'S — with eleven harmonics reaching 2.5 kHz. A
+   * "body" under the melody is an orchestration trick for a score whose melody
+   * is the subject. Here the thing that needs the 200-400 Hz octave to itself
+   * is the growl, and a doubling of the tune parked in it is the one collision
+   * a fader cannot fix.
+   */
+  const duo = (transpose: number, level: number, osc: string, pan: number): Pattern[] => [
     voice(lines.skeleton, transpose, level, osc, pan),
-    voice(lines.filigree, transpose, m.sig.density.range(level * 0.2, level), decor(osc), clamp01(pan - 0.14)),
-    voice(lines.ornament, transpose, m.sig.ornament.range(0, level * 0.55), decor(osc), clamp01(pan + 0.14)),
+    /*
+     * THE FILIGREE'S FLOOR IS ZERO NOW, and that is the whole demotion of it.
+     *
+     * It used to sit at `range(level * 0.2, level)` — a fifth of the tune's
+     * level even when the game was completely calm, rising to full — which is
+     * what made the melody a continuous line rather than a motif: the odd
+     * slots were always sounding.
+     *
+     * `range(0, level * 0.34)` in an ordinary section means a calm stage hears
+     * the SKELETON ONLY, which is the motif, and a busy one grows the
+     * connecting notes back at a third of the tune's level. `melodyForBar`'s
+     * own note says the even slots are what a bar is about; this makes that
+     * true of the mix and not only of the writing.
+     *
+     * The OPEN sections keep the old behaviour, because those three moments —
+     * breakdown, intro, a HUSHED wave — exist to expose the tune and are the
+     * only places a continuous melodic line still belongs.
+     *
+     * WHY THE VOICE IS UNCONDITIONAL RATHER THAN BEHIND `if (open)`, which is
+     * how the first version of this was written: `tools/fontlanes.mjs` walks
+     * every declared voice role in both soundfont and fallback mode and fails
+     * a role that emits no haps at all — "a disabled role that emits nothing is
+     * a silent lane". `leadDecor` has exactly one consumer and it is this line,
+     * so gating the line on a section made the role unmeasurable in every state
+     * the sweep visits. A gain that rides to zero is a fade; a line that is not
+     * built is a lane the gates cannot see. This file prefers the fade
+     * everywhere else for the same reason.
+     */
+    voice(
+      lines.filigree,
+      transpose,
+      open ? m.sig.density.range(level * 0.2, level) : m.sig.density.range(0, level * 0.34),
+      decor(osc),
+      clamp01(pan - 0.14),
+    ),
   ];
-  // The tune sings on the oboe (`'tune'`, falling back to the triangle it
-  // always had); the octave below is the saw that gives it body. The descant
-  // sings on the tune's own voice — a sixth above the melody is the highest
-  // pitch in the mix and the last place that wants a saw.
   /*
    * WIDTH, and where it is NOT applied.
    *
@@ -3959,43 +4708,61 @@ export function buildLead(m: MusicalState): Pattern {
    *
    * The TUNE stays dead centre and always will — a melody that wanders across
    * the field is a production effect, and the one lane a listener is following
-   * is the last place to put one. What moves is the doubling: the sawtooth
-   * body sits at 0.40 and the descant answers at 0.62, so the lead reads as a
-   * voice with something behind it rather than as one point source. Stereo
-   * placement is the cheapest separation there is, and it costs no notes.
+   * is the last place to put one. The doubling that used to answer it at 0.40
+   * is gone with the body; the descant at 0.62 and the boss weight below still
+   * move, so the lane is not a single point source when it has more than one
+   * voice in it.
    */
-  const voices = [...trio(0, lead * 1.15, 'tune', 0.5), ...trio(-12, 0.3, 'sawtooth', 0.4)];
+  const voices = [...duo(0, lead * 1.15, 'tune', 0.5)];
   /*
    * A boss is scored for LOW BRASS.
    *
-   * The ordinary lead is a triangle with a quiet saw an octave under it — a
-   * flute doubled by something with a little more body, which is right for a
-   * tune that has to stay legible over a busy stage. It is also, unavoidably,
-   * light. Playing the adversary's leitmotif on it makes the biggest moment in
-   * the run sound like the smallest.
+   * The ordinary lead is a flute-ish tune with nothing under it now, and it is
+   * unavoidably light. Playing the adversary's leitmotif on it would make the
+   * biggest moment in the run sound like the smallest, so during a fight the
+   * octaves come back: one saw an octave down and one two octaves down. That is
+   * not a new melody — it is the same notes, three octaves deep, which is
+   * exactly how the Imperial March is orchestrated and why it reads as mass
+   * rather than as pitch.
    *
-   * So during a fight the balance inverts: the octave below comes up from 0.3
-   * to nearly the level of the tune itself, and a second saw two octaves down
-   * is added underneath. That is not a new melody — it is the same notes, three
-   * octaves deep, which is exactly how the Imperial March is orchestrated and
-   * why it reads as mass rather than as pitch. The triangle stays on top so the
-   * line is still followable; everything under it is weight.
+   * ONE LINE EACH, not a trio each. This used to push six voices and it now
+   * pushes two, for the same reason the ordinary stack went from six to one:
+   * the weight is the octave, not the note count. Deeper with each phase,
+   * because a fight should get heavier as it goes and this costs nothing but a
+   * gain.
    *
-   * Deeper with each phase, because a fight should get heavier as it goes and
-   * this costs nothing but a gain.
+   * The `-24` saw bottoms at MIDI 45 = 110 Hz, which is inside the wobble's
+   * own register, so it is quieter than it was: 0.24 rather than 0.30, and the
+   * boss is the one place in the score where that collision is wanted — a
+   * leitmotif and a growl in the same octave is what a boss should sound like.
    */
   if (m.boss) {
-    voices.push(...trio(-12, 0.34 + m.bossPhase * 0.08, 'sawtooth', 0.6));
-    voices.push(...trio(-24, 0.3 + m.bossPhase * 0.07, 'sawtooth', 0.42));
+    voices.push(voice(lines.skeleton, -12, 0.34 + m.bossPhase * 0.08, 'sawtooth', 0.6));
+    voices.push(voice(lines.skeleton, -24, 0.24 + m.bossPhase * 0.06, 'sawtooth', 0.42));
   }
-  if (descant > 0.02) voices.push(...trio(9, 0.3 * descant, 'tune', 0.62));
+  /*
+   * THE DESCANT SURVIVES AS ONE LINE. It is the only thing in the game that
+   * gets BETTER rather than merely more intense when the player plays well, and
+   * that property is worth more than the voice it costs. It was a trio; a sixth
+   * above the melody is the highest pitch in the mix and the last place that
+   * wants three of anything.
+   */
+  if (descant > 0.02) voices.push(voice(lines.skeleton, 9, 0.3 * descant, 'tune', 0.62));
   return articulate(
     octave(stack(...voices))
       .delay(open ? 0.46 : 0.3)
       .delaysync(open ? 1 / 4 : 3 / 16)
       .delayfeedback(open ? 0.52 : 0.34)
       .room(m.sig.space.range(open ? 0.66 : 0.34, 0.95))
-      .roomsize(open ? 8 : 4),
+      /*
+       * Not `open ? 8 : 4` any more. Same reason as the pad's: that
+       * conditional rebuilt the harmony orbit's impulse response every time
+       * a breakdown, an intro or a HUSHED wave began or ended. The opening
+       * is entirely intact and lives in the three lines above this one -
+       * the delay lengthens, the feedback rises and the room SEND goes
+       * 0.34 -> 0.66, none of which touches the IR. See `ORBIT_ROOM`.
+       */
+      .roomsize(ORBIT_ROOM[ORBIT_HARMONY]),
     'sung',
     {
       // Eight eighth-note slots per bar; `melodyForBar` writes on that grid and
@@ -4364,47 +5131,28 @@ function renderSlots(
     .join(' ');
 }
 
-/**
- * The neighbour on the fourth slot of each group, as its own line.
+/*
+ * ---------------------------------------------------------------------------
+ * `renderOrnament` IS DELETED, and this is what it was.
+ * ---------------------------------------------------------------------------
  *
- * The old ornament was written `[n n+1]`, which halved the main note to make
- * room. Placing the neighbour on the second half of the slot instead leaves the
- * note it decorates completely untouched, so the ornament can come and go
- * without the phrase underneath it changing at all.
+ * A third melodic line: a grace note on the second half of the fourth slot of
+ * each group, choosing its neighbour by where the tune went next — below the
+ * note when the line was about to rise, above it when it fell. It was good, and
+ * the reason it is not here any more has nothing to do with its quality.
  *
- * Which neighbour is chosen by where the tune goes next: below the note when
- * the line is about to rise, above it when it falls or stops. An ornament is a
- * lead-in, and a lead-in that approaches from the side the melody is leaving is
- * a decoration of the wrong note.
+ * It was the THIRD simultaneous line of a melody that is now a sparse motif at
+ * about a tenth of its former level (`buildLead`, and `STEM_CURVES.lead`). A
+ * decoration on a decoration is what "too much bing bong" is; and once
+ * `buildLead` stopped calling it, `melodyForBar` was returning a field nobody
+ * read, which is AGENTS.md §3's "unmeasured properties rot" waiting to happen.
+ *
+ * Deleted rather than left dangling on purpose. Its one non-obvious lesson is
+ * worth keeping without the code: the grace note is written as `[~ n]` on its
+ * OWN eight-token line rather than as `[n n+1]` inside the tune's, so it can
+ * come and go without altering the length of the note it decorates. If a stab
+ * or a siren ever wants a lead-in, that is the shape to write it in.
  */
-function renderOrnament(m: Cell, base: number, mode: ModeName): string {
-  /*
-   * Eight tokens, not sixteen — each rendered line is its own mini-notation
-   * pattern and divides the cycle by its own token count, so the ornament can
-   * keep the granularity it was written for while the melody doubles. Emitting
-   * sixteen would halve the grace note's length and move where it lands.
-   */
-  const beats = m.filter((_, i) => i % 2 === 0);
-  return beats
-    .map((d, i) => {
-      // A HOLD is not a note to decorate, and not a rest either — it is the
-      // middle of one. Ornamenting it would put a grace note inside a sustain.
-      if (typeof d !== 'number' || i % 4 !== 3) return '~';
-      let next: number | null = null;
-      // `beats`, not `m` — `i` indexes the sampled beats, so scanning the full
-      // 16-slot cell with it looked ahead to the wrong note and picked the
-      // wrong neighbour (rendered `[~ 62]` where it should have been `[~ 65]`).
-      for (let j = i + 1; j < beats.length; j++) {
-        if (typeof beats[j] === 'number') {
-          next = beats[j] as number;
-          break;
-        }
-      }
-      const neighbour = next !== null && next > d ? d - 1 : d + 1;
-      return `[~ ${base + degreeToSemitone(mode, neighbour)}]`;
-    })
-    .join(' ');
-}
 
 /* ---------------------------------------------------------------------------
  * Motivic development.
@@ -4578,7 +5326,7 @@ export function melodyForBar(
   barInPhrase: number,
   base: number,
   mode: ModeName,
-): { skeleton: string; filigree: string; ornament: string } {
+): { skeleton: string; filigree: string } {
   const cell = cellForBar(theme, phrase, barInPhrase);
   return {
     /*
@@ -4595,7 +5343,10 @@ export function melodyForBar(
      */
     skeleton: renderSlots(cell, base, mode, (i) => i % 4 < 2),
     filigree: renderSlots(cell, base, mode, (i) => i % 4 >= 2),
-    ornament: renderOrnament(cell, base, mode),
+    /*
+     * THE ORNAMENT IS GONE — see the tombstone above `renderSlots`'s
+     * neighbour helper, which went with it.
+     */
   };
 }
 
@@ -4690,8 +5441,15 @@ export function buildFx(m: MusicalState): Pattern {
         // texture, and a roll that grows is a build.
         .gain(0.06 + m.buildProgress * 0.2)
         .room(0.3)
-        .roomsize(5)
-        .orbit(ORBIT_LOW),
+        /*
+         * ON THE DRUM ORBIT, NOT THE LOW ONE. It is a timpani: a struck skin
+         * with a pitch envelope, built from the same recipe as the kick. It
+         * sat on `ORBIT_LOW` asking for a room three sizes bigger than the
+         * bass's, which is one of the disagreements `reverbchurn` counts.
+         * The drum orbit's room is the 5 this line already wanted.
+         */
+        .roomsize(ORBIT_ROOM[ORBIT_DRUMS])
+        .orbit(ORBIT_DRUMS),
     );
   }
 
@@ -4729,7 +5487,7 @@ export function buildFx(m: MusicalState): Pattern {
         .hpq(0.8)
         .gain(0.13)
         .room(0.45)
-        .roomsize(6)
+        .roomsize(ORBIT_ROOM[ORBIT_AIR])
         .pan(0.44)
         .orbit(ORBIT_AIR),
     );
@@ -4752,7 +5510,7 @@ export function buildFx(m: MusicalState): Pattern {
         .hpf(3800)
         .gain(0.24)
         .room(0.6)
-        .roomsize(7)
+        .roomsize(ORBIT_ROOM[ORBIT_AIR])
         .orbit(ORBIT_AIR),
     );
   }
@@ -5182,7 +5940,7 @@ export function buildPowerupVoices(m: MusicalState): Pattern {
         .release(0.5)
         .lpf(m.sig.openness.range(700, 3000 + novaLevel * 700))
         .room(0.5)
-        .roomsize(5)
+        .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
         .gain(0.16 + novaLevel * 0.02)
         .orbit(ORBIT_HARMONY),
     );
@@ -5219,7 +5977,7 @@ export function buildPowerupVoices(m: MusicalState): Pattern {
         // this must never become another bright layer.
         .lpf(m.sig.openness.range(260, 620 + wardLevel * 120))
         .room(0.42)
-        .roomsize(7)
+        .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
         .gain(0.13 + wardLevel * 0.015)
         .orbit(ORBIT_HARMONY),
     );

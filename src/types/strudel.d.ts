@@ -42,7 +42,13 @@ declare module '@strudel/core' {
     layer(...fns: ((p: Pattern) => Pattern)[]): Pattern;
     every(n: number, fn: (p: Pattern) => Pattern): Pattern;
     when(test: Patternable | boolean, fn: (p: Pattern) => Pattern): Pattern;
-    sometimesBy(prob: number, fn: (p: Pattern) => Pattern): Pattern;
+    /**
+     * The probability is a PATTERN, not a number — `'0 0.5'` is twice as likely
+     * in the second half of the bar as in the first. Widened from `number`
+     * when the first stochastic control in this score was written; see
+     * `buildBass`'s stutter.
+     */
+    sometimesBy(prob: Patternable, fn: (p: Pattern) => Pattern): Pattern;
     sometimes(fn: (p: Pattern) => Pattern): Pattern;
     often(fn: (p: Pattern) => Pattern): Pattern;
     rarely(fn: (p: Pattern) => Pattern): Pattern;
@@ -421,4 +427,45 @@ declare module '@strudel/webaudio' {
     cps?: number,
     cycle?: number,
   ): Promise<void>;
+}
+
+/*
+ * `@strudel/soundfonts`, IMPORTED BY SUBPATH AND NOT BY PACKAGE NAME.
+ *
+ * The package root (`dist/index.mjs`) pulls in `sfumato` -> `soundfont2`, whose
+ * `module` field is a WEBPACK UMD BUNDLE. Vite serves it to the browser as an
+ * ES module, it declares no exports, and the page dies with
+ * "does not provide an export named 'SoundFont2'". `sfumato` is the loader for
+ * user-supplied .sf2 FILES, which this game does not use; the General MIDI path
+ * is `fontloader.mjs` and it imports only @strudel/core and @strudel/webaudio.
+ * See the header of `src/audio/soundfonts.ts`.
+ *
+ * The package declares no `exports` map, so these subpaths are supported
+ * imports rather than paths that only happen to resolve.
+ */
+declare module '@strudel/soundfonts/fontloader.mjs' {
+  /**
+   * Register all 129 General MIDI names with superdough's sound map. No
+   * network: each font is fetched on the first note that needs it.
+   */
+  export function registerSoundfonts(): void;
+  /** Where the `<file>.js` sample bundles are fetched from. Trailing slash off. */
+  export function setSoundfontUrl(url: string): void;
+  /**
+   * Fetch (once per font) and decode (once per pitch) one sample, returning a
+   * playable source. Used here to WARM the cache — superdough drops any hap
+   * whose handler resolves after its deadline, so a lane must not be switched
+   * to a font until every pitch it can play is resident.
+   */
+  export function getFontBufferSource(
+    name: string,
+    value: { note?: number | string; freq?: number },
+    ac: BaseAudioContext,
+  ): Promise<AudioBufferSourceNode>;
+}
+
+declare module '@strudel/soundfonts/gm.mjs' {
+  /** General MIDI name -> the list of sample-set file names `n` indexes into. */
+  const gm: Record<string, string[]>;
+  export default gm;
 }

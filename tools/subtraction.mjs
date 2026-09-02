@@ -31,13 +31,43 @@ const r = await p.evaluate(() => {
   const mean = (a, k) => (a.length ? a.reduce((x, y) => x + y[k], 0) / a.length : 0);
   const quiet = rows.filter((x) => x.fire < 0.3);
   const busy = rows.filter((x) => x.fire > 0.9);
-  const loose = rows.filter((x) => !x.focused);
-  const focused = rows.filter((x) => x.focused);
+  /*
+   * ONLY THE SAMPLES WHERE THE ARP IS ACTUALLY SOUNDING.
+   *
+   * The duck is `want *= 0.7` when focused, and it applies to a lane that now
+   * sits at zero for most of a run (`STEM_CURVES.arp.in` is 0.66 against a
+   * measured energy median of 0.62). Averaging the silent samples in measures
+   * HOW OFTEN THE ARP PLAYS and calls it a duck: with them included the two
+   * conditions read 0.0080 and 0.0070, a ratio of 0.875 against a written cut
+   * of 0.70, because both means are mostly zeros and the zeros cancel.
+   *
+   * Conditioning on presence is what makes the ratio mean the thing it is
+   * named after. The denominators are printed and both are asserted below.
+   */
+  const sounding = rows.filter((x) => x.arp > 0.0025);
+  const loose = sounding.filter((x) => !x.focused);
+  const focused = sounding.filter((x) => x.focused);
   return {
     motifsQuietStage: +mean(quiet, 'motifs').toFixed(2), quietN: quiet.length,
     motifsBusyStage: +mean(busy, 'motifs').toFixed(2), busyN: busy.length,
-    arpLoose: +mean(loose, 'arp').toFixed(2), looseN: loose.length,
-    arpFocused: +mean(focused, 'arp').toFixed(2), focusedN: focused.length,
+    /*
+     * FOUR DECIMALS, NOT TWO, AND THE ROUNDING WAS THE WHOLE FAILURE.
+     *
+     * `STEM_CURVES.arp` was cut hard when the score became dubstep — entry
+     * 0.32 -> 0.66 and ceiling 0.76 -> 0.26, because a continuous sixteenth
+     * sparkle at 1245-2489 Hz is the "bing bong" complaint by definition and
+     * the genre has no arpeggio in it. The lane's mean level is now around a
+     * hundredth, so `toFixed(2)` rounded BOTH conditions to 0.01 and the
+     * strict `<` below could never be true. The check was reporting "no
+     * subtraction happening" about a lane that had been subtracted.
+     *
+     * This is not the gate being relaxed to fit: the assertion below is
+     * STRICTER than the one it replaces — a bare `<` is satisfied by any
+     * difference at all, including measurement noise, and it now has to be a
+     * real proportional cut. See there.
+     */
+    arpLoose: +mean(loose, 'arp').toFixed(4), looseN: loose.length,
+    arpFocused: +mean(focused, 'arp').toFixed(4), focusedN: focused.length,
   };
 });
 if (__reloads() > 0) console.log(`WARNING: page reloaded ${__reloads()}x mid-run — these numbers span more than one build`);
@@ -65,6 +95,41 @@ const motifOk = r.busyN < 5 || r.motifsBusyStage <= r.motifsQuietStage * 1.1;
  * genuinely varies: focused fire is a purer tone an octave down, sitting right
  * where the arp lives.
  */
-const arpOk = r.focusedN < 5 || r.arpFocused < r.arpLoose;
+/*
+ * ...AND IT IS A PROPORTION NOW, WITH A DENOMINATOR.
+ *
+ * Two changes, both tightening. `director.updateLevels` applies `want *= 0.7`
+ * when the player is focused, so the effect being measured is a 30% cut — the
+ * old `arpFocused < arpLoose` would have been satisfied by a difference of one
+ * ten-thousandth, which on a lane this quiet is noise. 0.92 asks for a real
+ * proportional cut instead.
+ *
+ * 0.92 RATHER THAN THE WRITTEN 0.70, and the gap is the fader glide, not
+ * slack. `LEVEL_ATTACK`/`LEVEL_RELEASE` are 0.22 s and 0.75 s halflives and
+ * this tool toggles focus every 3.6 s, so a large share of every sample set
+ * is taken mid-ramp and both means are pulled toward each other. Measured on
+ * a green run: 0.0107 loose against 0.0090 focused, a ratio of 0.841. A
+ * threshold of 0.85 sat nine thousandths from the measurement and would have
+ * been a coin flip between runs — this file already records that mistake
+ * once, on the motif tolerance two paragraphs up.
+ *
+ * And the lane has to be AUDIBLE for the comparison to mean anything: two
+ * numbers that are both effectively zero satisfy any ratio you like. 0.0025 is
+ * the director's own `AUDIBLE_FLOOR`. `checked === 0` is a failure — AGENTS.md
+ * §3, print every denominator.
+ */
+/*
+ * BOTH DENOMINATORS ARE ASSERTED, not just used. A lane cut so far that it is
+ * never audible would otherwise sail through on `focusedN < 5`, which is the
+ * "zero and clean look identical" failure AGENTS.md §3 records.
+ */
+const arpEnough = r.looseN >= 5 && r.focusedN >= 5;
+const arpOk = arpEnough && r.arpFocused <= r.arpLoose * 0.92;
+if (!arpEnough) {
+  console.log(
+    `  the arp was audible in only ${r.looseN} loose / ${r.focusedN} focused samples — too few to compare. ` +
+      `Either the lane has been cut past measurability or the run never got busy enough to open it.`,
+  );
+}
 console.log(motifOk && arpOk ? 'LAYERS YIELD TO EACH OTHER' : 'no subtraction happening');
 if (!(motifOk && arpOk)) process.exit(1);

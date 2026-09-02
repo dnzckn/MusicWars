@@ -20,6 +20,65 @@ export const ORBIT_LOW = 2;
 export const ORBIT_HARMONY = 3;
 export const ORBIT_AIR = 4;
 
+/* ===========================================================================
+ * THE ROOM IS A PROPERTY OF THE ORBIT, NOT OF THE LANE.
+ * ===========================================================================
+ *
+ * MEASURED, AND IT IS THE LARGEST SINGLE PERFORMANCE DEFECT IN THE PROJECT.
+ * A V8 CPU profile of a live wave-8 run puts reverb-impulse-response
+ * construction at **4,786 ms of 7,552 ms of all JavaScript in a fifteen-second
+ * window — 63% of JS and 31% of wall clock**, measured under SwiftShader, so
+ * the share on a real GPU is higher. `tools/reverbchurn.mjs` counts the cause
+ * off the haps: **21.4 impulse-response rebuilds per bar**, against a budget of
+ * zero.
+ *
+ * THE MECHANISM, read out of `superdoughoutput.mjs:69` rather than guessed.
+ * superdough keeps ONE reverb node per orbit, and any hap whose room SHAPE
+ * differs from the previous hap on that orbit calls `reverbNode.generate(...)`
+ * synchronously on the main thread. The dominant cost is not even the noise
+ * fill: it is `convolver.buffer = ...`, because assigning a buffer to a
+ * ConvolverNode makes Web Audio normalise it and build the partitioned FFT
+ * kernel inline, and an eight-second stereo IR at 48 kHz is 768k samples of
+ * that. There is no cheaper way to rebuild one. Only not rebuilding helps.
+ *
+ * So the orbits — which already existed and already expressed the intent —
+ * become the unit of REVERB as well as of send. Four orbits, four impulse
+ * responses, each built once for the life of the page.
+ *
+ * WHAT THIS DOES NOT FLATTEN. `.room()` is the SEND AMOUNT and is not part of
+ * the IR key at all, so it never rebuilds anything: every lane keeps its own
+ * depth in the shared space, and the arp's "same room, further from the
+ * microphone" (send 0.24 against the pad's 0.58) is untouched. All 32 `.room()`
+ * calls in the score are unchanged. What is gone is thirteen lanes each
+ * declaring a different room SIZE, including three lanes that disagreed with
+ * themselves across sections.
+ *
+ * THE FOUR SIZES, and why each:
+ *
+ *   DRUMS   5   The half-time snare is the one drum in this score written for
+ *               a room ("one enormous hit, and space either side of it") and
+ *               it already asked for 5. The timpani roll moves here from the
+ *               low orbit, which is where a drum belonged anyway.
+ *   LOW     2   Small, and it is the tightest in the table on purpose. A long
+ *               tail on a wobble fills the gaps the LFO cuts, and the gaps ARE
+ *               the part; a big room on a bass is the classic way to lose a low
+ *               end. `wobble.ts` and `buildBass` both already argued for this.
+ *   HARMONY 6   The pad's own "one room, one building" figure, which the whole
+ *               harmony group was already gathered around. The lanes that
+ *               declared 3, 4, 5, 7 and 8 sit in it at their existing sends.
+ *   AIR     8   Cymbals and risers, the one place a long tail is the gesture.
+ *
+ * A FIFTH ORBIT IS THE RIGHT ANSWER IF A LANE EVER GENUINELY NEEDS A FIFTH
+ * SPACE. Adding one costs one IR built once; changing a lane's size inside a
+ * shared orbit costs one IR rebuild per note.
+ */
+export const ORBIT_ROOM: Readonly<Record<number, number>> = {
+  [ORBIT_DRUMS]: 5,
+  [ORBIT_LOW]: 2,
+  [ORBIT_HARMONY]: 6,
+  [ORBIT_AIR]: 8,
+};
+
 /**
  * Kick. `weight` 0..1 moves it from a soft house thump to a distorted
  * hard-dance kick: longer pitch drop, more saturation, tighter body.
@@ -274,7 +333,7 @@ export function riser(progress: Pattern): Pattern {
     .hpq(2.5)
     .gain(progress.range(0.04, 0.32))
     .room(0.55)
-    .roomsize(6)
+    .roomsize(ORBIT_ROOM[ORBIT_AIR])
     .pan(0.5)
     .orbit(ORBIT_AIR);
 }
@@ -282,7 +341,7 @@ export function riser(progress: Pattern): Pattern {
 /** Downlifter / impact for the first beat of a drop. */
 export function impact(level = 0.6): Pattern {
   return stack(
-    s('white').struct('x ~ ~ ~').ds('1.1:0').lpf(5000).gain(level * 0.5).room(0.7).roomsize(8),
+    s('white').struct('x ~ ~ ~').ds('1.1:0').lpf(5000).gain(level * 0.5).room(0.7).roomsize(ORBIT_ROOM[ORBIT_AIR]),
     note('c2')
       .struct('x ~ ~ ~')
       .s('sine')

@@ -491,7 +491,7 @@ const bandOf = (f) => {
  * `~` with the count printed under the table. That is a stated approximation
  * with a stated basis — the fallback was chosen as the nearest synthetic
  * equivalent of each instrument — and it is NOT a measurement. The measurement
- * is `tools/fontspectrum.mjs`, which decodes each font in a browser and reports
+ * is `tools/fontcheck.mjs --spectrum`, which decodes each font in a browser and reports
  * its real octave bands.
  *
  * What this cannot see, on top of everything the header already lists: a
@@ -650,7 +650,7 @@ console.log(`COMPUTED: 250+500 Hz ${share250500.toFixed(1)}%, above 2 kHz ${shar
 console.log(
   `   of which ${modelled} of ${printedGroups} printed groups are SAMPLED and modelled from their fallback ` +
     `oscillator — ${(modelledShare * 100).toFixed(1)}% of the modelled energy. Those figures are an ` +
-    `approximation with a stated basis, not a spectrum. Measure with tools/fontspectrum.mjs.`,
+    `approximation with a stated basis, not a spectrum. Measure with tools/fontcheck.mjs --spectrum.`,
 );
 
 console.log('');

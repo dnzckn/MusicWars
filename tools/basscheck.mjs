@@ -158,18 +158,137 @@ for (const mode of Object.keys(PROGRESSIONS)) {
  * rises above the lead's, the arrangement has inverted and the low end has
  * gone with it — that is a defect at any absolute pitch.
  */
+/*
+ * RE-POINTED, AND IT IS A DELIBERATE DESIGN CHANGE RATHER THAN A GATE THAT
+ * FAILED. AGENTS.md §3 asks for that distinction in as many words.
+ *
+ * `state()` defaults to `section: 'sustain'` and `barInPhrase: 0`, and the
+ * score no longer plays a tune there: `buildLead` now yields the whole bar to
+ * the bass in `drop` and `sustain` except on the cadence bar of each four-bar
+ * group. So this loop measured ZERO lead notes and the assertion below read
+ * `bassMid < NaN`, which is false — the gate went red reporting an inversion
+ * that had not happened.
+ *
+ * The CONTRACT it exists to protect is untouched and is still worth having:
+ * whatever the figures do with octave displacement, the bass must sit under the
+ * tune. So it is measured where the tune actually sounds — the cadence bar,
+ * `barInPhrase: 3`, which is the one bar in four that survives in combat.
+ *
+ * ...AND A SECOND ASSERTION IS ADDED RATHER THAN THE FIRST BEING RELAXED: the
+ * lead must be SILENT on the other three. That is the new arrangement stated as
+ * something that can fail. Before this change the lead played every bar of
+ * every section, so the old score would have failed it, which is the point.
+ */
+let leadCombatNotes = 0;
 for (const mode of Object.keys(PROGRESSIONS)) {
   for (const [degree] of PROGRESSIONS[mode]) {
-    for (const evt of L.buildLead(state({ mode, degree })).queryArc(0, 1)) {
+    for (const evt of L.buildLead(state({ mode, degree, barInPhrase: 3 })).queryArc(0, 1)) {
       const n = evt.value?.note ?? evt.value;
       if (typeof n === 'number') leadPitches.push(n);
+    }
+    for (const bar of [0, 1, 2]) {
+      for (const evt of L.buildLead(state({ mode, degree, barInPhrase: bar })).queryArc(0, 1)) {
+        const n = evt.value?.note ?? evt.value;
+        if (typeof n === 'number') leadCombatNotes++;
+      }
     }
   }
 }
 const median = (a) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : NaN);
 const bassMid = median(bassPitches), leadMid = median(leadPitches);
+if (!leadPitches.length) {
+  fails.push('the lead produced no notes even on its cadence bar — the tune has been lost, not demoted');
+}
 if (!(bassMid < leadMid)) {
   fails.push(`the bass median (${bassMid}) is not below the lead's (${leadMid}) — the arrangement has inverted`);
+}
+if (leadCombatNotes > 0) {
+  fails.push(
+    `the lead sounds on ${leadCombatNotes} note(s) in a sustaining combat bar — in this genre the bass carries ` +
+      `those bars and the tune answers on the cadence. See buildLead's yieldToBass.`,
+  );
+}
+
+/*
+ * 5. THE BASS IS A WOBBLE, ON EVERY FEEL.
+ *
+ * The strongest single statement of what this lane now is, and nothing else in
+ * the suite could see it. `buildBass` used to be five figures written as note
+ * ONSETS on a plucked electric bass, with the wobble reserved for one feel; it
+ * is now one growl on all five, composed in FILTER MOVEMENT — a real LFO on the
+ * ladder cutoff (`lpsync`/`lpdepth`/`lpshape`/`lpskew`), phase-locked to the
+ * cycle inside superdough's own AudioWorklet.
+ *
+ * That is exactly the kind of property AGENTS.md §3 warns rots: the figures
+ * could go back to onsets, or the LFO controls could be dropped by a later
+ * refactor, and every existing assertion here would stay green. So: every feel
+ * must emit haps carrying `lpsync`, `lpdepth` and `ftype: 'ladder'` together,
+ * and the RATE must not be the same on every bar — a wobble that never changes
+ * rate is an effect rather than a part, and `wobble.ts`'s eight-bar phrase is
+ * the composition.
+ *
+ * The plucked electric bass is EXPECTED and is not a failure: it plays the
+ * bar's anchor as an attack transient under the growl (see `buildBass`). What
+ * would be a failure is a feel with no wobbled hap at all.
+ */
+const wubRates = new Set();
+const ratesBySource = new Map();
+let wubHaps = 0;
+let laddered = 0;
+const noWub = [];
+for (const feel of FEELS) {
+  let seen = 0;
+  for (const barInPhrase of [0, 1, 2, 3, 4, 5, 6, 7]) {
+    for (const e of L.buildBass(state({ feel, barInPhrase })).queryArc(0, 1)) {
+      const v = e.value ?? {};
+      if (v.lpsync === undefined || v.lpdepth === undefined) continue;
+      seen++;
+      wubHaps++;
+      if (v.ftype === 'ladder') laddered++;
+      wubRates.add(v.lpsync);
+      /*
+       * PER SOURCE, and the first version of this was not.
+       *
+       * It pooled every wobbled hap's rate into one set and asked for three
+       * distinct values. Fail-tested by hard-coding `.lpsync(4)` on the main
+       * voice in `wobble.ts`, it STAYED GREEN: `reese` derives its own rate
+       * from the phrase and supplies three on its own, so the assertion was
+       * satisfied by a layer that is a colour while the part itself had gone
+       * flat. That is AGENTS.md §3's "gates optimised against" arriving by
+       * accident rather than by intent, and the fix is to ask the question of
+       * the voice that answers it.
+       */
+      const src = String(v.s ?? '?');
+      if (!ratesBySource.has(src)) ratesBySource.set(src, new Set());
+      ratesBySource.get(src).add(v.lpsync);
+    }
+  }
+  if (seen === 0) noWub.push(feel);
+}
+if (wubHaps === 0) {
+  fails.push('no bass hap anywhere carries a filter LFO — the wobble is gone, and it is the whole part');
+}
+if (noWub.length) {
+  fails.push(`${noWub.join(', ')} produce no wobbled bass hap at all — the growl is meant to be every feel's bass`);
+}
+if (wubHaps > 0 && laddered !== wubHaps) {
+  fails.push(
+    `${wubHaps - laddered} of ${wubHaps} wobbled haps do not set ftype 'ladder' — a biquad turns the sweep ` +
+      `into a whistle (see wobble.ts)`,
+  );
+}
+/*
+ * The FUNDAMENTAL is the voice that has to carry the phrase. `WUB_PHRASE`
+ * writes five distinct rates across its eight bars (3, 4, 6, 8, 12) and the
+ * bar-end pop adds a sixth at 16, so four is a floor with real headroom under
+ * the composition rather than a number tuned to what happens to pass.
+ */
+const fundamentalRates = ratesBySource.get('sawtooth') ?? new Set();
+if (fundamentalRates.size < 4) {
+  fails.push(
+    `the wobble's own voice uses ${fundamentalRates.size} distinct LFO rate(s) across the eight-bar phrase — ` +
+      `under four it is an effect rather than a written part (wobble.ts WUB_PHRASE writes five)`,
+  );
 }
 
 console.log(`\nbasscheck — ${total} note events across ${FEELS.length} figures\n`);
@@ -183,8 +302,12 @@ console.log(`\n  rota share by WAVE: ${Object.entries(share).sort((a, b) => b[1]
 console.log(`  boss override: ${bossFeel}`);
 console.log(`  notes off the chord: ${offBook.length}${offBook.length ? '  e.g. ' + offBook.slice(0, 3).join(', ') : ''}`);
 console.log(`  register: bass ${Math.min(...bassPitches)}-${Math.max(...bassPitches)} (median ${bassMid})` +
-  `  vs lead median ${leadMid}`);
+  `  vs lead median ${leadMid} (cadence bar; ${leadCombatNotes} lead notes in combat bars, want 0)`);
+console.log(`  wobble: ${wubHaps} haps carry a filter LFO, ${laddered} of them through a ladder`);
+for (const [src, set] of [...ratesBySource].sort()) {
+  console.log(`     ${src.padEnd(11)} ${set.size} distinct rates [${[...set].sort((a, b) => a - b).join(' ')}]`);
+}
 
 for (const f of fails) console.log(`\n  FAIL  ${f}`);
-if (!fails.length) console.log('\n  ok  five distinct figures, all reachable, all in register');
+if (!fails.length) console.log('\n  ok  five distinct figures, all reachable, all in register, all wobbled');
 process.exit(fails.length ? 1 : 0);
