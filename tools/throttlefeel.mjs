@@ -74,6 +74,14 @@ const RELEASE = 8.0;
 const stick = (y) => ({ x: 0, y, shoot: false, focus: false, throttle: -y });
 
 /*
+ * WHAT "RAIL SPEED" MEANS HERE, since the label changed. The thing the back of
+ * the throttle eases is the TRACK WINDOW (`World.railSpeed`), not the stage:
+ * `carryStage` and the crowd stay at `CRUISE_SPEED`. For one commit all three
+ * eased together and `arena` lost two thirds of its crowd — bodies must sweep
+ * PAST a braking ship for the recycler to keep the screen full. So this gate
+ * measures the window's speed, which is the thing the player feels as "the
+ * world answers the stick", while the world itself keeps coming at cruise.
+ *
  * The four lines of `world.ts`'s step that decide this, in their real order.
  * Reproduced rather than imported because `World` drags in the entire
  * simulation — but reproduced EXACTLY, and the header quotes the original so
@@ -195,7 +203,7 @@ for (const r of [fwd, back]) {
   console.log(`${r.name}:`);
   console.log(`   screen travel before pinning : ${r.travel.toFixed(3)} of a view (${(r.travel * VIEW_H).toFixed(0)} px)`);
   console.log(`   time until it pins           : ${f3(r.pinTime)} s   at screen ${r.pinScreen.toFixed(3)}`);
-  console.log(`   stage speed while held       : ${r.stageHeld.toFixed(0)} px/s  = ${r.stageRatio.toFixed(2)}x cruise`);
+  console.log(`   rail speed while held         : ${r.stageHeld.toFixed(0)} px/s  = ${r.stageRatio.toFixed(2)}x cruise`);
   console.log(`   90% back to station          : ${f3(r.homeAt)} s`);
 }
 
@@ -205,8 +213,8 @@ const stageSwingB = Math.abs(back.stageRatio - 1);
 
 console.log(`\nASYMMETRY`);
 console.log(`   screen travel  forward/backward : ${travelRatio.toFixed(2)}x`);
-console.log(`   stage-speed swing forward       : ${(stageSwingF * 100).toFixed(0)}% of cruise`);
-console.log(`   stage-speed swing backward      : ${(stageSwingB * 100).toFixed(0)}% of cruise`);
+console.log(`   rail-speed swing forward        : ${(stageSwingF * 100).toFixed(0)}% of cruise`);
+console.log(`   rail-speed swing backward      : ${(stageSwingB * 100).toFixed(0)}% of cruise`);
 
 /* ---- assertions ------------------------------------------------------- */
 const fails = [];
@@ -251,4 +259,4 @@ if (fails.length) {
   for (const f of fails) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log(`\nok — both halves of the throttle have authority over the world`);
+console.log(`\nok — both halves of the throttle have authority over the rail`);
