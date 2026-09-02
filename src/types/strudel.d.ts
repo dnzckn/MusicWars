@@ -253,6 +253,20 @@ declare module '@strudel/core' {
      * this project's gain curve — see AGENTS.md §4.
      */
     distortvol(v: Patternable): Pattern;
+    /**
+     * Waveshaper algorithm: 'scurve' (default), 'soft', 'hard', 'cubic',
+     * 'chebyshev', 'diode', ... — superdough helpers.mjs. Registered in
+     * @strudel/core controls.mjs. `chebyshev` relocates energy up the series
+     * and nearly removes the fundamental (docs/research-dubstep.md R3/R4).
+     */
+    distorttype(v: Patternable): Pattern;
+    /**
+     * Offsets the random stream this pattern's stochastic functions draw from
+     * (@strudel/core signal.mjs). Two lanes calling degradeBy/sometimes at
+     * the same cycle get the SAME draw unless seeded apart —
+     * docs/research-dubstep.md §0.3, measured.
+     */
+    seed(n: Patternable): Pattern;
     crush(v: Patternable): Pattern;
     coarse(v: Patternable): Pattern;
     vowel(v: Patternable): Pattern;

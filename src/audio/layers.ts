@@ -1818,6 +1818,20 @@ export function buildClap(m: MusicalState): Pattern {
      */
     layers.push(
       clap('~ [~ ~ ~ x] ~ [x ~ x ~]', m.brightness)
+        /*
+         * THE POINT OF GHOST NOTES IS THAT THEY ARE NOT IDENTICAL. This layer
+         * played the same four ghosts every bar. `degradeBy(0.25)` plays three
+         * of four, differently, every bar — and DETERMINISTICALLY: Strudel's
+         * randomness is a pure function of the query time
+         * (`docs/research-dubstep.md` §0.3, measured), so the same bar always
+         * draws the same ghosts and every baseline-comparing gate stays
+         * stable. `.seed(11)` because two lanes calling the same stochastic
+         * function at the same cycle get the SAME draw unless seeded apart;
+         * the seed is what makes this a variation rather than a copy of any
+         * other lane's.
+         */
+        .degradeBy(0.25)
+        .seed(11)
         .velocity(0.38)
         .gain(m.sig.fill.range(0, 0.42))
         .pan(0.42),
@@ -2722,6 +2736,14 @@ export function buildBass(m: MusicalState): Pattern {
      */
     crunch: m.sig.drive.range(0.4, 3.4),
     /*
+     * Reese width, in semitones of total spread across the two voices. The
+     * fixed 0.14 was +-7 cents — the bottom of "subtle" in every source, half
+     * the canonical amount. 0.20..0.44 is +-10 to +-22 cents, so the drop
+     * WIDENS the growl rather than only driving it. `docs/research-dubstep.md`
+     * R11.
+     */
+    width: m.sig.drive.range(0.2, 0.44),
+    /*
      * The centre of the sweep, and the ceiling is deliberately low.
      *
      * With `lpdepth` at 1.9 the LFO swings to nearly twice the centre, so a
@@ -3192,6 +3214,57 @@ export function buildBass(m: MusicalState): Pattern {
      * this went back to being the growl's own texture.
      */
     reese(figure, { ...opts, level: m.sig.drive.range(0.1, 0.34) }),
+    /*
+     * THE MID-BASS, WHICH DID NOT EXIST. The mix measured 5.6% of its energy
+     * between 500 Hz and 2 kHz — the band the sources put the growl's
+     * CHARACTER in (100-800 Hz) and the only band a phone or laptop speaker
+     * actually reproduces. There was no lane whose job that was; the wobble's
+     * only presence up there was the ladder's resonant peak passing through.
+     *
+     * A third voice on the SAME notes as the wub, with the fundamental
+     * deliberately removed. `docs/research-dubstep.md` R3 measured the
+     * shaper: at distort(2.0) with distorttype('chebyshev') a 110 Hz saw comes
+     * out with h1 at -19.9 dB and h3 at -9.7 — the waveshaper RELOCATES the
+     * energy an octave and a fifth up, leaving almost nothing at the
+     * fundamental. So this is a mid-bass generated from the note we already
+     * have: no transposition, no second oscillator, no independent line, and
+     * therefore nothing that can be mistaken for a lead. Banded to 1.8 kHz so
+     * it sits in the window without touching the sub; the 90 Hz highpass is
+     * belt-and-braces against whatever fundamental survives (no ftype on this
+     * chain, so it is a plain biquad — AGENTS.md §4).
+     *
+     * Same room shape as the wub, because reverbchurn requires one shape per
+     * orbit and this is ORBIT_LOW. Level is a signal on drive: the layer
+     * arrives with the drop and is a shadow in a breakdown. Conservative to
+     * start; the 500 Hz-2 kHz band of a full render is the number to tune it
+     * against.
+     */
+    note(figure)
+      .s('sawtooth')
+      /*
+       * THE WUB'S OWN ENVELOPE, COPIED. The first version of this layer set no
+       * envelope at all and took superdough's grouped defaults — a ~1 ms
+       * attack and a short decay — which took `attackfloor` red: 7% of pitched
+       * haps attacking under 20 ms and falling silent inside 80 ms, which is
+       * exactly this layer's three of the bass's fourteen haps a bar. The
+       * wobble voices do not go through `articulate()`; they carry these
+       * numbers explicitly (`wobble.ts wub()`), and a layer that rides the
+       * wub's notes should open and close when the wub does.
+       */
+      .attack(0.032)
+      .decay(0.04)
+      .sustain(1)
+      .release(0.08)
+      .clip(0.72)
+      .distorttype('chebyshev')
+      .distort(2.0)
+      .distortvol(0.35)
+      .hpf(90)
+      .lpf(1800)
+      .gain(m.sig.drive.range(0.18, 0.42))
+      .room(0.1)
+      .roomsize(ORBIT_ROOM[ORBIT_LOW])
+      .orbit(ORBIT_LOW),
     /*
      * THE THUMB: an octave pop on the last sixteenth of the bar.
      *
