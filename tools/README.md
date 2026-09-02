@@ -3313,3 +3313,29 @@ The `leadTune` row that went red on the lead re-voicing is a different case:
 `SHIPPED.leadTune` now records `pulse 0.35` as a DELIBERATE third sound with
 the reason (`docs/research-dubstep.md` §6.2), which is the mechanism that
 table exists for.
+
+## Detached worktrees: unlink the `node_modules` junction BEFORE `git worktree remove`
+
+The standard way to A/B an old commit here is a detached worktree with the
+main tree's `node_modules` junctioned in:
+
+    git worktree add --detach E:\GitHub\mw-<sha> <sha>
+    cmd /c mklink /J E:\GitHub\mw-<sha>\node_modules E:\GitHub\MusicWars\node_modules
+
+**`git worktree remove` follows the junction.** It deleted the MAIN tree's
+`node_modules/.bin/*` (sorts first) and five packages before aborting with
+"Invalid argument" — after which `npx tsc` silently resolved to a squatter
+package named `tsc` from the registry and printed a banner instead of
+type-checking. Git Bash's `[ -e ]` and `rm -rf` are not reliable on junctions
+either.
+
+The order that is safe, every time:
+
+    cmd /c rmdir E:\GitHub\mw-<sha>\node_modules     # removes the LINK only
+    cmd /c dir E:\GitHub\mw-<sha>                     # confirm node_modules is gone
+    git worktree remove E:\GitHub\mw-<sha>            # or rm -rf, now that it is just files
+    git worktree prune
+
+If `node_modules/.bin` is ever empty, `npm install` restores it without
+touching anything else; verify with `ls node_modules/.bin | wc -l` and a real
+`npx tsc --noEmit` before trusting any result produced after the damage.
