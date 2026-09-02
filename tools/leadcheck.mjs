@@ -8,22 +8,45 @@
  * is also set. Neither is visible in a diff, and neither makes a sound you can
  * miss — the lane just quietly loses a dimension.
  *
- * The checks:
+ * WHAT THIS GATE USED TO ASSERT, AND WHY IT WAS REPLACED RATHER THAN RELAXED.
  *
- *   VIBRATO   Every lead note carries a non-zero `vib` rate and a `vibmod`
- *             depth. Vibrato is what makes a held note sound sung rather than
- *             generated, and the score had none anywhere until it was added.
+ * The first version asserted VIBRATO on every lead note, a DEPTH window for
+ * it, and COUPLING of that depth to note length. All three were about one
+ * gesture, and that gesture is gone by design: `docs/research-dubstep.md`
+ * §6.1 — vibrato is an acoustic-instrument mannerism no dubstep lead has, and
+ * it is the thing that made a triangle at A4 read as "a woodwind in a video
+ * game". The lead's `.vib().vibmod()` were removed with that finding.
  *
- *   COUPLING  Depth tracks how long the note is held. LASER and a SOLOIST wave
- *             lengthen the note and open the vibrato as ONE gesture; if they
- *             ever drift apart, a long note gets a short note's vibrato and the
- *             expressive link is gone.
+ * The old assertions were seen red on the new tree before being replaced:
+ * VIBRATO failed on every note and COUPLING reported "0 distinct note
+ * length(s) over 0 notes — measured nothing", because it built its pairs from
+ * `vibmod`. A gate whose SUBJECT no longer exists is not a gate being relaxed;
+ * keeping it would mean asserting a property nothing is trying to have.
  *
- *   DEPTH     Depth stays inside 0.05-0.40 semitones. Above about 0.5 the pitch
- *             stops reading as one note and the melody goes out of tune with
- *             the harmony under it. superdough's own default is 0.5, so a
- *             dropped `.vibmod()` lands squarely in the bad range — which is
- *             exactly why this bound is asserted rather than assumed.
+ * What the lane is supposed to carry NOW — the genre's lead recipe, research
+ * §6.2, the fifth re-voicing and the first to move away from sweet:
+ *
+ *   NOTES      The lead produces notes at all, across every state swept.
+ *   NO VIBRATO No lead note carries `vib`/`vibmod`. The inverse of the old
+ *              check, asserted so a well-meaning "add expression" cannot
+ *              quietly put the woodwind back.
+ *   SATURATED  Every tune/decoration note (the pulse body) carries the diode
+ *              saturation: distorttype 'diode', distort 0.8, distortvol 0.75.
+ *              This is the "a dubstep lead is saturated" half of the recipe,
+ *              and a dropped chain here is exactly the inert-control defect
+ *              this file exists for.
+ *   BAND       The body's cutoff stays inside 1400-3200 Hz across the whole
+ *              openness sweep (0 and 1): mid-focused, not the 1.9-5 kHz air
+ *              the triangle sat in.
+ *   WIDTH      A supersaw width layer — unison 5, detune 0.5, spread 0.9,
+ *              CLEAN (distort 0) — sounds on every bar the body sounds on.
+ *              The support must never be saturated: it is width, not a
+ *              second line.
+ *   BOSS BODY  The boss's octave-down sawtooth stays clean and in its darker
+ *              500-1400 band. It is a body, not a lead, and saturating it
+ *              would put the crunch on the wrong voice.
+ *
+ * Every count prints its denominator.
  */
 import { makeSignals, notesIn } from './lib/headless-audio.mjs';
 
@@ -31,27 +54,12 @@ const strudel = await import('@strudel/core');
 const { buildLead } = await import('../src/audio/layers.ts');
 const { buildChord, PROGRESSIONS } = await import('../src/audio/theory.ts');
 
-const DEPTH_MIN = 0.05;
-const DEPTH_MAX = 0.4;
-/*
- * THE BOSS-DEPTH CLAUSE IS RETIRED, and this says which of the two it is.
- *
- * It asserted that the boss lead must be measurably MORE out of tune than the
- * ordinary one — written to protect the Lavender Town treatment from being
- * quietly softened, and it did its job: it caught a Math.max that broke the
- * sustain coupling, and it was seen red by zeroing the effect.
- *
- * The treatment is gone at the owner's word — "lol the lavendar town boss fight
- * is so awful lets just forget about that spec" — so this is a gate whose
- * SUBJECT no longer exists, not a gate being relaxed to let a defect through.
- * Keeping it would mean asserting a property nothing is trying to have, which
- * is how a suite fills with checks nobody can satisfy or delete.
- *
- * The two assertions that outlive it — every note carries both a rate and a
- * depth, and depth rises with note length — are unchanged and still cover the
- * lane. The depth window is one number again because there is one behaviour
- * again.
- */
+const BAND_LO = 1400;
+const BAND_HI = 3200;
+const BODY_LO = 500;
+const BODY_HI = 1400;
+const SAT = { distorttype: 'diode', distort: 0.8, distortvol: 0.75 };
+const WIDTH = { unison: 5, detune: 0.5, spread: 0.9 };
 
 function state(over = {}) {
   const mode = over.mode ?? 'aeolian';
@@ -84,7 +92,7 @@ function state(over = {}) {
     combo: 0,
     leadRegister: 0,
     movement: null,
-    sig: makeSignals(strudel),
+    sig: makeSignals(strudel, over.sigOver ?? {}),
     ...over,
   };
 }
@@ -99,116 +107,123 @@ for (const mode of Object.keys(PROGRESSIONS)) {
       { movement: 'elite' },
       { boss: true, bossPhase: 1 },
     ]) {
-      cases.push({ mode, barInPhrase, phrase: 2, ...extra });
+      // Both ends of the openness sweep, because BAND is a range claim.
+      for (const openness of [0, 1]) cases.push({ mode, barInPhrase, phrase: 2, ...extra, sigOver: { openness } });
     }
   }
 }
 
 let notes = 0;
-const noVib = [];
-const badDepth = [];
-const plainDepths = [];
-/*
- * [length, depth] for the coupling check.
- *
- * IT WAS [sustain, depth] AND THAT WENT DEAD WITHOUT FAILING, which is the
- * failure mode AGENTS.md 3 names: "a check with five assertions can pass its
- * own fail-test on the strength of one while the rest are dead."
- *
- * `buildLead`'s `held` used to be written into `.sustain()`, so the note-length
- * dial and the sustain LEVEL were the same control. `articulation.ts` separated
- * them: sustain is now a property of the touch (0.58-0.50, the same on every
- * lead note) and LENGTH is `clip`, which is what `held` drives. The coupling
- * itself — a longer note gets more vibrato — is unchanged and is exactly as
- * real as it was; this file was reading the wrong column, and the symptom was a
- * "--   only one sustain value seen; nothing to compare" line rather than a
- * failure. A gate that reports "nothing to compare" is a gate that has stopped
- * being one.
- *
- * `clip` is also the STRONGER column to read. It is the control that literally
- * says how long the note is; sustain was only ever a proxy for it, and a proxy
- * that a change of design could silently break, as this one did.
- */
-const pairs = []; // [clip, depth]
+let bodyNotes = 0;
+let widthNotes = 0;
+let bossBodyNotes = 0;
+let barsWithBody = 0;
+let barsWithBodyAndWidth = 0;
+const withVib = [];
+const unsaturated = [];
+const outOfBand = [];
+const badWidth = [];
+const dirtyBoss = [];
+const near = (a, b) => typeof a === 'number' && Math.abs(a - b) < 1e-6;
 
 for (const c of cases) {
   const evs = notesIn(buildLead(state(c)), 1);
   notes += evs.length;
+  const body = evs.filter((e) => e.s === 'pulse');
+  const width = evs.filter((e) => e.s === 'supersaw');
+  const bossBody = evs.filter((e) => e.s === 'sawtooth');
+  bodyNotes += body.length;
+  widthNotes += width.length;
+  bossBodyNotes += bossBody.length;
+  if (body.length) {
+    barsWithBody++;
+    if (width.length) barsWithBodyAndWidth++;
+  }
   for (const e of evs) {
-    if (!(e.vib > 0) || !(e.vibmod > 0)) noVib.push({ ...c, vib: e.vib, vibmod: e.vibmod });
-    else if (e.vibmod < DEPTH_MIN || e.vibmod > DEPTH_MAX) badDepth.push({ ...c, vibmod: e.vibmod });
-    // Coupling is a property of ONE state's sustain curve. Mixing the boss in
-    // compares two different curves and reports their difference as a failure.
-    if (typeof e.clip === 'number' && typeof e.vibmod === 'number') {
-      pairs.push([Number(e.clip.toFixed(4)), e.vibmod]);
-      plainDepths.push(e.vibmod);
+    if (e.vib !== undefined || e.vibmod !== undefined) withVib.push({ ...c, s: e.s, vib: e.vib, vibmod: e.vibmod });
+  }
+  for (const e of body) {
+    if (e.distorttype !== SAT.distorttype || !near(e.distort, SAT.distort) || !near(e.distortvol, SAT.distortvol)) {
+      unsaturated.push({ ...c, distorttype: e.distorttype, distort: e.distort, distortvol: e.distortvol });
+    }
+    if (typeof e.cutoff !== 'number' || e.cutoff < BAND_LO - 1 || e.cutoff > BAND_HI + 1) outOfBand.push({ ...c, cutoff: e.cutoff });
+  }
+  for (const e of width) {
+    if (!near(e.unison, WIDTH.unison) || !near(e.detune, WIDTH.detune) || !near(e.spread, WIDTH.spread) || !(e.distort === undefined || near(e.distort, 0))) {
+      badWidth.push({ ...c, unison: e.unison, detune: e.detune, spread: e.spread, distort: e.distort });
+    }
+  }
+  for (const e of bossBody) {
+    if (!(e.distort === undefined || near(e.distort, 0)) || typeof e.cutoff !== 'number' || e.cutoff < BODY_LO - 1 || e.cutoff > BODY_HI + 1) {
+      dirtyBoss.push({ ...c, distort: e.distort, cutoff: e.cutoff });
     }
   }
 }
 
-console.log(`leadcheck — ${cases.length} states, ${notes} note events\n`);
-let failed = false;
+const describe = (v) => `${v.mode}/bar${v.barInPhrase}${v.boss ? '/boss' : ''}${v.movement ? '/' + v.movement : ''} openness=${v.sigOver?.openness}`;
+const sample = (list, fmt) => {
+  const seen = new Set();
+  for (const v of list) {
+    const k = `${describe(v)}  ${fmt(v)}`;
+    if (!seen.has(k) && seen.size < 6) console.log(`    ${k}`), seen.add(k);
+  }
+};
 
+console.log(`leadcheck — ${cases.length} states, ${notes} note events (body ${bodyNotes}, width ${widthNotes}, boss body ${bossBodyNotes})\n`);
+let failed = false;
 if (notes === 0) {
-  // A harness that measures nothing passes everything. See the note about
-  // `miniAllStrings` in `lib/headless-audio.mjs`.
   console.log('  FAIL  the lead produced no notes at all — is the harness parsing mini-notation?');
   process.exit(1);
 }
-
-if (noVib.length) {
+if (bodyNotes === 0) {
   failed = true;
-  console.log(`  VIBRATO — ${noVib.length} note(s) with no vibrato:`);
-  const seen = new Set();
-  for (const v of noVib) {
-    const k = `${v.mode}/bar${v.barInPhrase}  vib=${v.vib} vibmod=${v.vibmod}`;
-    if (!seen.has(k) && seen.size < 6) console.log(`    ${k}`), seen.add(k);
+  console.log('  FAIL  no pulse body notes at all — the tune is not on the pulse this file expects (denominator for SATURATED/BAND is zero)');
+}
+
+if (withVib.length) {
+  failed = true;
+  console.log(`  NO VIBRATO — ${withVib.length} of ${notes} lead note(s) carry vib/vibmod; the lead has none by design (research §6.1):`);
+  sample(withVib, (v) => `s=${v.s} vib=${v.vib} vibmod=${v.vibmod}`);
+} else {
+  console.log(`  ok   no vibrato — 0 of ${notes} lead notes carry vib or vibmod`);
+}
+
+if (unsaturated.length) {
+  failed = true;
+  console.log(`  SATURATED — ${unsaturated.length} of ${bodyNotes} body note(s) missing the diode chain (want distorttype ${SAT.distorttype}, distort ${SAT.distort}, distortvol ${SAT.distortvol}):`);
+  sample(unsaturated, (v) => `distorttype=${v.distorttype} distort=${v.distort} distortvol=${v.distortvol}`);
+} else {
+  console.log(`  ok   saturated — ${bodyNotes} of ${bodyNotes} body notes carry diode 0.8 with postgain 0.75`);
+}
+
+if (outOfBand.length) {
+  failed = true;
+  console.log(`  BAND — ${outOfBand.length} of ${bodyNotes} body note(s) with cutoff outside ${BAND_LO}-${BAND_HI} Hz:`);
+  sample(outOfBand, (v) => `cutoff=${v.cutoff}`);
+} else {
+  console.log(`  ok   band — ${bodyNotes} of ${bodyNotes} body notes inside ${BAND_LO}-${BAND_HI} Hz across openness 0 and 1`);
+}
+
+if (badWidth.length || barsWithBodyAndWidth < barsWithBody) {
+  failed = true;
+  if (badWidth.length) {
+    console.log(`  WIDTH — ${badWidth.length} of ${widthNotes} width note(s) off spec (want unison ${WIDTH.unison}, detune ${WIDTH.detune}, spread ${WIDTH.spread}, clean):`);
+    sample(badWidth, (v) => `unison=${v.unison} detune=${v.detune} spread=${v.spread} distort=${v.distort}`);
+  }
+  if (barsWithBodyAndWidth < barsWithBody) {
+    console.log(`  WIDTH — the width layer sounds on ${barsWithBodyAndWidth} of ${barsWithBody} bars the body sounds on (want all)`);
   }
 } else {
-  console.log('  ok   vibrato — every lead note carries both a rate and a depth');
+  console.log(`  ok   width — supersaw unison 5 / detune 0.5 / spread 0.9, clean, on ${barsWithBodyAndWidth} of ${barsWithBody} body bars`);
 }
 
-if (badDepth.length) {
+if (dirtyBoss.length) {
   failed = true;
-  const lo = Math.min(...badDepth.map((v) => v.vibmod));
-  const hi = Math.max(...badDepth.map((v) => v.vibmod));
-  console.log(`\n  DEPTH — ${badDepth.length} note(s) outside ${DEPTH_MIN}-${DEPTH_MAX} (${lo}-${hi})`);
+  console.log(`  BOSS BODY — ${dirtyBoss.length} of ${bossBodyNotes} boss body note(s) saturated or out of ${BODY_LO}-${BODY_HI} Hz:`);
+  sample(dirtyBoss, (v) => `distort=${v.distort} cutoff=${v.cutoff}`);
 } else {
-  console.log(`  ok   depth — every ordinary note inside ${DEPTH_MIN}-${DEPTH_MAX} semitones`);
+  console.log(`  ok   boss body — ${bossBodyNotes} of ${bossBodyNotes} octave-down sawtooth notes clean and inside ${BODY_LO}-${BODY_HI} Hz`);
 }
 
-/*
- * Coupling: longer notes must get deeper vibrato. Checked as a monotone
- * relation over the distinct (sustain, depth) pairs actually produced, rather
- * than by asserting a formula — the formula is allowed to change, the
- * expressive link is not.
- */
-const distinct = [...new Map(pairs.map((p) => [p[0], p[1]])).entries()].sort((a, b) => a[0] - b[0]);
-const monotone = distinct.every(([, d], i) => i === 0 || d >= distinct[i - 1][1]);
-/*
- * FEWER THAN TWO LENGTHS IS A FAILURE, not a shrug. The lead's whole expressive
- * premise is that LASER and a SOLOIST wave lengthen the note AND open the
- * vibrato as one gesture; if the sweep only ever produces one note length,
- * either the states below stopped exercising it or the coupling has been
- * removed, and both of those are things this file exists to catch. It printed
- * `--` for exactly one build of this repo and that build had a dead assertion.
- */
-if (distinct.length < 2) {
-  failed = true;
-  console.log(
-    `\n  COUPLING — only ${distinct.length} distinct note length(s) over ${pairs.length} notes; ` +
-      'nothing to compare, which means this assertion measured nothing.',
-  );
-} else if (!monotone) {
-  failed = true;
-  console.log(
-    `\n  COUPLING — depth does not rise with note length: ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`,
-  );
-} else {
-  console.log(
-    `  ok   coupling — depth rises with note length (clip): ${distinct.map(([s, d]) => `${s}->${d.toFixed(3)}`).join('  ')}`,
-  );
-}
-
-console.log(failed ? '\nLEAD IS OUT OF SPEC' : '\nLEAD HOLDS — the melody is articulated, not just pitched');
+console.log(failed ? '\nLEAD IS OUT OF SPEC' : '\nLEAD HOLDS — a saturated, mid-focused body with clean width behind it, and no vibrato');
 process.exit(failed ? 1 : 0);

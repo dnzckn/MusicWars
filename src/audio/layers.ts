@@ -1963,7 +1963,13 @@ function percLayers(m: MusicalState): Pattern[] {
    * inharmonic, so the ear files it with the struck things even though it is
    * stating the harmony.
    */
-  if (g.bells.length) {
+  /*
+   * NOT IN THE DROP. `metal()` is an inharmonic FM bell stating a chord tone
+   * at 1.3-2.5 kHz — direct competition for the band the mid-bass layer is
+   * there to claim, in the one section where the bass is supposed to own the
+   * record. Sustain and breakdown keep it. `docs/research-dubstep.md` §6.1.
+   */
+  if (g.bells.length && m.section !== 'drop') {
     const tone = m.chord.notes[g.bells.length > 1 ? 2 % m.chord.notes.length : 0];
     let pitch = tone;
     while (pitch < 81) pitch += 12;
@@ -4529,6 +4535,26 @@ export function buildLead(m: MusicalState): Pattern {
      * cannot disagree with what `.s()` was handed.
      */
     if (src === 'pulse') p = p.pw(v.pw ?? 0.5);
+    /*
+     * THE WIDTH LAYER. A supersaw is only ever the support here — never the
+     * line — so it gets the genre's numbers straight: five voices, half a
+     * semitone of total spread, hard-panned. `.detune()`/`.spread()` are
+     * supersaw-only (AGENTS.md §4), which is why this is gated on the source.
+     */
+    if (src === 'supersaw') p = p.unison(5).detune(0.5).spread(0.9);
+    /*
+     * THE LEAD RECIPE, THE RIGHT WAY ROUND. Four re-voicings of this lane —
+     * supersaw, triangle, oboe, triangle — all moved toward SWEETER and more
+     * acoustic, and the owner rejected every one ("sounds stupid", four
+     * times). The genre's recipe (`docs/research-dubstep.md` §6.2) is the
+     * opposite: a mono, MID-FOCUSED body that carries the hook, saturated;
+     * width from a detuned supersaw BEHIND it, quieter; no vibrato. So the
+     * tune and its decoration are band-limited to 1.4-3.2 kHz instead of
+     * 1.9-5 kHz (below) and saturated through a diode curve; the boss's
+     * octave-down sawtooth body keeps its darker 500-1400 band and, like the
+     * width layer, stays clean.
+     */
+    const saturate = osc === 'tune' || osc === 'decor';
     return p
       /*
        * superdough's worklet maps duty as `(1 - pw) / 2`, so the 0.5 set above
@@ -4579,13 +4605,24 @@ export function buildLead(m: MusicalState): Pattern {
        * 1900-5000 puts the 5th and 7th back at mid openness without moving the
        * top of the range far.
        */
-      .lpf(isBody(osc) ? m.sig.openness.range(500, 1400) : m.sig.openness.range(1900, 5000))
+      .lpf(isBody(osc) ? m.sig.openness.range(500, 1400) : m.sig.openness.range(1400, 3200))
       // Real boundaries; `thin` is 0 at full health, so both of these read 20 Hz
       // on every hap until the player is hit. 90 clears the boss octave (the
       // -24 saw bottoms at MIDI 45 = 110 Hz); 300 is under the triangle's
       // lowest fundamental of 440.
       .hpf(isBody(osc) ? m.sig.thin.range(90, 400) : m.sig.thin.range(300, 700))
       .lpq(m.sig.ring.range(1.3, 4))
+      /*
+       * distort(0.8) through 'diode' is about +5 dB (research §0.1 / R4);
+       * distortvol(0.75) is squared by the gain curve to 0.56, -5 dB, so the
+       * saturation changes the timbre and not the fader. The unsaturated
+       * voices get distort(0) — a bypass in 1.3.0 — and distortvol(1), because
+       * the postgain multiplies inside the worklet regardless of the amount
+       * and 0.75 would have quietly cut them by 5 dB too.
+       */
+      .distort(saturate ? 0.8 : 0)
+      .distorttype('diode')
+      .distortvol(saturate ? 0.75 : 1)
       .gain(level)
       .pan(pan)
       .orbit(ORBIT_HARMONY);
@@ -4826,6 +4863,14 @@ export function buildLead(m: MusicalState): Pattern {
    * voice in it.
    */
   const voices = [...duo(0, lead * 1.15, 'tune', 0.5)];
+  /*
+   * Width BEHIND the body: the same skeleton line, same octave, on the
+   * supersaw at under half the body's level. It adds no second line — one
+   * pattern, five detuned oscillators — and it is what makes a mono saturated
+   * pulse read as a lead rather than a test tone. `docs/research-dubstep.md`
+   * §6.2.
+   */
+  voices.push(voice(lines.skeleton, 0, lead * 0.5, 'supersaw', 0.5));
   /*
    * A boss is scored for LOW BRASS.
    *
@@ -5551,7 +5596,15 @@ export function buildFx(m: MusicalState): Pattern {
         .lpf(320)
         // The crescendo is the whole gesture; a roll at constant level is a
         // texture, and a roll that grows is a build.
-        .gain(0.06 + m.buildProgress * 0.2)
+        /*
+         * DECRESCENDO, NOT CRESCENDO. This was `0.06 + buildProgress * 0.2`,
+         * a roll that got louder as the build went on — an orchestral gesture
+         * in a section whose whole job, in this genre, is to take things away
+         * (`docs/research-dubstep.md` R10, §6.1). The roll now starts present
+         * and thins out, so that by the last bar the riser is nearly alone and
+         * the drop's downbeat arrives into space rather than into a climax.
+         */
+        .gain(0.22 - m.buildProgress * 0.18)
         .room(0.3)
         /*
          * ON THE DRUM ORBIT, NOT THE LOW ONE. It is a timpani: a struck skin

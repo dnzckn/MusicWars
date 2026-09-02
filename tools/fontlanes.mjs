@@ -140,7 +140,17 @@ const SHIPPED = {
   colour: { s: 'supersaw', unison: 2, extras: ['detune', 'spread'] },
   stab: { s: 'sawtooth', extras: [] },
   motor: { s: 'pulse', pw: 0.34, extras: ['pwrate', 'pwsweep'] },
-  leadTune: { s: 'triangle', extras: [] },
+  /*
+   * pulse at 35%, not the triangle the score shipped with. This is the one
+   * entry in this table that records a DELIBERATE re-voicing rather than the
+   * pre-soundfont sound: docs/research-dubstep.md section 6.2 — four
+   * re-voicings of the lead all moved toward sweeter (supersaw, triangle,
+   * oboe, triangle) and the owner rejected each; the genre's body is a mono,
+   * mid-focused pulse or saw, saturated. The gate went red on the change, as
+   * it should, and this entry is the statement that the third sound WAS
+   * chosen, by whom, and why.
+   */
+  leadTune: { s: 'pulse', pw: 0.35, extras: [] },
   leadDecor: { s: 'pulse', pw: 0.5, extras: [] },
 };
 
