@@ -48,6 +48,14 @@ export interface Wub {
    * open and closes slowly, which reads as an accent rather than a sweep.
    */
   skew: number;
+  /**
+   * Where the LFO RESTS, -1..0 (superdough `lpdc`). Default -0.5 centres the
+   * sweep on the cutoff. -1 rests the filter closed and opens it only in
+   * bursts; with a saw shape that is "shut, snap open, fall back" — the
+   * aggressive wobble contour, and different from anything `skew` can make.
+   * Set by `wubFor` on the drop's answering bars only.
+   */
+  rest?: number;
 }
 
 /**
@@ -127,7 +135,9 @@ export const WUB_PHRASE: readonly Wub[] = [
 export function wubFor(barInPhrase: number, hard: boolean): Wub {
   const w = WUB_PHRASE[barInPhrase % WUB_PHRASE.length];
   if (!hard || barInPhrase % 4 !== 3) return w;
-  return { ...w, rate: w.rate * 2 };
+  // Doubled rate AND a closed resting point: the answering bars of a drop do
+  // not just go faster, they change contour. `docs/research-dubstep.md` R12.
+  return { ...w, rate: w.rate * 2, rest: -1 };
 }
 
 export interface WubOpts {
@@ -155,6 +165,8 @@ export interface WubOpts {
    * superdough — see `wub()`.
    */
   crunch: Patternable;
+  /** Reese spread in semitones, total across the two voices. See `reese()`. */
+  width?: Patternable;
 }
 
 /**
@@ -309,11 +321,12 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
       .lpdepth(o.depth)
       .lpshape(o.shape.shape)
       .lpskew(o.shape.skew)
+      .lpdc(o.shape.rest ?? -0.5)
       /*
-       * Never near zero — superdough builds its waveshaper curve from this
-       * value and the curve collapses to silence at 0. 1.15 is barely past
-       * unity and adds the second and third harmonics that let a bass read on a
-       * laptop speaker at all.
+       * (An earlier note here said this must never be near zero because the
+       * waveshaper collapsed to silence at 0. Measured false for superdough
+       * 1.3.0 — `docs/research-dubstep.md` §0.1 — and the crunch is a signal
+       * that may reach 0.4 in a breakdown on purpose now.)
        */
       /*
        * 3.0, not 1.15 — AND THIS IS WHERE THE CRUNCH ACTUALLY IS, which was
@@ -408,7 +421,18 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .add(note(12))
     .s('supersaw')
     .unison(2)
-    .detune(0.14)
+    /*
+     * `.detune(d)` on supersaw is `freqspread` in SEMITONES, total across the
+     * voices — so 0.14 was +-0.07 semitones = +-7 cents, a 1.78 Hz beat at
+     * 220 Hz, the bottom of "subtle" in every source and half the canonical
+     * spread. 0.36 is +-18 cents, 4.57 Hz of beating, inside the +-15..30
+     * cent range the literature calls useful. A signal from `buildBass` so
+     * the drop widens it. `docs/research-dubstep.md` R11, which also warns:
+     * the two voices' phase relationship is random and sticky across pooled
+     * reuse, so single-note renders of this voice do not reproduce — judge it
+     * over bars, not notes.
+     */
+    .detune(o.width ?? 0.36)
     .spread(0.7)
     // 36 ms, not 12. The growl is an octave up, so it can afford a slightly
     // longer onset than the fundamental and still arrive with it.
