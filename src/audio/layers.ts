@@ -3772,7 +3772,18 @@ export function buildChords(m: MusicalState): Pattern {
         // the part above it reads as nervousness. Both controls set, always.
         .vib(0.37 + i * 0.24)
         .vibmod(m.sig.openness.range(0.05, 0.085))
-        .lpf(m.sig.openness.range(2600, 6500))
+        /*
+         * 3200, NOT 6500. This was the brightest lowpass in the whole score,
+         * on a supersaw pair whose fundamentals already sit at 740-1480 Hz
+         * and whose stem is faded up in every section (STEM_CURVES.chords
+         * ceiling 0.62). Heard: "the synth high pitch sound is not good."
+         * Measured (tools/_probe_register.mjs): the second-highest pitched
+         * group in the mix, and the highest the director fades up in
+         * ordinary play — the arp above it is capped at 0.26 and needs the
+         * DRONES powerup. Same treatment as the arp: the register and its
+         * measured masking pairs do not move; the harmonics above 3 kHz do.
+         */
+        .lpf(m.sig.openness.range(2600, 3200))
         .hpf(m.sig.thin.range(420, 900))
         .lpq(m.sig.ring.range(0.9, 3.4))
         .room(m.sig.space.range(0.62, 0.95))
@@ -6188,9 +6199,20 @@ export function buildPowerupVoices(m: MusicalState): Pattern {
      * busy fight and a repeat DRONES do nothing. Level widens the voicing
      * upward and opens the filter, so stacking safety sounds like more safety.
      */
-    const voiced = m.chord.notes.map((n) => n + 12);
-    if (novaLevel >= 2) voiced.push(m.chord.notes[0] + 24);
-    if (novaLevel >= 3) voiced.push(m.chord.notes[1] + 24);
+    /*
+     * THE CHORD'S OWN OCTAVE, NOT ONE ABOVE IT. This voiced the harmony at
+     * chord+12, adding chord+24 at levels 2 and 3 — a triangle pad up to two
+     * octaves above the chords, on a stem whose curve floors at 0.6 and
+     * ceilings at 0.85 (STEM_CURVES.power), which made it the loudest melodic
+     * thing in the mix whenever NOVA was held. A triangle two octaves up is
+     * exactly the short, pitched, high, synthetic "bing" the research names
+     * as the remaining offender (docs/research-dubstep.md §6.1), and a
+     * powerup's presence does not need to be announced from the top of the
+     * spectrum. Levels 2 and 3 now add the octave the pad used to START at.
+     */
+    const voiced = m.chord.notes.map((n) => n);
+    if (novaLevel >= 2) voiced.push(m.chord.notes[0] + 12);
+    if (novaLevel >= 3) voiced.push(m.chord.notes[1] + 12);
     parts.push(
       note(chordOf(voiced))
         .s('triangle')
@@ -6198,7 +6220,9 @@ export function buildPowerupVoices(m: MusicalState): Pattern {
         .decay(0.3)
         .sustain(0.6)
         .release(0.5)
-        .lpf(m.sig.openness.range(700, 3000 + novaLevel * 700))
+        // Capped at 2600 where it used to open to 5100 at level 3; the pad
+        // sits an octave lower now and does not need the air.
+        .lpf(m.sig.openness.range(700, Math.min(2600, 2200 + novaLevel * 200)))
         .room(0.5)
         .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
         .gain(0.16 + novaLevel * 0.02)
