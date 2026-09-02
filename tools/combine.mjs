@@ -29,7 +29,18 @@ const { FUSIONS, INSTRUMENT_MAX_LEVEL, RIG_MAX_LEVEL } = await import('../src/ga
 const { makeBrain } = await import('./lib/bot-brain.mjs');
 
 const DT = 1 / 60;
-const SECS = Number(process.env.COMBINE_SECS ?? 900);
+/*
+ * 1500, NOT 900, AND THE REASON IS A MEASUREMENT. At 900 the winners of both
+ * arms landed at 721-885 s — inside the last fifth of the cap — so "won
+ * inside the cap" was itself a near-cap coin flip: the first run of the
+ * replacement power check read committed 4 of 8, control 5 of 8, a single
+ * seed's fifteen seconds, with the committed arm FASTER among winners
+ * (813 s against 822 s). A cap that binds turns the ending back into the
+ * saturated statistic this check exists to escape. 1500 leaves the slowest
+ * measured winner 600 s of room; the guard below still fails the run if
+ * either arm cannot reach the ending at all.
+ */
+const SECS = Number(process.env.COMBINE_SECS ?? 1500);
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /*
@@ -118,6 +129,13 @@ function run(seed, policy) {
   w.bus.on('ability:evolve', () => kinds.evolve++);
   w.bus.on('ability:union', () => kinds.union++);
   w.bus.on('ability:duet', () => kinds.duet++);
+  // The run has an ending now. `run:won` carries the game's own seconds-to-win,
+  // which is the number a finite run offers where "wave reached at a cap" no
+  // longer can — see the note above the power check.
+  let wonAt = null;
+  let finalScore = 0;
+  w.bus.on('run:won', (e) => { wonAt = e.seconds; });
+  w.bus.on('run:over', (e) => { finalScore = e.score; });
   const steps = Math.round(SECS / DT);
   for (let i = 0; i < steps; i++) {
     if (i % 2 === 0) drive(w, inp);
@@ -148,6 +166,7 @@ function run(seed, policy) {
     baseLv: t ? (st.instruments[t.base] ?? 0) : 0,
     catLv: t ? ((st.instruments[t.catalyst] ?? st.rig[t.catalyst]) ?? 0) : 0,
     seen: agent.seen, wave: w.waveIndex ?? 0, lockedOffers,
+    wonAt, score: finalScore,
   };
 }
 
@@ -198,10 +217,54 @@ const ratio = ctlDesigned > 0 ? designed / ctlDesigned : Infinity;
  * feels; if the committed policy does not beat the control on it, the whole
  * combining tree is decoration however often it fires.
  */
-const meanWave = (rs) => rs.reduce((a, r) => a + r.wave, 0) / rs.length;
-const cw = meanWave(rows), iw = meanWave(ctlRows);
-console.log(`  power:  committed reaches wave ${cw.toFixed(1)} against ${iw.toFixed(1)} for the control ` +
-  `(${cw > iw ? '+' : ''}${(100 * (cw - iw) / iw).toFixed(0)}%).`);
+/*
+ * POWER, MEASURED ON A RUN THAT ENDS.
+ *
+ * This used to compare WAVE REACHED at the 900-second cap, and it was red
+ * for a whole session — reproducibly, not noisily — while the tool's other
+ * half read identically to two decimals across commits. The reason is not
+ * the game: the run has a final boss at FINAL_BOSS_WAVE now, and a competent
+ * arm reaches it just inside the cap, so both arms pinned at 14-15 and the
+ * check compared two ceilings. A detached worktree before the meta layer and
+ * the rail change read 14.5 / 14.6 (-1%); HEAD read 14.6 / 14.8, then
+ * 14.4 / 14.6 twice. Two saturated numbers, a coin flip on the sign, and a
+ * gate everyone learns to ignore.
+ *
+ * What a finite run offers instead is its own ending: whether the arm WON
+ * inside the cap, and how many seconds it took (`run:won` carries the game's
+ * figure). So:
+ *
+ *   A. Committing to a fusion build must not cost the run its ending: the
+ *      committed arm wins at least as often as the control. Counted, with
+ *      the denominator.
+ *   B. Among winners, the committed arm is not SLOWER than the control by
+ *      more than the control's own seed-to-seed spread — the margin is one
+ *      standard deviation of the control's times, derived from this run's
+ *      data and printed, not a number this file invented. A committed player
+ *      spends picks on a plan and a drifter on immediate throughput, so a
+ *      small deficit is expected of a healthy tree; a deficit larger than
+ *      the noise is the "decoration" verdict the old check was reaching for.
+ *   C. If either arm has fewer than two winners, this is NOT a pass. The cap
+ *      is too short to measure power and the gate says so and fails, rather
+ *      than passing on an empty comparison. Raise COMBINE_SECS.
+ *
+ * The wave column is still printed per seed above; it is a report now.
+ */
+const winners = (rs) => rs.filter((r) => r.wonAt !== null);
+const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+const sd = (a) => { const m = mean(a); return Math.sqrt(a.reduce((x, y) => x + (y - m) * (y - m), 0) / a.length); };
+const cWin = winners(rows), iWin = winners(ctlRows);
+const cT = cWin.map((r) => r.wonAt), iT = iWin.map((r) => r.wonAt);
+console.log(`  power:  committed wins ${cWin.length} of ${rows.length} inside ${SECS}s` +
+  (cT.length ? ` (mean ${mean(cT).toFixed(0)}s to win)` : '') +
+  `; control wins ${iWin.length} of ${ctlRows.length}` +
+  (iT.length ? ` (mean ${mean(iT).toFixed(0)}s, sd ${sd(iT).toFixed(0)}s)` : '') + '.');
+for (let i = 0; i < rows.length; i++) {
+  const c = rows[i].wonAt, k = ctlRows[i].wonAt;
+  console.log(`          seed ${String(SEEDS[i]).padStart(2)}: committed ${c === null ? 'did not win' : c.toFixed(0) + 's'}` +
+    `   control ${k === null ? 'did not win' : k.toFixed(0) + 's'}` +
+    (c !== null && k !== null ? `   (${c > k ? '+' : ''}${(c - k).toFixed(0)}s)` : ''));
+}
 console.log(`  intent: committed lands ${(designed / rows.length).toFixed(2)} designed fusions per run against ` +
   `${(ctlDesigned / ctlRows.length).toFixed(2)} for a player who never chooses one — ` +
   `${ratio === Infinity ? '∞' : ratio.toFixed(1)}x.`);
@@ -219,10 +282,28 @@ if (unions === 0) {
  * one that ignores the system, not dominant, or the other build styles
  * (`narrow` in builds.mjs is the strongest single policy) stop being viable.
  */
-if (cw <= iw) {
-  console.log(`\n  FAIL  committing to a fusion build reaches wave ${cw.toFixed(1)} against ${iw.toFixed(1)} ` +
-    'for a player who ignores fusions — the tree is decoration');
+if (cWin.length < 2 || iWin.length < 2) {
+  console.log(`\n  FAIL  power is unmeasured: committed won ${cWin.length} of ${rows.length}, control ${iWin.length} of ${ctlRows.length} ` +
+    `inside ${SECS}s. Fewer than two winners in an arm is not a pass — the cap is too short to compare endings. Raise COMBINE_SECS.`);
   process.exitCode = 1;
+} else {
+  const margin = sd(iT);
+  const asOften = cWin.length >= iWin.length;
+  const asFast = mean(cT) <= mean(iT) + margin;
+  if (!asOften) {
+    console.log(`\n  FAIL  committing to a fusion build costs the run its ending: committed won ${cWin.length} of ${rows.length}, ` +
+      `control ${iWin.length} of ${ctlRows.length}`);
+    process.exitCode = 1;
+  }
+  if (!asFast) {
+    console.log(`\n  FAIL  committing to a fusion build is slower to the ending than the control's own spread allows: ` +
+      `${mean(cT).toFixed(0)}s against ${mean(iT).toFixed(0)}s + ${margin.toFixed(0)}s (one sd of the control's ${iT.length} times) — the tree is decoration`);
+    process.exitCode = 1;
+  }
+  if (asOften && asFast) {
+    console.log(`\n  ok  committing reaches the ending as often (${cWin.length} vs ${iWin.length} of ${rows.length}) and within the control's spread ` +
+      `(${mean(cT).toFixed(0)}s vs ${mean(iT).toFixed(0)}s, margin ${margin.toFixed(0)}s)`);
+  }
 }
 if (ratio < 2) {
   console.log(`\n  FAIL  building toward a fusion yields only ${ratio.toFixed(1)}x what ignoring them does — the choice does not matter`);
