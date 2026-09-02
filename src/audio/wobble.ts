@@ -56,6 +56,16 @@ export interface Wub {
    * Set by `wubFor` on the drop's answering bars only.
    */
   rest?: number;
+  /**
+   * The LFO rate as ALIGNED MINI-NOTATION, e.g. `'4@2 8 16'` — one rate per
+   * slot of the figure the bass is playing, so the wobble has a SHAPE within
+   * the bar rather than one speed per bar. Optional; `rate` stays the numeric
+   * base for everything that does arithmetic on it (`reese()`,
+   * `tremolophase`). Set by `buildBass`, never by hand here, because the
+   * divisions MUST match the figure's or the extra values silently never sound
+   * — see the note at `.lpsync()` in `wub()`.
+   */
+  ratePattern?: string;
 }
 
 /**
@@ -317,7 +327,20 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
       .lpq(perlin.range(5.5, 8.5).slow(7))
       .ftype('ladder')
       .drive(o.drive)
-      .lpsync(o.shape.rate)
+      /*
+       * A PATTERN OF RATES, WHEN THE BAR HAS ONE. `docs/research-dubstep.md`
+       * R5: producers automate the LFO rate between divisions INSIDE the
+       * phrase, and `lpsync` is patternable — nothing here patterned it.
+       *
+       * THE TRAP, MEASURED THERE AND SILENT: a control pattern whose divisions
+       * do not match the note pattern's fragments the note (`part !== whole`),
+       * and both the live scheduler and `capture.mjs` DROP haps without an
+       * onset — so `.lpsync("4 8 16")` under a `low@2 octave walk` figure
+       * sounds only the 4. `'4@2 8 16'` under the same figure is three whole
+       * haps. The string is built next to the figure from the figure's own
+       * division, which is the only place it cannot drift from it.
+       */
+      .lpsync(o.shape.ratePattern ?? o.shape.rate)
       .lpdepth(o.depth)
       .lpshape(o.shape.shape)
       .lpskew(o.shape.skew)
@@ -347,7 +370,7 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * 0.6 here is ~0.36 effective, the research's recommended -4 dB of
        * chew. Nothing warns.
        */
-      .tremolosync(o.shape.rate)
+      .tremolosync(o.shape.ratePattern ?? o.shape.rate)
       .tremolophase(0.5 / o.shape.rate)
       .tremoloshape(WUB_SAW)
       .tremoloskew(0.3)

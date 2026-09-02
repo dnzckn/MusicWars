@@ -2730,7 +2730,44 @@ export function buildBass(m: MusicalState): Pattern {
   // halves everything else: the battlefield is scheduled in beats, so the
   // clock may not move. A wobble at half rate over an unchanged kick is
   // exactly what "half-time" means to a listener.
-  const shape = half ? { ...w, rate: Math.max(1, w.rate / 2) } : w;
+  const shapeBase = half ? { ...w, rate: Math.max(1, w.rate / 2) } : w;
+  /*
+   * THE RATE IS WRITTEN INTO THE BAR ON THE ANSWERING BARS. `WUB_PHRASE` gives
+   * one rate per bar across eight bars, which is already more than any
+   * published Strudel pattern does. The genre goes further and automates the
+   * LFO rate between divisions inside the phrase — `docs/research-dubstep.md`
+   * R5 — so on the answering bars (the fourth of each four, the ones `wubFor`
+   * already doubles and rests closed) the wobble states, accelerates and
+   * snaps across the figure's slots: base, twice, four times.
+   *
+   * THE DIVISION COMES FROM THE FIGURE, HERE, NOT FROM A SECOND TABLE. The
+   * figures above are either `x@2 y z` (2:1:1 — chase, shuffle, halftime) or
+   * `w x y z` (1:1:1:1 — boomchick, gallop), and a rate string whose
+   * divisions do not match the figure's silently loses every value after the
+   * first in each note (the research measured it; see `wub()`). So the
+   * string is emitted from the same branch structure as the figure, and the
+   * probe that checks it counts onsets, not source.
+   */
+  const division: readonly number[] = m.feel === 'boomchick' || m.feel === 'gallop' ? [1, 1, 1, 1] : [2, 1, 1];
+  /*
+   * HALF, ONE, TWO — OF THE ROW'S OWN RATE, CAPPED AT 16. The first version
+   * escalated 1x/2x/4x on top of the rate `wubFor` had ALREADY doubled for
+   * the drop, and the probe read 16 -> 32 -> 64 on bar 3: sixty-four cycles
+   * a bar is 37 Hz at 140 BPM, which is a pitch, not a wobble. The research's
+   * own examples are `'4@2 8 16'` for the rate-8 row and `'6@2 12 16'` for
+   * the rate-12 row — state at half, accelerate to the row's rate, snap to
+   * twice it, and never past 16, the top of the vocabulary. So the pattern is
+   * built from the ROW's rate (undoing wubFor's doubling where it applied,
+   * which `rest: -1` marks) and clamped to the 2..16 the table speaks.
+   */
+  const rateString = (row: number, div: readonly number[]): string => {
+    const mult = div.length === 4 ? [0.5, 0.5, 1, 2] : [0.5, 1, 2];
+    const at = (i: number): number => Math.max(2, Math.min(16, row * mult[i]));
+    return div.map((d, i) => `${at(i)}${d > 1 ? `@${d}` : ''}`).join(' ');
+  };
+  const rowRate = shapeBase.rest === -1 ? shapeBase.rate / 2 : shapeBase.rate;
+  const shape =
+    m.barInPhrase % 4 === 3 ? { ...shapeBase, ratePattern: rateString(rowRate, division) } : shapeBase;
   const opts = {
     shape,
     /*
@@ -3325,7 +3362,21 @@ export function buildBass(m: MusicalState): Pattern {
      * position, so `capture --verify-determinism` and `basscheck`'s figure
      * comparison both still hold.
      */
-    .sometimesBy('0 0 0.22 0.34', (x) => x.ply(2));
+    /*
+     * SEEDED, AND THE REASON IS A MEASURED EDGE, NOT STYLE. Under the default
+     * legacy RNG, rand at cycle 0 (and every 300th cycle) is EXACTLY 0
+     * (docs/research-dubstep.md section 0.3). With the probability pattern
+     * at 0 for the first half of the bar, a hap whose draw is exactly 0 falls
+     * into NEITHER partition of sometimesBy and is deleted: tools/_probe_
+     * sometimes.mjs measured cycle 0 of 8 losing its entire first half, every
+     * bass voice at once - and since every gate and probe in tools/ queries
+     * cycle 0, every one of them had been reading a bass with no downbeat.
+     * A distinct seed moves the draw off the exact zero; 8 of 8 cycles keep
+     * the downbeat with it. Distinct from the clap's 11, because two lanes
+     * at the same cycle otherwise get the same draw.
+     */
+    .sometimesBy('0 0 0.22 0.34', (x) => x.ply(2))
+    .seed(21);
 }
 
 /**
