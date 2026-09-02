@@ -3299,6 +3299,27 @@ export function buildBass(m: MusicalState): Pattern {
       .sustain(1)
       .release(0.08)
       .clip(0.72)
+      /*
+       * THE TALKING BASS. `vowel` is five bandpasses at Q 40-140 with a fixed
+       * makeup gain: it annihilates the fundamental (24-32 dB down, measured)
+       * and leaves one formant standing — which is exactly wrong on the lane
+       * carrying the low end and exactly right on this one, whose job is the
+       * 300-800 Hz character over a clean sub. `docs/research-dubstep.md` R6.
+       *
+       * One vowel per BAR of a four-bar group — `<>` alternates per cycle, so
+       * no note is fragmented (the aligned-division trap at `wub()`'s
+       * `.lpsync()` applies to any control pattern). Restricted to a, e, o:
+       * the research measured u at -33.9 dBFS against e at -18.8, a 15 dB
+       * lurch, while a/e/o sit within 3.5 dB of each other. The formant peak
+       * walks 330 -> 440 -> 660 Hz across the group, through the band this
+       * layer exists to fill.
+       *
+       * superdough's chain is oscillator -> filter -> vowel -> ... -> distort
+       * (superdough.mjs:768 before :790), so the chebyshev shaper below works
+       * on the formant-shaped signal: "build the harmonics, move the formant,
+       * then shape" is the order the sources call for.
+       */
+      .vowel('<a e o a>')
       .distorttype('chebyshev')
       .distort(2.0)
       .distortvol(0.35)
