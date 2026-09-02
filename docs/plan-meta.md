@@ -229,10 +229,10 @@ builder's picks onto the two things they are feeding. Grace cards — the way a
 thin pool actually goes wrong — sit at 0.9% of 54,400 dealt, so sixteen ids
 against four cards is not running dry.
 
-`tools/builds.mjs` at the gated roster: divergence **0.85 against 2.01** at the
-full table, on a bar of 0.25. Read the decomposition: the policy spread in wave
-reached roughly TRIPLED (0.27 -> 0.79) while the damage spread compressed
-(6.5x -> 2.2x), because a sixteen-id pool contains no super-safe corner. The
+`tools/builds.mjs` at the gated roster: divergence **0.85 against 2.08** at the
+full table on the same tree, on a bar of 0.25. Read the decomposition: the
+policy spread in wave reached ROSE (0.51 -> 0.79) while the damage spread
+compressed (8.5x -> 2.2x), because a sixteen-id pool contains no super-safe corner. The
 pick decides progress more and punishment less. §6's "if 8 weapons makes runs
 samey" is not what happened.
 
