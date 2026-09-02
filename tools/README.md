@@ -3274,34 +3274,42 @@ starving them. That arm uses `ProgressionState.unlocked` — the shipped filter 
 where the three historical arms use the banish list, because measuring the
 feature through a stand-in for the feature is not measuring the feature.
 
-## `fontlanes`'s two `bass` rows are KNOWN RED, and they predate every recent score change
+## `fontlanes`'s two `bass` rows were red for a session, and the diagnosis was wrong
 
-Written down so the next person does not re-derive it. `fontlanes` fails on:
+Kept because the wrong diagnosis is the useful part. For most of one session
+`fontlanes` failed on:
 
     FAIL  role "bass": no hap carried "gm_electric_bass_finger" in written mode. The lane is silent or misrouted.
     FAIL  role "bass": no hap fell back to "sawtooth". THE FALLBACK IS UNPROVEN for this lane.
 
-Measured, not reasoned. A detached worktree at `b5e05b1` — the last commit
-before the score agent's checkpoint `e996e34` and before any of the
-research-driven score commits (`fecfbfb`, `624e193`, the lead re-voicing) —
-with `node_modules` junctioned in, gives the SAME two failures word for word.
-So they belong to none of those commits.
+and a detached worktree at `b5e05b1` failed the same way, so they were written
+up here as "pre-existing: the pluck lane emits no haps in any swept state".
+That reading was an artefact of the harness, not a fact about the lane.
 
-What they say: in every state `fontlanes` sweeps, `buildBass`'s pluck lane —
-`played(voice(...))`, the only recording in the score — emits NO haps at all.
-Not a font hap, not a fallback hap. A hap probe of `buildBass` in a
-drop/halftime state agrees: 14 haps = 11 wobbled + 3 chebyshev mid-bass, zero
-pluck. Either the pluck's figure is empty in these states or something gates
-it to nothing, and the gate is right to call the fallback unproven either way.
+**What it actually was.** `buildBass` ends in
+`.sometimesBy('0 0 0.22 0.34', x => x.ply(2))` on the whole stack. Under the
+default legacy RNG, `rand` is EXACTLY 0 at cycle 0 (and every 300th cycle),
+and a hap whose draw is 0 against a probability of 0 lands in neither
+partition of `sometimesBy` — it is deleted. `tools/_probe_sometimes.mjs`
+measured it: 1 of 8 cycles loses its entire first half-bar, every bass voice
+at once. In the game that is one bar in 8.5 minutes. In the harness it was
+every measurement, because **every gate and probe in this directory queries
+`queryArc(0, 1)` — cycle 0** — so the pluck, whose only note is the downbeat,
+was invisible to all of them. `.seed(21)` moves the draw off the exact zero;
+`fontlanes` is green on every row (commit `3b926c7`).
 
-Not fixed here because it is not what the score work was doing, and because
-fixing it blind risks re-introducing the very lane the owner said "sounds so
-bad" — the sampled fingered bass. Worth deciding on purpose: either the pluck
-comes back with a figure that actually sounds, or the lane and its font are
-retired and `SHIPPED`/`INSTRUMENTS` say so. Until then these two rows are
-expected red and every other `fontlanes` row is green.
+**What is still not known.** The `b5e05b1` worktree predates that
+`sometimesBy` and failed anyway, so that tree had a different cycle-0 killer
+that the score rewrite in `e996e34` removed while adding this one. It was not
+chased: that tree is gone and the gate is green.
 
-The `leadTune` row that went red on the lead re-voicing is a different case
-and is resolved: `SHIPPED.leadTune` now records `pulse 0.35` as a DELIBERATE
-third sound with the reason (`docs/research-dubstep.md` §6.2), which is the
-mechanism that table exists for.
+**The lesson this directory should keep.** A probe that queries only cycle 0
+cannot tell "silent" from "silent on the one cycle where the RNG is zero".
+When a lane reads as silent, query cycles 1..7 before believing it; and seed
+every stochastic call with a distinct integer (`docs/research-dubstep.md`
+§0.3), because two lanes at the same cycle draw the same number otherwise.
+
+The `leadTune` row that went red on the lead re-voicing is a different case:
+`SHIPPED.leadTune` now records `pulse 0.35` as a DELIBERATE third sound with
+the reason (`docs/research-dubstep.md` §6.2), which is the mechanism that
+table exists for.
