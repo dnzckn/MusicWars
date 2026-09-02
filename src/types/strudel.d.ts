@@ -127,9 +127,10 @@ declare module '@strudel/core' {
      * because a control that does not exist fails SILENTLY here — which is how
      * `.vibmod()` sat inert in this codebase for its whole life.
      *
-     * Depth 0 is no modulation, NOT silence. That is worth stating because
-     * `distort(0)` in this same API DOES silence the lane, and assuming the two
-     * behave alike would be a plausible and wrong guess.
+     * Depth 0 is no modulation, NOT silence. (An earlier version of this note
+     * contrasted it with `distort(0)`, which it said silenced the lane. It does
+     * not, in superdough 1.3.0 — measured bit-identical to no distort at all,
+     * `docs/research-dubstep.md` §0.1 — so the two behave alike after all.)
      */
     tremsync(v: Patternable): Pattern;
     tremdepth(v: Patternable): Pattern;
@@ -246,6 +247,12 @@ declare module '@strudel/core' {
     /** Delay time in cycles rather than seconds. */
     delaysync(v: Patternable): Pattern;
     distort(v: Patternable): Pattern;
+    /**
+     * Post-distortion gain (the `:vol` half of the `'amount:vol'` string form),
+     * registered in @strudel/core controls.mjs as `distortvol`. Squared by
+     * this project's gain curve — see AGENTS.md §4.
+     */
+    distortvol(v: Patternable): Pattern;
     crush(v: Patternable): Pattern;
     coarse(v: Patternable): Pattern;
     vowel(v: Patternable): Pattern;

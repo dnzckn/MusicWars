@@ -148,6 +148,13 @@ export interface WubOpts {
   /** Ladder-filter drive. */
   drive: Patternable;
   level: Patternable;
+  /**
+   * Post-filter distortion amount, the "crunch". A SIGNAL, so the growl can be
+   * clean in a breakdown and ruined at the drop on the same notes. This used to
+   * be a fixed `'3.0:0.30'` because of a hazard AGENTS.md recorded for an older
+   * superdough — see `wub()`.
+   */
+  crunch: Patternable;
 }
 
 /**
@@ -340,11 +347,16 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * harmonics fall away fast, which is the property that makes this
        * amount safe.
        *
-       * AND NEVER NEAR ZERO: `distort(0)` does not mean "no distortion", it
-       * SILENCES the voice — the waveshaper curve is built from the value and
-       * collapses to all-zeros. AGENTS.md §4.
+       * IT MAY GO TO ZERO. The previous version of this comment said
+       * `distort(0)` silences the voice; `docs/research-dubstep.md` §0.1
+       * rendered it through superdough 1.3.0 and found `distort(0)` bit-identical
+       * to no distort at all. The fixed `'3.0:0.30'` this replaces meant the
+       * wub was as saturated in a breakdown as at the drop. `distortvol` is the
+       * postgain the string form used to carry, and it is squared by this
+       * project's gain curve (engine.ts) — 0.30 is really 0.09, as before.
        */
-      .distort('3.0:0.30')
+      .distort(o.crunch)
+      .distortvol(0.30)
       .gain(o.level)
       /*
        * The same small room `buildBass` sends to, for the same reason.
@@ -431,7 +443,10 @@ export function reese(notes: Patternable, o: WubOpts): Pattern {
     .lpdepth(o.depth)
     .lpshape(WUB_TRI)
     .lpskew(0.5)
-    .distort('3.2:0.28')
+    // Shares the wub's crunch signal; the octave-up growl takes the same drive
+    // and a hair less postgain, as its fixed string form did.
+    .distort(o.crunch)
+    .distortvol(0.28)
     .gain(o.level)
     // See `wub`. The growl sits an octave up and takes slightly more of the
     // room for it, which is the ordinary way a mix is depth-staged: the higher

@@ -1506,6 +1506,18 @@ export class MusicDirector {
 
       // Section overrides. A breakdown is defined by what it removes.
       if (section === 'breakdown' && (id === 'kick' || id === 'clap' || id === 'bass')) want = 0;
+      /*
+       * THE BUILD SUBTRACTS. Before this the build only ADDED — a timpani
+       * crescendo, openness rising to 1, no fader reduced — so it was the
+       * densest part of the arrangement and the drop after it could only be
+       * quieter by comparison. The genre empties the bottom before the drop:
+       * sub and bass fade out over the last 40% of the build, and the drop's
+       * downbeat is the first bass note in seconds. `docs/research-dubstep.md`
+       * R10. Linear ramp on `buildProgress`, which is 0..1 across the build.
+       */
+      if (section === 'build' && (id === 'sub' || id === 'bass')) {
+        want *= 1 - clamp01((this.p.build - 0.6) / 0.4); // `this.p.build` is `arr.buildProgress`, set each tick above
+      }
       // The intro admits one layer at a time rather than muting everything and
       // then dumping the whole arrangement in at once.
       if (section === 'intro') want *= introGate(id, this.introProgress);

@@ -92,16 +92,53 @@ export function kick(rhythm: Patternable, weight = 0.5): Pattern {
   const pdec = 0.1 - weight * 0.03;
   const dec = 0.3 - weight * 0.07;
   const drive = 1.1 + weight * 2.2;
-  return note(rhythm)
-    .s('sine')
-    .penv(penv)
-    .pdecay(pdec)
-    .pcurve(1)
-    .decay(dec)
-    .sustain(0)
-    .distort(`${drive.toFixed(2)}:0.34`)
-    .gain(0.8)
-    .orbit(ORBIT_DRUMS);
+  return stack(
+    note(rhythm)
+      .s('sine')
+      .penv(penv)
+      .pdecay(pdec)
+      .pcurve(1)
+      .decay(dec)
+      .sustain(0)
+      .distort(`${drive.toFixed(2)}:0.34`)
+      // Roll off below 50 Hz: nothing down there is reproduced by anything but
+      // a subwoofer, and it is the band the sub already owns. No `ftype` is set
+      // on this chain, so this is a plain biquad and not a second lowpass
+      // (AGENTS.md §4).
+      .hpf(40)
+      .gain(0.8)
+      .orbit(ORBIT_DRUMS)
+      /*
+       * SIDECHAIN. The low orbit ducks under every kick and swells back over
+       * 170 ms — `docs/research-dubstep.md` R1, the most recognisable production
+       * signature in the genre and the reason a dubstep low end is huge without
+       * being muddy: the kick and the bass stop competing for 125 Hz IN TIME
+       * rather than in frequency, and 125 Hz was measured at 45% of this mix.
+       * `duckdepth` is a linear gain of `1 - sqrt(depth)`: 0.25 is -6 dB, a
+       * compromise between the sub's 1-2 dB and the growl's 8-12 because both
+       * live on ORBIT_LOW today. The right version gives the sub its own orbit.
+       */
+      .duckorbit(ORBIT_LOW)
+      .duckonset(0.004)
+      .duckattack(0.17)
+      .duckdepth(0.25),
+    /*
+     * THE CLICK. The body is a sine at g1 (49 Hz), which a laptop speaker does
+     * not reproduce at all — the mix measured 0.5% of its energy at 4 kHz. The
+     * sources put the kick's audibility on a short high-frequency transient
+     * layered over the sine: only its first few milliseconds matter, and they
+     * make the TIMING legible on a phone where the weight never arrives.
+     * `docs/research-dubstep.md` R9. 8 ms is a click, not a hat.
+     */
+    note(rhythm)
+      .s('white')
+      .ds('0.008:0')
+      .hpf(3000)
+      .lpf(7000)
+      .hpq(1.2)
+      .gain(0.34 + weight * 0.2)
+      .orbit(ORBIT_DRUMS),
+  );
 }
 
 /**

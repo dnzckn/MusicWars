@@ -187,9 +187,15 @@ are the one shape that cannot go wrong. `harmony.mjs` asserts the spacing.
 voice its own vibrato *rate* — the beating between rates is the effect. Voices
 sharing one rate are a phaser, not a section.
 
-**`distort(0)` silences the lane.** The waveshaper's curve is built from the
-control value and collapses to all-zeros at 0. At 0.19 it is still −14.5 dB.
-1.0 is roughly unity.
+**`distort(0)` is a clean bypass in superdough 1.3.0 — it does NOT silence.**
+An earlier entry here said it did, and the score carried distortion FLOORS on
+every bass voice because of it. Re-measured through the real chain
+(`docs/research-dubstep.md` §0.1): `distort(0)` and no `distort` at all are
+bit-identical at -22.69 dBFS; the worklet computes `algorithm(x, expm1(d))` and
+`expm1(0)` is the identity. `0.19` is +1.5 dB, not -14.5. The old entry
+described a curve-table build that no longer exists. Roughly: 1.0 is +7 dB,
+3.0 is +17 dB with the fundamental at -3 dBFS. The trap that DOES survive is
+`distortvol`, which is squared by this project's gain curve — `0.30` is 0.09.
 
 ---
 
