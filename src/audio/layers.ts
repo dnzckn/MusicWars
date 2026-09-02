@@ -14,7 +14,7 @@
 
 // `saw` went with the downlifter — the only thing in this file that swept a
 // filter across a bar. See the cymbal note in `buildFx`.
-import { note, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
+import { note, reify, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp01, lerp, remap } from '../core/math';
 import type { Chord, ChordSpan, Extension, LaneId, ModeName } from './theory';
@@ -3987,6 +3987,20 @@ export function themeForWave(wave: number, boss = false, recap = false): Theme {
 }
 
 export function buildArp(m: MusicalState): Pattern {
+  /*
+   * NOT IN THE DROP. Heard: "the synth high pitch sound is not good."
+   * Measured (tools/_probe_register.mjs): this lane is the highest pitched
+   * thing in the mix by half an octave — a triangle at MIDI 93, 1760 Hz, at
+   * gain 0.60 with its lowpass open to 4950 Hz — and it plays sixteenths.
+   * In the one section the genre gives to the bass, a bright sixteenth-note
+   * arpeggio in the top octave is the opposite of what the sources describe
+   * (docs/research-dubstep.md §5: the lead itself stays out of the drop except
+   * on cadence bars). The register is NOT lowered: LANE_RANGE.arp was placed
+   * at 87 by a masking measurement to clear the chord voices, and an octave
+   * down would re-create that collision. Brightness and level move instead,
+   * below.
+   */
+  if (m.section === 'drop') return silence;
   const homing = m.powerups.homing ?? 0;
   // Capped at 3, not 2. `Math.min(2, ...)` meant a third DRONES added nothing —
   // and drones are the powerup whose whole idea is more satellites.
@@ -4240,7 +4254,13 @@ export function buildArp(m: MusicalState): Pattern {
        * change is a filter change. `registermap`'s `harm@lpf` column exists to
        * make it visible and it is the number to read after any transposition.
        */
-      .lpf(m.sig.openness.range(1900, 8000))
+      /*
+       * 3200, NOT 8000. A triangle's character above 3 kHz is the "bing" —
+       * odd harmonics of a fundamental already at 1.2-2.5 kHz. Capping the
+       * ceiling at 3.2 kHz keeps the note and takes the glassiness; the
+       * register (and so every masking pair measured for it) does not move.
+       */
+      .lpf(m.sig.openness.range(1900, 3200))
       /*
        * A boundary rather than the dead 20 Hz this used to sit at whenever the
        * player was undamaged — see the pad's highpass.
@@ -4278,7 +4298,10 @@ export function buildArp(m: MusicalState): Pattern {
        */
       .room(m.sig.space.range(0.24, 0.55))
       .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
-      .gain(level)
+      // 0.75x: the loudest gain in the register table sat on the highest lane.
+      // Lower level also lowers this lane's weight in every masking pair, which
+      // is the safe direction for the collision gates.
+      .gain(reify(level).mul(0.75))
       .pan(pan)
       .orbit(ORBIT_HARMONY);
 

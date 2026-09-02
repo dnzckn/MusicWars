@@ -333,6 +333,12 @@ declare module '@strudel/core' {
   export function sequence(...pats: Patternable[]): Pattern;
   export function pure(v: unknown): Pattern;
   export const silence: Pattern;
+  /**
+   * Lift a number, mini-notation string or Pattern into a Pattern — the
+   * runtime export used so a Patternable level can be scaled with .mul()
+   * whatever form it arrived in. Verified present in @strudel/core.
+   */
+  export function reify(thing: Patternable): Pattern;
   /** Re-reads `accessor` on every query — the live-control primitive. */
   export function ref(accessor: () => Pattern | Patternable): Pattern;
   /** Continuous value; `func` receives the query-span start as a Fraction. */
