@@ -852,9 +852,21 @@ export class World {
    * sliding relative to the lattice.
    */
   private carryStage(dt: number): void {
-    // `stageSpeed`, not `CRUISE_SPEED`: the loose world rides the rail at whatever
-    // speed the rail is actually making this step. See the field's own note.
-    const c = this.stageSpeed * dt;
+    /*
+     * `CRUISE_SPEED`, NOT `railSpeed`, and this was measured the hard way.
+     *
+     * For one commit (9145b24) the loose world and the crowd were carried at
+     * the eased rail speed, on the argument that a rail at 70% with a world at
+     * 100% would slide everything through the frame. `arena` then reported
+     * enemies alive p50 85 -> 28.7 and on-screen 16.7 -> 8.0, and a same-tree
+     * A/B at RAIL_FLOOR = 1.0 restored both to the decimal — so the plumbing
+     * was innocent and the VALUE cost two thirds of the crowd. The mechanism
+     * is the recycler: bodies spawn on a ring round the ship, sweep past it,
+     * straggle beyond 2.5 views, and recycle back onto the ring. That loop is
+     * most of the population throughput, and easing the crowd's carry stalls
+     * it. The world keeps moving at cruise; only the WINDOW eases.
+     */
+    const c = CRUISE_SPEED * dt;
     for (const n of this.notes) n.y -= c;
     for (const d of this.drops) d.y -= c;
     for (const w of this.wells) w.y -= c;
@@ -1631,24 +1643,18 @@ export class World {
 
   /* -- warp; see the constant block at the head of this file -------------- */
   /**
-   * How fast the stage is advancing THIS STEP, in px/s.
+   * How fast the TRACK WINDOW is advancing this step, in px/s.
    *
-   * ONE VALUE, READ BY ALL THREE CARRIES, and that is the point of it existing
-   * rather than each site computing its own. The stage is carried in three
-   * places — the rail (`trackY`), `carryStage` for notes/drops/wells/novas/
-   * effects/popups/particles/bullets, and the per-enemy carry inside
-   * `updateEnemies`, which is separate because `stutterHop` writes `e.y`
-   * absolutely and the carry has to move its endpoints too. All three used to
-   * read `CRUISE_SPEED` directly, so they agreed by coincidence of spelling.
-   * The moment the rail could ease (see `RAIL_FLOOR`) that coincidence became
-   * a bug waiting to happen: a rail at 45% with a world still carried at 100%
-   * would slide every loose object and every enemy forward through the frame
-   * at 55% of cruise, which is a far worse defect than the sluggish throttle
-   * this was introduced to fix.
-   *
-   * Set once per step, immediately after `throttle`, and read-only thereafter.
+   * THE WINDOW, NOT THE STAGE. The stage — the loose world in `carryStage`
+   * and the crowd in `updateEnemies` — always moves at `CRUISE_SPEED`. This
+   * is the speed of the rail the ship is held inside, and it is the ONLY thing
+   * the back of the throttle eases (`RAIL_FLOOR`). For one commit all three
+   * carries read this value too, so that "everything rides together"; `arena`
+   * then lost two thirds of its crowd, because the population throughput is a
+   * recycling loop that needs bodies to sweep PAST a braking ship. The window
+   * slows so the ship has somewhere to go; the world keeps coming.
    */
-  stageSpeed = CRUISE_SPEED;
+  railSpeed = CRUISE_SPEED;
 
   /** Seconds the throttle has been held at its forward stop. */
   private warpHold = 0;
@@ -1947,20 +1953,12 @@ export class World {
    */
   private driftSpeed(): number {
     /*
-     * `stageSpeed`, not `CRUISE_SPEED`, and the docstring above is what decides
-     * it: the quantity is defined as relative to the TREADMILL, and since
-     * `RAIL_FLOOR` the treadmill does not always move at cruise. The relative
-     * velocity is `vy - (-stageSpeed)`.
-     *
-     * Not a tidy-up — the constant is now actively wrong on the back half of
-     * the throttle. Pulling back leaves `vy` near -160 while the rail eases to
-     * 193, so the true drift is 33 px/s and the old expression reported 270:
-     * six times `STILL_SPEED`, which would have paid UP-TEMPO's trail full
-     * damage for a ship that is very nearly parked on the stage. The stick
-     * centred still reads exactly zero, as the docstring promises, because
-     * `stageSpeed` is `CRUISE_SPEED` there.
+     * `CRUISE_SPEED`, because the treadmill is the STAGE and the stage does
+     * not ease — only the track window does (`railSpeed`). For one commit
+     * this read the eased value and the arena crowd fell by two thirds; see
+     * `carryStage` for the measurement.
      */
-    return Math.hypot(this.player.vx, this.player.vy + this.stageSpeed);
+    return Math.hypot(this.player.vx, this.player.vy + CRUISE_SPEED);
   }
   /**
    * Hues for the two rings the RIG produces, as opposed to the ten an
@@ -2860,9 +2858,11 @@ export class World {
        * being asked to.
        */
       this.throttle = input.throttle ?? -input.y;
+      this.updateWarp(simDt);
       /*
-       * THE BACK OF THE THROTTLE EASES THE RAIL. See `RAIL_FLOOR` for the
-       * measurement this comes from and for why the floor is not zero.
+       * THE BACK OF THE THROTTLE EASES THE RAIL — EXCEPT IN WARP. See
+       * `RAIL_FLOOR` for the measurement this comes from and for why the floor
+       * is not zero.
        *
        * `throttle` is +1 hard forward and -1 hard back, so only the negative
        * half is read here: the FORWARD half already has its authority, via the
@@ -2870,13 +2870,26 @@ export class World {
        * gives the other half the same kind of authority in the other
        * direction, and nothing else in the step changes.
        *
-       * Set before `updateWarp` and before every carry, so the rail, the loose
-       * world and the enemies cannot disagree about how fast the stage moved
-       * this step.
+       * WHY WARP IS EXEMPT, and it is the whole reason the floor could come
+       * down to 0.45. Pulling back is ALSO the warp brake (`warpBrake`,
+       * `WARP_DROP`). With the rail easing in warp too, one gesture meant two
+       * things — "slow the world down" and "get me out of warp" — and since
+       * easing made the aft stop worth holding, ordinary play started tripping
+       * the brake: `tools/warp.mjs` went from 1 accidental drop in 2055 aft
+       * holds to 8 in 2002. Exempting warp gives the aft stop exactly one
+       * meaning in each mode: out of warp it eases the rail, in warp it is the
+       * brake and nothing else. The player still gets the feedback, one beat
+       * later — the moment the latch drops the rail eases, so the brake LANDS
+       * rather than merely expiring.
+       *
+       * AFTER `updateWarp`, not before, so `warping` is this step's answer and
+       * not last step's. The ordering matters on exactly the two steps where
+       * the mode changes, which are the steps this exemption exists for.
        */
-      this.stageSpeed = CRUISE_SPEED * (1 - Math.max(0, -this.throttle) * (1 - RAIL_FLOOR));
-      this.updateWarp(simDt);
-      this.trackY -= this.stageSpeed * simDt;
+      this.railSpeed = this.warping
+        ? CRUISE_SPEED
+        : CRUISE_SPEED * (1 - Math.max(0, -this.throttle) * (1 - RAIL_FLOOR));
+      this.trackY -= this.railSpeed * simDt;
       this.carryStage(simDt);
       const expired = this.player.update(
         simDt,
@@ -3521,7 +3534,7 @@ export class World {
        * rides, exactly as a frozen body on a real conveyor would.
        */
       if (e.archetype !== 'conductor') {
-        const carry = this.stageSpeed * dt;
+        const carry = CRUISE_SPEED * dt; // the crowd rides the STAGE, not the eased rail — see carryStage
         e.y -= carry;
         e.hopFromY -= carry;
         e.hopToY -= carry;
