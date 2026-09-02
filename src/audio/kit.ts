@@ -19,6 +19,18 @@ export const ORBIT_DRUMS = 1;
 export const ORBIT_LOW = 2;
 export const ORBIT_HARMONY = 3;
 export const ORBIT_AIR = 4;
+/*
+ * THE FIFTH ORBIT, AND THE NOTE BELOW SAID EXACTLY WHEN IT WOULD BE JUSTIFIED:
+ * "if a lane ever genuinely needs a fifth space. Adding one costs one IR
+ * built once." The sub is that lane — not for a space (it is dry) but for the
+ * SIDECHAIN. The kick ducks the low orbit under every hit, and the genre
+ * wants two different depths there: 8-12 dB on the growl, 1-2 dB on the sub
+ * (`docs/research-dubstep.md` R1). While both shared ORBIT_LOW the duck was a
+ * compromise at -6 dB. Now the growl takes -9.7 dB and the sub is left
+ * alone, which is what keeps the low end continuous while the mid-bass
+ * breathes.
+ */
+export const ORBIT_SUB = 5;
 
 /* ===========================================================================
  * THE ROOM IS A PROPERTY OF THE ORBIT, NOT OF THE LANE.
@@ -77,6 +89,10 @@ export const ORBIT_ROOM: Readonly<Record<number, number>> = {
   [ORBIT_LOW]: 2,
   [ORBIT_HARMONY]: 6,
   [ORBIT_AIR]: 8,
+  // The sub is dry and sets no room; the entry exists so the table stays a
+  // total map over the orbits and reverbchurn's one-shape rule has a value to
+  // compare if a send is ever added.
+  [ORBIT_SUB]: 2,
 };
 
 /**
@@ -114,14 +130,16 @@ export function kick(rhythm: Patternable, weight = 0.5): Pattern {
        * signature in the genre and the reason a dubstep low end is huge without
        * being muddy: the kick and the bass stop competing for 125 Hz IN TIME
        * rather than in frequency, and 125 Hz was measured at 45% of this mix.
-       * `duckdepth` is a linear gain of `1 - sqrt(depth)`: 0.25 is -6 dB, a
-       * compromise between the sub's 1-2 dB and the growl's 8-12 because both
-       * live on ORBIT_LOW today. The right version gives the sub its own orbit.
+       * `duckdepth` is a linear gain of `1 - sqrt(depth)`: 0.45 is -9.7 dB,
+       * inside the genre's 8-12 dB for the mid-bass. The first version was
+       * 0.25 (-6 dB) as a compromise while the sub shared this orbit; the sub
+       * is on ORBIT_SUB now and is not ducked at all, so the growl and the
+       * mid-bass get the real depth and the sub stays continuous underneath.
        */
       .duckorbit(ORBIT_LOW)
       .duckonset(0.004)
       .duckattack(0.17)
-      .duckdepth(0.25),
+      .duckdepth(0.45),
     /*
      * THE CLICK. The body is a sine at g1 (49 Hz), which a laptop speaker does
      * not reproduce at all — the mix measured 0.5% of its energy at 4 kHz. The
@@ -465,7 +483,7 @@ export function sub(notes: Patternable, level = 0.7, bpm = 135): Pattern {
    * is twenty milliseconds, which is why `pedal`'s onset floor is a physical
    * constraint rather than a taste.
    */
-  return articulate(note(notes).s('sine').gain(level).orbit(ORBIT_LOW), 'pedal', {
+  return articulate(note(notes).s('sine').gain(level).orbit(ORBIT_SUB), 'pedal', {
     slots: 8,
     bpm,
     shade: 0.5,

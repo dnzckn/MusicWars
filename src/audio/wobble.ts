@@ -323,6 +323,36 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
       .lpskew(o.shape.skew)
       .lpdc(o.shape.rest ?? -0.5)
       /*
+       * A REAL WOBBLE MOVES IN MORE THAN ONE DIMENSION. This one moved only in
+       * filter. superdough has a tempo-synced amplitude LFO phase-locked to the
+       * cycle, in the SAME units as `lpsync`, and nothing used it —
+       * `docs/research-dubstep.md` R7.
+       *
+       * Same rate as the filter LFO, half a wobble OUT OF PHASE with it: the
+       * amplitude punches at the moment the filter is closing, so the ear
+       * hears two events per LFO cycle from one rate. That is "munchy" with
+       * no extra speed, and it is why this reinforces the wobble rather than
+       * competing with it — the argument elsewhere in this file that an
+       * amplitude envelope must not fight the LFO for the rhythm is right, and
+       * this is its one exception, because the tremolo runs at the LFO's own
+       * rate.
+       *
+       * ONLY ON THE DROP'S ANSWERING BARS, which `wubFor` marks with
+       * `rest: -1` alongside the doubled rate: the bars that already change
+       * contour are the bars that get the bite. Elsewhere the depth is 0 and
+       * the control is inert.
+       *
+       * TRAP: `tremolodepth` is squared by this project's gain curve
+       * (engine.ts setGainCurve(x => x*x)), so 0.71 written is 0.5 effective.
+       * 0.6 here is ~0.36 effective, the research's recommended -4 dB of
+       * chew. Nothing warns.
+       */
+      .tremolosync(o.shape.rate)
+      .tremolophase(0.5 / o.shape.rate)
+      .tremoloshape(WUB_SAW)
+      .tremoloskew(0.3)
+      .tremolodepth(o.shape.rest === -1 ? 0.6 : 0)
+      /*
        * (An earlier note here said this must never be near zero because the
        * waveshaper collapsed to silence at 0. Measured false for superdough
        * 1.3.0 — `docs/research-dubstep.md` §0.1 — and the crunch is a signal
