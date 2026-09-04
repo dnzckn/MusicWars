@@ -1614,3 +1614,19 @@ starters; the run's shape; RASP / SORDINO / INTERLUDE; four fonts off, 1.4 s
 warp arm) and the screenshot retaken on this tree: wave 6, act 2, warp
 latched, 187 alive, the run bar showing the first boss beaten.
 
+### The pivot voicing, owed back to the stab
+
+`tools/arc.mjs` ARRIVAL went red the day the pad was deleted, and a HEAD
+checkout served on a spare port proved it was the deletion: 12/12 modulations
+announced with the pad (`chords` carrying 11), 10/12 without it (`chords`
+carrying 0). An instrumented run named the two: both were pivot bars inside
+a BREAKDOWN, where the chords lane rested, the bass at zero, and the motor
+spelling neither the dominant's root nor the leading tone. The pad's pivot
+voicing — root and major third, "here, and only here" — moves onto the stab:
+`stabGuideTones` spells root + leading tone on a pivot chord instead of the
+guide tones, and `buildChords` lets the stab play a pivot bar inside a
+breakdown, two hits on the one bar that pulls. Measured after: 12/12
+announced, `chords` 11, `harmony` green (no supersaw, no sustain, the seventh
+still stated in all 88 non-pivot bars). CEILING and REPRISE are red before
+and after, identically, and are left alone.
+

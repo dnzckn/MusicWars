@@ -3528,9 +3528,22 @@ const COMP_SLOTS: Record<Feel, number> = {
  * motor are not holding. When `Extension` has replaced the third with the
  * ninth, the ninth is what comes out — which is the point of folding
  * `chord.notes` rather than the iReal spelling: a SYMBOL cannot say which
- * extension the act has unlocked. On a pivot chord the guide tones are the
- * incoming key's leading tone and the flat seventh, so the modulation is
- * announced by this lane without it reading `chord.pivot`.
+ * extension the act has unlocked.
+ *
+ * ON A PIVOT BAR IT IS THE DOMINANT'S ROOT AND ITS LEADING TONE, NOT THE
+ * GUIDE TONES — and this lane DOES read `chord.pivot`, which the first
+ * version of this comment said it did not need to. The pad used to keep root
+ * and third on exactly this bar ("the pad kept its third here, and only
+ * here", `Chord.pivot`), and `tools/arc.mjs` ARRIVAL counts a modulation as
+ * announced only when the bar before it spells BOTH the incoming dominant's
+ * root and the new key's leading tone across the harmony lanes. Measured the
+ * day the pad was deleted: 12/12 announced with the pad (`chords` carrying 11),
+ * 10/12 without it (`chords` carrying 0) — the guide tones alone gave the
+ * leading tone and the flat seventh, and the two bars where neither the bass
+ * nor the motor happened to supply the root went unannounced. Root plus
+ * leading tone is the pad's pivot voicing moved onto the lane that still
+ * exists; it is two hits, not a held note, so it announces the modulation
+ * without becoming the thing that was removed.
  *
  * EXPORTED, because `director.sourceLines` prints it. That mirror has drifted
  * from the builders five times; the sixth was its `chord:` line printing
@@ -3539,6 +3552,10 @@ const COMP_SLOTS: Record<Feel, number> = {
  * panel, so there is no copy to fall out of date.
  */
 export function stabGuideTones(chord: Chord): number[] {
+  if (chord.pivot) {
+    // The incoming dominant's root and the new key's leading tone (root + 4).
+    return foldInto([chord.root, chord.root + 4], LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
+  }
   const rootPc = ((chord.root % 12) + 12) % 12;
   const ivOf = (n: number): number => ((((n % 12) - rootPc) % 12) + 12) % 12;
   const folded = foldInto(chord.notes, LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
@@ -3677,7 +3694,15 @@ export function buildChords(m: MusicalState): Pattern {
    * The sub is the breakdown's floor (`STEM_CURVES.sub.in` is 0, so it was
    * always sounding there); the director zeroes kick, clap and bass.
    */
-  if (m.section === 'breakdown') return silence;
+  /*
+   * ...EXCEPT ON A PIVOT BAR. The modulation still has to be announced when
+   * the phrase before it is a breakdown, and with the bass at zero and the pad
+   * gone nothing else in the harmony lanes was guaranteed to spell the
+   * dominant there — `tools/arc.mjs` ARRIVAL read 10/12 the day the pad went.
+   * Two stab hits on the one bar that pulls; every other breakdown bar stays
+   * silent for this lane.
+   */
+  if (m.section === 'breakdown' && !m.chord.pivot) return silence;
 
   /* ==========================================================================
    * THE STAB — the lane's only voice: one voice, five rhythms.
