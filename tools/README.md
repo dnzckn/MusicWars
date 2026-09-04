@@ -178,6 +178,19 @@ doing, but it is worth doing carefully and with somewhere to fall back to.
   the player being unable to attack — a late boss arrives with more on screen to
   dodge — which means scaling HP with difficulty compounds a penalty the game
   already applies. Now 64s and 98s, both still playing all three phases.
+- `runmap` — drives a headless `World` through whole runs and asserts the run
+  bar's STRINGS against the world's public getters: line 1 is the number
+  `#ui-wave` shows with `OF 16` behind it, line 2 agrees with `wavesToBoss` and
+  `bossActive`, gold diamonds equal `bossesBeaten`, the boss-down and telegraph
+  banners fire `BOSS_COUNT - 1` and `BOSS_COUNT` times per winning run, no
+  update announces twice, and a RETRIED run's first frame reads wave 1 of the
+  new run. Exists because the bar's readings were arithmetic inside the
+  renderer where no node check could reach them, and the photo pass that
+  preceded `src/game/runmap.ts` found the corner counter and the bar saying
+  WAVE for different numbers, `1 OF 3` under four pips, and a retried run
+  showing the previous run's last wave for two bars. Every assertion was seen
+  red once; the breaks are logged in the tool's header. 240,584 sampled frames
+  over two winning runs on the tree that introduced it.
 - `bossshots` — screenshots through a fight. Confirms the visual side reads:
   phase-marked HP bar, ~14 bullets on screen, grid warped to the groove's hue.
 
@@ -1839,6 +1852,17 @@ Two of its own bugs, both worth keeping because both are general:
   `undefined`, reaches `translate()` as NaN, and looks exactly like a defect in
   the code under test. `drawPlayer` reads eleven fields and they all have to be
   there.
+
+It now also asserts THE RUN BAR IS DRAWN: the stub world carries the fields the
+bar reads (`waveIndex`, `stagePhase`, `snapshot.waveProgress`,
+`snapshot.bossActive`, `bossesBeaten`, `bossesLeft`, `onFinalWave`, `victory`),
+the recorder keeps `fillText` strings, and the check counts the bar's own inks
+in its track and the strings `WAVE 6 OF 16` / `BOSS IN 2` / the four diamond
+labels — because before those fields existed the bar was silently skipped in
+the stub and this tool was green, the vacuous pass its own header warns about.
+A stub missing a field must still draw the frame without the bar and without
+a NaN; the recorder caught `fillText "WAVE NaN OF 16"` when the guard was
+disabled, which is the failure the guard exists for.
 
 ## `strobe` (`node tools/strobe.mjs`) — the A/B is in one session
 

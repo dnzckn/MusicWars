@@ -212,12 +212,16 @@ const r = await p.evaluate(async () => {
       bars.forEach((cell, bar) => {
         const chord = chordAt(bar);
         /*
-         * The 7th and the 9th count as part of the chord here, because the pad
-         * plays them — `Chord.colour` is the same two notes, faded rather than
-         * withheld. Without that, a melody note sitting on the chord's own
-         * major 7th reads as a semitone clash needing resolution, and every
-         * single "unresolved dissonance" in the two consonant modes turned out
-         * to be exactly that: a colour tone the harmony was already sounding.
+         * The 7th and the 9th count as part of the chord here. They used to be
+         * sounded by the chords lane's colour pair — `Chord.colour` was the
+         * same two notes, faded rather than withheld — and a melody note on
+         * the chord's own major 7th read as a semitone clash needing
+         * resolution, so every "unresolved dissonance" in the two consonant
+         * modes turned out to be a colour tone the harmony was already
+         * sounding. The colour pair is deleted now; `Chord.colour` survives
+         * for `voiceLead` and the arp's window placement, and the extensions
+         * still count as chord tones here because they are members of the
+         * seventh chord the stab and the bass spell.
          */
         const tones = [...chord.notes, ...chord.colour].map((n) => (((n - 57) % 12) + 12) % 12);
         // A clash is measured against the TRIAD only. The colour tones are a
@@ -447,7 +451,10 @@ console.log('\nHARMONIC RHYTHM');
 console.table(r.harmony);
 console.log('\nTHE TUNE AGAINST THE CHORD  (on-beat notes: how many are chord tones, and whether the harsh ones resolve)');
 console.table(r.vertical);
-console.log('\nTHE PAD, AS PARTS  (one phrase, after the voicing has settled over twelve)');
+// The voice-leading window (`LANE_RANGE.pad`, theory.ts) — no lane sustains it
+// any more; `voiceLead` still leads through it and the stab and arp read the
+// result, so the writing is still asserted.
+console.log('\nTHE VOICE-LEADING WINDOW, AS PARTS  (one phrase, after the voicing has settled over twelve)');
 console.table(r.voicing);
 console.log('\nCADENTIAL SUSPENSIONS  (bar 7\'s last note struck again on bar 8\'s downbeat, and resolved)');
 console.table(r.suspensions);
@@ -490,10 +497,10 @@ for (const v of r.vertical) {
   if (v.chordTonePct > 85) fails.push(`${v.mode}: ${v.chordTonePct}% of on-beat notes are chord tones — that is an arpeggio`);
 }
 for (const v of r.voicing) {
-  if (v.parallels) fails.push(`${v.mode}: ${v.parallels} parallel fifth(s)/octave(s) in the pad`);
-  if (v.crossings) fails.push(`${v.mode}: ${v.crossings} voice crossing(s) in the pad`);
-  if (v.similarLeap) fails.push(`${v.mode}: the pad leaps ${v.similarLeap} time(s) in the same direction as the tune`);
-  if (Number(v.register.split('-')[1]) > 74) fails.push(`${v.mode}: the pad has floated up to ${v.register} — it belongs under the tune`);
+  if (v.parallels) fails.push(`${v.mode}: ${v.parallels} parallel fifth(s)/octave(s) in the voice-leading window`);
+  if (v.crossings) fails.push(`${v.mode}: ${v.crossings} voice crossing(s) in the voice-leading window`);
+  if (v.similarLeap) fails.push(`${v.mode}: the voice-leading window's top voice leaps ${v.similarLeap} time(s) in the same direction as the tune`);
+  if (Number(v.register.split('-')[1]) > 74) fails.push(`${v.mode}: the voice-leading window has floated up to ${v.register} — it belongs under the tune`);
 }
 const withSuspension = r.suspensions.filter((x) => x.suspension).length;
 if (withSuspension < 3) fails.push(`only ${withSuspension} theme(s) cadence with a prepared suspension`);

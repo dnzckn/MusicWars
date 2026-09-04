@@ -139,10 +139,11 @@ import type { Pattern } from '@strudel/core';
  * A voice that can be a real instrument.
  *
  * These are ROLES, not stems: `leadTune`, `leadDecor` and the octave-down body
- * are three layers of one stem and want different things, and `pad`, `colour`
- * and `stab` are three instruments inside `chords`.
+ * are three layers of one stem and want different things. `pad`, `colour` and
+ * `stab` were three instruments inside `chords`; the first two are deleted
+ * (see the tombstone row in `INSTRUMENTS`) and the stab is the lane.
  */
-export type VoiceRole = 'bass' | 'pad' | 'colour' | 'stab' | 'motor' | 'leadTune' | 'leadDecor';
+export type VoiceRole = 'bass' | 'stab' | 'motor' | 'leadTune' | 'leadDecor';
 
 /** The oscillator a role falls back to. These are the score as it shipped. */
 export interface OscVoice {
@@ -189,9 +190,10 @@ export interface Instrument {
  * THE CHOICES, ONE LANE AT A TIME
  * ---------------------------------------------------------------------------
  *
- * READ `SAMPLED_ROLES` FIRST. Six of the seven entries below are currently
+ * READ `SAMPLED_ROLES` FIRST. Four of the five entries below are currently
  * SWITCHED OFF and their lanes emit the oscillator in the `osc` field; only the
- * bass plays its instrument. The reasoning for each choice is kept in full
+ * bass plays its instrument. (There were seven; `pad` and `colour` are gone —
+ * the tombstone between `bass` and `stab` says why.) The reasoning for each choice is kept in full
  * because it is what a re-enable would be argued from, but nothing below should
  * be read as a description of what the game sounds like today.
  *
@@ -210,8 +212,10 @@ export interface Instrument {
  *   also a fifth of the size. The default was the wrong choice on both axes.
  *
  *   LOOPING, but only where the lane sustains. `gm_choir_aahs` n=1 is smaller
- *   and loops one zone of three; on the colour lane, which holds whole notes,
- *   two thirds of the chord would decay to nothing mid-bar.
+ *   and loops one zone of three; on the colour lane, which held whole notes,
+ *   two thirds of the chord would have decayed to nothing mid-bar. (No lane in
+ *   the table sustains any more; the criterion is kept for the next one that
+ *   does.)
  */
 export const INSTRUMENTS: Record<VoiceRole, Instrument> = {
   /*
@@ -242,54 +246,38 @@ export const INSTRUMENTS: Record<VoiceRole, Instrument> = {
   },
 
   /*
-   * THE BED — MIDI 46-58, 116-233 Hz, a sustained dyad under everything.
+   * ---------------------------------------------------------------------------
+   * TWO ROWS ARE GONE FROM THIS TABLE: `pad` AND `colour`.
+   * ---------------------------------------------------------------------------
    *
-   * A three-voice supersaw at 14 cents is a trance pad, which is a genre this
-   * score has been asked five times to stop being. The corpus reaches for
-   * `gm_synth_strings_1` for the same job in 4 songs. At 116-233 Hz a string
-   * section is violas and cellos, which is where a bed belongs.
+   *   pad     gm_synth_strings_1  n=0  0500_Aspirin_sf2_file  24861 B  5 zones
+   *           warm [40, 64]   osc supersaw u3
+   *           "a sustained bed at 116-233 Hz is a low string section; 4
+   *           corpus songs"
+   *   colour  gm_choir_aahs       n=0  0520_Aspirin_sf2_file  71913 B  5 zones
+   *           warm [72, 96]   osc supersaw u2
+   *           "held chord extensions in soprano register; the harshest lane on
+   *           the old roster"
    *
-   * The name says "synth strings" and that is deliberate rather than a
-   * compromise: it is a sampled string ENSEMBLE, so it arrives with the slow
-   * swell and the internal beating that `.detune(0.14).spread(0.7)` and three
-   * separate vibrato rates were all approximations of. Those controls are
-   * supersaw-only (`AGENTS.md` §4) and are dropped when the font is playing —
-   * they would be inert, and `session` counts inert controls.
+   * Both were SWITCHED OFF (`SAMPLED_ROLES` is the bass alone), so what their
+   * lanes played was the `osc` column: a three-voice supersaw bed and a
+   * two-voice supersaw pair. This file's own note on the bed — "a three-voice
+   * supersaw at 14 cents is a trance pad, which is a genre this score has been
+   * asked five times to stop being" — and its note on the pair — "the FIRST
+   * SUSPECT if the score sounds harsh" — were both right, and the answer was
+   * not the sampled instrument either row proposed. The owner: "also the synth
+   * sound is really bad i hate it remove that and clean up the music", after
+   * two capping commits (`2524fcb`, `6e6bdc4`) had lowered filters and levels
+   * without answering it. Both VOICES are deleted from `buildChords` (the
+   * tombstone there carries the measurements); the roles go with them, because
+   * a role no lane calls is a fetch nobody hears and a `fontlanes` row that
+   * measures nothing. `VOICE_ROLES`, `TABLE_WIRE_BYTES` and every tool that
+   * derives its count from this table moved 7 -> 5 with it.
+   *
+   * If a sustained bed is ever wanted again, these two rows are what to argue
+   * from — and `MASTER_PLAN` S-d's never-built remedy (an FM or additive bed
+   * with no detune) is the one this file never got to try.
    */
-  pad: {
-    font: 'gm_synth_strings_1',
-    n: 0,
-    variant: '0500_Aspirin_sf2_file',
-    wireBytes: 24861,
-    zones: 5,
-    warm: [40, 64],
-    osc: { s: 'supersaw', unison: 3 },
-    why: 'a sustained bed at 116-233 Hz is a low string section; 4 corpus songs',
-  },
-
-  /*
-   * THE UPPER STRUCTURE — MIDI 78-90, 740-1480 Hz, the 7th and the 9th held.
-   *
-   * `e8d61bd` names this lane as the FIRST SUSPECT if the score sounds harsh:
-   * it became a two-voice supersaw behind an unchanged 2600-6500 Hz lowpass,
-   * "+5-8 dB of upper-partial energy above the tune", and the commit says so in
-   * as many words while admitting nothing was heard. A choir is the opposite
-   * object — the corpus's other pad choice (6 songs), and at 740-1480 Hz it is
-   * a soprano section, singing the two notes that colour the chord.
-   *
-   * It is also the one lane where the SUSTAIN is the whole function, which is
-   * why n=0 and not the smaller n=1: five looped zones against one of three.
-   */
-  colour: {
-    font: 'gm_choir_aahs',
-    n: 0,
-    variant: '0520_Aspirin_sf2_file',
-    wireBytes: 71913,
-    zones: 5,
-    warm: [72, 96],
-    osc: { s: 'supersaw', unison: 2 },
-    why: 'held chord extensions in soprano register; the harshest lane on the old roster',
-  },
 
   /*
    * THE COMPING STAB — MIDI 68-80, 415-830 Hz, sixteenths on a grid.
@@ -491,13 +479,15 @@ export const VOICE_ROLES = Object.keys(INSTRUMENTS) as VoiceRole[];
  * The loader, the fallback, the state machine and the per-lane table are all
  * kept intact — none of that was wrong, and re-enabling a lane is one entry in
  * this set. What was wrong was believing that "not an oscillator" was the goal.
- * The goal is that it suits THIS game, and for six of these seven lanes a
- * well-made synth voice does and a sampled acoustic one does not.
+ * The goal is that it suits THIS game, and for four of these five lanes a
+ * well-made synth voice does and a sampled acoustic one does not. (Two more
+ * lanes — the pad and the colour pair — were in this table when that sentence
+ * was written; they are deleted outright, see above.)
  *
  * EXPORTED, and read by `tools/fontlanes.mjs` and by the loader below, because
  * three things have to agree about it and a second copy would be the failure
  * `AGENTS.md` §3 names. In particular the loader must NOT fetch a font no lane
- * plays: with only the bass enabled, warming all seven roles would spend 333 KB
+ * plays: with only the bass enabled, warming every role in the table would have spent 333 KB (seven roles then)
  * and three quarters of a second of the player's connection on instruments that
  * are never scheduled.
  */

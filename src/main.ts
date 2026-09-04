@@ -70,6 +70,7 @@ import { instrumentDef, labelOf } from './game/weapons';
 import { Renderer } from './render/renderer';
 import { World } from './game/world';
 import { setView, stageBox, viewForStage } from './game/field';
+import { TOTAL_WAVES } from './game/waves';
 
 const playfield = document.getElementById('playfield') as HTMLCanvasElement;
 const overlay = document.getElementById('overlay') as HTMLCanvasElement;
@@ -84,6 +85,7 @@ const finalBest = document.getElementById('final-best')!;
 const pauseStats = {
   score: document.getElementById('pause-score')!,
   wave: document.getElementById('pause-wave')!,
+  run: document.getElementById('pause-run')!,
   mult: document.getElementById('pause-mult')!,
   notes: document.getElementById('pause-notes')!,
   music: document.getElementById('pause-music')!,
@@ -629,6 +631,17 @@ world.bus.on('run:over', (e) => {
   const won = e.outcome === 'won';
   gameoverScreen.classList.toggle('won', won);
   document.getElementById('final-title')!.textContent = won ? 'SET COMPLETE' : 'RUN OVER';
+  /*
+   * On a LOSS, how much of the run's shape was covered: `· 1 of 4 bosses
+   * down` after the wave number. Its own node beside a bare `#final-wave`
+   * (`tools/_finaleshots.mjs` reads that one as a number), and empty on a
+   * win, where the outcome line above the score already says ALL 4 BOSSES
+   * DOWN — the three channels of 969aa46 (words, an extra line, colour) stay
+   * as they were.
+   */
+  document.getElementById('final-bosses')!.textContent = won
+    ? ''
+    : ` · ${world.snapshot.bossesBeaten} of ${world.snapshot.acts} bosses down`;
   const outcome = document.getElementById('final-outcome')!;
   outcome.replaceChildren();
   if (won) {
@@ -1332,6 +1345,17 @@ window.addEventListener('keydown', (e) => {
       const readout = director.readout(world.transport);
       pauseStats.score.textContent = snap.score.toLocaleString('en-US');
       pauseStats.wave.textContent = String(snap.wave + 1);
+      /*
+       * Where the run is, in the run's own units. The screen carried WAVE 2
+       * with no denominator, no act and no boss count — the one screen a
+       * player reads at leisure said nothing about the run's shape. Every
+       * number is the snapshot's: `act`/`acts`/`bossesBeaten` are published
+       * exactly so no screen hard-codes four.
+       */
+      const down = snap.bossesBeaten;
+      pauseStats.run.textContent =
+        `ACT ${snap.act} OF ${snap.acts} · WAVE ${snap.wave + 1} OF ${TOTAL_WAVES} · ` +
+        `${down} ${down === 1 ? 'BOSS' : 'BOSSES'} DOWN`;
       pauseStats.mult.textContent = `x${1 + snap.combo}`;
       /*
        * The run's TOTAL, not the shards lying on the floor right now.

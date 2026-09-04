@@ -16,6 +16,16 @@
 
 import { clamp01, lerp, TAU } from '../core/math';
 import { BOSS_EVERY } from '../game/waves';
+import {
+  FINAL_R,
+  MINI_R,
+  RUN_BAR,
+  runMap,
+  runMapInputOk,
+  type DiamondState,
+  type RunMap,
+  type RunMapInput,
+} from '../game/runmap';
 import type { Transport } from '../core/transport';
 import type { Effect, World } from '../game/world';
 import { beatsUntilLunge } from '../game/enemies';
@@ -218,6 +228,18 @@ export class Renderer {
   private readonly overlayEl: HTMLCanvasElement;
 
   private scale = 1;
+
+  /**
+   * CSS px per view px: `stage height / viewH`, written by `fitCanvases`.
+   *
+   * The view is zoomed — `viewForStage` keeps √(w·h) in [1004, 1240] — so a
+   * `13px` canvas font is 13 CSS px only at about 1440x900, and 6.7 CSS px
+   * on a 375x812 phone. The readouts that are text (the run bar, the boss
+   * HP label) divide by this so their type is a size in CSS px, the unit a
+   * person reads in. 1 until the first layout, which is also what
+   * `tools/effectsdraw.mjs` gets: its stub canvas is exactly the view.
+   */
+  private cssPerView = 1;
 
   private resized = true;
 
@@ -493,6 +515,7 @@ export class Renderer {
     const cssW = this.canvasEl.clientWidth;
     if (cssH <= 0 || cssW <= 0) return;
     this.resized = false;
+    this.cssPerView = Math.max(0.05, cssH / w.viewH);
     const dpr = Math.min(3, Math.max(1, devicePixelRatio || 1));
     /*
      * BOTH AXES, taking the smaller ratio.
@@ -2134,7 +2157,7 @@ export class Renderer {
     const hue =
       w.bannerKind === 'boss' || w.bannerKind === 'phase'
         ? 350
-        : w.bannerKind === 'grade'
+        : w.bannerKind === 'grade' || w.bannerKind === 'act'
           ? 45
           : (w.bannerKind as string) === 'fusion'
             ? 45
@@ -2167,7 +2190,8 @@ export class Renderer {
   }
 
   /**
-   * Boss bar, XP, damage flash, the vignette, and the level-up screen.
+   * Boss HP bar, banner, damage flash, the vignette, the warp rim, the
+   * throttle, the run bar, and the level-up screen.
    *
    * All of it is SCREEN space. The overlay context never receives the camera
    * translate, so every rectangle here is measured against the VIEW — and the
@@ -2310,7 +2334,40 @@ export class Renderer {
   }
 
   /**
-   * How far to the next boss, as a vertical bar up the left edge.
+   * The world's public getters in the shape `runMap` takes, or null when one
+   * is missing.
+   *
+   * GUARDED THE SAME WAY `vy` AND `tension` ARE AT THE TOP OF `render`, and
+   * for the same reason, which `tools/effectsdraw.mjs` demonstrated rather
+   * than predicted: that harness builds its own world shape, and a field it
+   * does not know about arrives as `undefined`, which is NaN two
+   * multiplications later and `hsl(352, NaN%, NaN%)` after that — and a NaN
+   * in a colour string throws inside the parser AFTER the background has been
+   * cleared, a black frame with no error. It caught the old bar on its first
+   * run, drawing 128 NaNs. The readouts below do not draw rather than drawing
+   * wrong: a readout with nothing behind it should be absent, not zero.
+   *
+   * `onBossWave` is left `undefined` when `wavesToBoss` is not a number, so
+   * the guard sees the missing field instead of `undefined === 0`.
+   */
+  private runMapNow(): RunMap | null {
+    const w = this.world;
+    const left = w.wavesToBoss;
+    const input: Partial<RunMapInput> = {
+      waveIndex: w.waveIndex,
+      stagePhase: w.stagePhase,
+      waveProgress: w.snapshot.waveProgress,
+      bossesBeaten: w.bossesBeaten,
+      bossActive: w.snapshot.bossActive,
+      onBossWave: Number.isFinite(left) ? left === 0 : undefined,
+      onFinalWave: w.onFinalWave,
+      victory: w.victory,
+    };
+    return runMapInputOk(input) ? runMap(input) : null;
+  }
+
+  /**
+   * The run bar: where the run IS, up the left edge.
    *
    * THE UNIT IS WAVES AND THAT IS THE FINDING, not a shortcut. The owner asked
    * for "how far away until the next boss", and on a treadmill the obvious
@@ -2318,210 +2375,274 @@ export class Renderer {
    * ship travels at `CRUISE_SPEED` for ever, the world is carried with it, and
    * nothing in the boss schedule reads a coordinate. A metre counter would tick
    * up smoothly and correlate with nothing the player can change. What summons
-   * a boss is `planWave`'s `index % BOSS_EVERY === 3`, so the honest answer is
-   * three waves, or two, or one — and `World.bossProgress` says so.
+   * a boss is `planWave`'s `index % BOSS_EVERY === BOSS_EVERY - 1`, so the
+   * honest answer is a count of waves — and the run has an end now, so the
+   * same count runs on past the boss to the finale.
    *
-   * SO IT IS SEGMENTED, one segment per wave, rather than a smooth tube. The
-   * segment boundaries ARE the information: a player glancing at it should read
-   * "one more wave", not "about three quarters". Inside a segment it advances
-   * with that wave's own spawn schedule, which is monotone by construction.
+   * WHAT IT SAYS, bottom to top: one segment per wave of the run, in
+   * `BOSS_COUNT` groups of `BOSS_EVERY`, each group's last segment being its
+   * boss wave; a diamond in the gap above each group for that group's boss, a
+   * larger one at the top for the finale, each labelled `1`, `2`, `3`, `FINAL`
+   * to its right; and under the track two lines — `WAVE 6 OF 16` and `BOSS IN
+   * 2`. The segment boundaries ARE the information: a player glancing at it
+   * should read "one more wave", not "about three quarters". Inside a segment
+   * the fill advances with that wave's own spawn schedule, which is monotone
+   * by construction, and the last tenth is reserved for the clear.
+   *
+   * EVERY STRING AND STATE COMES FROM `runMap()` in `src/game/runmap.ts`, and
+   * this method draws — it does not decide. The first version decided here,
+   * where no node check could reach it without loading the sprite atlas, and
+   * the photo pass that preceded this file found the corner counter and the
+   * bar both saying WAVE for different numbers, a `1 OF 3` under four pips,
+   * and a retried run whose bar read BOSS for two bars because `plan` was
+   * never reset. `tools/runmap.mjs` now drives the same function through whole
+   * headless runs and asserts the strings; `tools/effectsdraw.mjs` asserts
+   * that this method actually puts them on the canvas.
+   *
+   * UNITS, and this was the review's first objection. Segment heights are VIEW
+   * px: they scale with the bar. Everything else here — text, strokes, the
+   * track's width, the diamonds and the gaps that hold them — is sized in CSS
+   * px through `cssPerView`, because the view is zoomed (`viewForStage` keeps
+   * √(w·h) in [1004, 1240]) and CSS px per view px measured 1.000 at 1440x900,
+   * 0.770 at 900x700, 0.797 at 1280x600 and 0.519 on a 375x812 phone: the old
+   * `13px` numeral was 6.7 CSS px on the phone. Text has a 9 CSS px floor. The
+   * diamonds are CSS-sized because they are glyphs the player reads as a state
+   * (hollow, lit, filled, gold — colour alone is not a state a colourblind
+   * player can read, `tools/colourblind.mjs`), and a glyph that shrinks with
+   * the zoom is a glyph that vanishes on the phone. `RUN_BAR.headroom` and
+   * `stackHeight` are CSS px for the same reason, and `tools/_warpshots.mjs`
+   * measures clearance in CSS px against the DOM.
+   *
+   * COLOUR. Past segments are the boss's own red at low saturation, the
+   * current one at full; future ones are hollow. One hue throughout: the first
+   * bar ramped steel to red, which passes through magenta at about 0.7, and
+   * magenta is WARP — photographed, `tools/_warpshots/b3`. The gold of a
+   * beaten diamond is the fusion banner's gold, and the FINAL diamond is the
+   * finale's violet, which the boss HP bar also wears.
    *
    * WHY THE LEFT EDGE. The throttle took the right edge because `.hud-tl` runs
-   * about 200px deep with a full band and eight slot tiles, which reaches the
-   * ship's station line at a 720-tall window. This bar is BELOW that: it starts
-   * at 0.42 of the view and ends at 0.86, so it clears the tiles above and the
-   * XP strip and resume line below, and it is the tallest thing on the screen
-   * that is not the field — which is what a progress bar should be when the
-   * thing it measures is the only long-term goal the game has.
+   * about 200 CSS px deep with a full band and eight slot tiles. This bar is
+   * below that: `RUN_BAR.top` to `RUN_BAR.bot` of the view, and the two-line
+   * stack under it clears the XP strip and the resume pill at 1280x600, the
+   * shortest window, where a lower bottom would not (`runmap.ts`, the geometry
+   * note). It is the tallest thing on the screen that is not the field, which
+   * is what a progress bar should be when the thing it measures is the only
+   * long-term goal the game has.
    *
    * DRAWN ON THE OVERLAY CANVAS rather than added to the DOM HUD. The three
    * corner groups are what `tools/panelshot.mjs` asserts do not collide, and a
    * fourth absolutely-positioned element down the left edge would be a fourth
    * thing to collide. The canvas is measured against the view and cannot push
    * anything.
+   *
+   * DRAWN DURING `idle` TOO. The TUNING UP runway is the best chance the game
+   * gets to teach the bar before anything is shooting at the player, and
+   * sixteen hollow segments under a FINAL diamond say "sixteen waves, four
+   * bosses" with no words. `World.start()` resets `plan`, so a retried run's
+   * idle frames describe the new run (`tools/runmap.mjs`, THE RETRY).
    */
-  private drawBossBar(g: CanvasRenderingContext2D): void {
+  private drawRunBar(g: CanvasRenderingContext2D, map: RunMap | null): void {
     const w = this.world;
-    if (w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
-    const x = 26;
-    const top = w.viewH * 0.42;
-    const bot = w.viewH * 0.86;
+    if (!map || w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
+    // View px per CSS px, and a font size in view px that is `px` CSS px on
+    // screen with the 9 CSS px floor.
+    const u = 1 / this.cssPerView;
+    const css = (px: number) => Math.max(9, px) * u;
+    const x = RUN_BAR.x;
+    const top = w.viewH * RUN_BAR.top;
+    const bot = w.viewH * RUN_BAR.bot;
     const H = bot - top;
     if (H < 60) return;
-    /*
-     * GUARDED THE SAME WAY `vy` AND `tension` ARE AT THE TOP OF `render`, and
-     * for the same reason, which `tools/effectsdraw.mjs` demonstrated rather
-     * than predicted: a non-finite fraction reaches `hsl(352, NaN%, NaN%)`,
-     * which throws inside the colour parser and kills the frame AFTER the
-     * background has been cleared — a black screen with no error. It caught
-     * this bar on its first run, drawing 128 NaNs, because that harness builds
-     * its own world shape and a field it does not know about is `undefined`.
-     * The bar simply does not draw rather than drawing wrong: it is a readout,
-     * and a readout with nothing behind it should be absent, not zero.
-     */
-    const frac = Number.isFinite(w.bossProgress) ? clamp01(w.bossProgress) : -1;
-    const left = w.wavesToBoss;
-    if (frac < 0 || !Number.isFinite(left)) return;
-    /*
-     * TWO STATES, NOT ONE, and the split was found by photographing it.
-     *
-     * `wavesToBoss === 0` is "this IS the boss wave" — the escort is on the
-     * field and BOSS INCOMING is on the banner. `snapshot.bossActive` is "the
-     * boss is here". The first version keyed both the label and the marker to
-     * the second, so through the whole four-bar telegraph the bar read
-     * `0 WAVES`, which is a countdown that has finished and not an event that
-     * has arrived. The label reads the wave and the diamond reads the boss.
-     */
-    const onBossWave = left === 0;
-    const onBoss = w.snapshot.bossActive === true;
+
+    const n = map.segments.length;
+    const per = BOSS_EVERY;
+    const groups = Math.ceil(n / per);
+    const gapBig = RUN_BAR.diamondGap * u;
+    // The FINAL diamond's slot, INSIDE the track at its top: nothing reaches
+    // above `top`, which is what keeps the widget clear of `.hud-tl` at the
+    // shortest window (see `RUN_BAR.headroom`).
+    const cap = RUN_BAR.finalSlot * u;
+    let gapSmall = RUN_BAR.segmentGap * u;
+    let seg = (H - cap - (groups - 1) * gapBig - (n - groups) * gapSmall) / n;
+    // Under `minSegment` view px the gaps go and each group is one solid
+    // piece — a 2 px gap in a 6 px segment is a texture, not a count.
+    if (seg < RUN_BAR.minSegment) {
+      gapSmall = 0;
+      seg = (H - cap - (groups - 1) * gapBig) / n;
+    }
+    // Bottom edge of segment `i`: below it are `i` segments, one big gap per
+    // completed group and one small gap per segment that is not the last of
+    // its group.
+    const bottomOf = (i: number): number => {
+      const g0 = Math.floor(i / per);
+      return bot - i * seg - g0 * gapBig - (i - g0) * gapSmall;
+    };
+    const t = w.snapshot.time;
+    const half = 3 * u;
 
     g.save();
-    // Track, in the same ink as the throttle's so the two read as one family.
+    // A dark backing so the hollow segments read against a bright room; the
+    // same ink as the throttle's track, so the two read as one family.
     g.fillStyle = 'rgba(6,8,15,0.82)';
-    g.fillRect(x - 4, top - 3, 8, H + 6);
-    g.strokeStyle = 'rgba(150,175,215,0.42)';
-    g.lineWidth = 1;
-    g.strokeRect(x - 3.5, top - 2.5, 7, H + 5);
+    g.fillRect(x - half - 2 * u, top - 2 * u, 2 * half + 4 * u, H + 4 * u);
 
-    /*
-     * Fill from the BOTTOM UP, because the boss is drawn at the top and a bar
-     * that grows toward its own target is the only arrangement that does not
-     * need a legend.
-     *
-     * ONE HUE, AND IT IS THE BOSS'S OWN. The first version ramped steel blue to
-     * red, which looked right in isolation and was wrong on the screen: the
-     * ramp passes through magenta at about 0.7, and magenta is WARP — so a bar
-     * three quarters of the way to a boss and the warp sleeve on the opposite
-     * edge came out the same colour, in the one mode where both are on at once.
-     * Photographed, not reasoned about; `tools/_warpshots/b3` is the frame that
-     * showed it.
-     *
-     * So the hue is 352 throughout, which is the boss HP bar's own red, and the
-     * fill is carried by SATURATION and LIGHTNESS instead. That also makes the
-     * one continuously-varying channel a brightness rather than a hue, which is
-     * the channel a colourblind player still has — and the discrete part of the
-     * reading (which band, how many waves) was never colour at all: it is the
-     * height, the ticks and the numeral.
-     */
-    const fh = H * frac;
-    g.fillStyle = `hsl(352, ${lerp(40, 95, frac)}%, ${lerp(44, 62, frac)}%)`;
-    g.fillRect(x - 3, bot - fh, 6, fh);
-
-    // One tick per wave in the cycle. These are the readout: three lines mean
-    // four waves, and which band the fill has reached is the answer.
-    g.strokeStyle = 'rgba(226,234,250,0.30)';
-    g.beginPath();
-    for (let i = 1; i < BOSS_EVERY; i++) {
-      const ty = Math.round(bot - (H * i) / BOSS_EVERY) + 0.5;
-      g.moveTo(x - 7, ty);
-      g.lineTo(x + 5, ty);
-    }
-    g.stroke();
-
-    /*
-     * The boss, as a diamond at the top of the climb. Hollow while it is still
-     * ahead, filled and breathing once it is on the field — the same two states
-     * the bar's own fill has, said again in a shape, because colour alone is
-     * not a state a colourblind player can read (`tools/colourblind.mjs`).
-     */
-    const my = top - 11;
-    /*
-     * THE FINALE IS A BIGGER DIAMOND, and the size is the reading.
-     *
-     * On the last cycle this widget is pointing at the end of the game rather
-     * than at the next set piece, and it has to say so with something other
-     * than the numeral underneath, which a player glancing at a bar in their
-     * peripheral vision does not read. Scale is the channel that survives being
-     * glanced at, it survives colourblindness, and it costs one multiplier.
-     */
-    const isFinalCycle = w.bossesLeft <= 1;
-    const dr = isFinalCycle ? 9 : 6;
-    g.beginPath();
-    g.moveTo(x, my - dr);
-    g.lineTo(x + dr * 0.83, my);
-    g.lineTo(x, my + dr);
-    g.lineTo(x - dr * 0.83, my);
-    g.closePath();
-    if (onBoss) {
-      g.fillStyle = `hsla(${isFinalCycle ? 275 : 352}, 95%, 62%, ${0.7 + Math.sin(w.snapshot.time * 4.2) * 0.28})`;
-      g.fill();
-    } else {
-      g.strokeStyle = isFinalCycle ? 'rgba(214,170,255,0.85)' : 'rgba(226,234,250,0.55)';
-      g.lineWidth = isFinalCycle ? 1.8 : 1.2;
-      g.stroke();
-    }
-
-    /*
-     * ACT PIPS — how far through the RUN, above the diamond.
-     *
-     * A SECOND UNIT ON ONE WIDGET, AND IT MUST NEST RATHER THAN COMPETE. The
-     * bar below is waves-within-a-cycle and its unit was a deliberate finding
-     * (commit 55a7e87: on a treadmill distance carries no information, so the
-     * honest answer to "how far to the boss" is a count of waves). The run now
-     * has an end, so there is a second honest question — how far to THAT — and
-     * the only unit it can be asked in is the same one zoomed out: cycles.
-     *
-     * So these are the same reading at the next scale up, stacked directly on
-     * the bar's own axis with the diamond between them. One filled pip per boss
-     * already beaten, one hollow per boss still owed, ordered bottom-to-top like
-     * the fill beneath it. Nothing here restates what the bar says: the bar
-     * cannot see past the current cycle and the pips cannot see inside it.
-     *
-     * DRAWN ONLY WHEN THE RUN IS SHORT ENOUGH TO COUNT AT A GLANCE. Above about
-     * eight the row stops being a count and becomes a texture, and a readout
-     * nobody can read is worse than an absent one — so past that it is skipped
-     * rather than shrunk, and the numeral under the bar still carries the
-     * answer.
-     */
-    const acts = w.snapshot.acts;
-    if (Number.isFinite(acts) && acts >= 2 && acts <= 8) {
-      const beaten = Math.max(0, Math.min(acts, w.bossesBeaten));
-      const gapY = 7;
-      const py0 = my - dr - 8;
-      for (let i = 0; i < acts; i++) {
-        const py = py0 - i * gapY;
-        g.beginPath();
-        g.arc(x, py, 2.1, 0, TAU);
-        if (i < beaten) {
-          g.fillStyle = 'rgba(255,215,60,0.92)';
-          g.fill();
-        } else {
-          g.strokeStyle = 'rgba(226,234,250,0.34)';
-          g.lineWidth = 1;
-          g.stroke();
-        }
+    for (let i = 0; i < n; i++) {
+      const f = clamp01(map.segments[i]);
+      const b = bottomOf(i);
+      const y0 = b - seg;
+      const bossWave = i % per === per - 1;
+      const inAct = Math.floor(i / per) + 1 === map.act;
+      const current = i === map.current;
+      // Hollow outline for every segment: a step brighter for the current
+      // act's group, and again for a boss wave, so the shape of the run reads
+      // before any of it is filled.
+      const a = 0.18 + (inAct ? 0.1 : 0) + (bossWave ? 0.1 : 0);
+      g.strokeStyle = `rgba(226,234,250,${a.toFixed(2)})`;
+      g.lineWidth = u;
+      g.strokeRect(x - half + 0.5 * u, y0 + 0.5 * u, 2 * half - u, seg - u);
+      if (f > 0) {
+        const fh = seg * f;
+        g.fillStyle = current ? 'hsl(352, 95%, 62%)' : 'hsl(352, 45%, 40%)';
+        g.fillRect(x - half, b - fh, 2 * half, fh);
+      }
+      if (current) {
+        // A faint breathing outline on the segment being fought, so the eye
+        // finds "now" without reading the number.
+        g.strokeStyle = `hsla(352, 95%, 72%, ${(0.35 + Math.sin(t * 3) * 0.2).toFixed(3)})`;
+        g.lineWidth = u;
+        g.strokeRect(x - half - 1.5 * u, y0 - 1.5 * u, 2 * half + 3 * u, seg + 3 * u);
+      }
+      // A brighter tick at each group boundary, just above the boss wave.
+      if (bossWave && i < n - 1) {
+        g.fillStyle = 'rgba(226,234,250,0.45)';
+        g.fillRect(x - half - 2 * u, y0 - 2 * u, 2 * half + 4 * u, u);
       }
     }
 
     /*
-     * How many waves are left, under the bar. A numeral rather than a word:
-     * the bar carries the shape of the answer and this carries its size, and at
-     * 10px in the corner of the eye a digit survives where a sentence does not.
+     * The diamonds: hollow steel while ahead, a brighter outline for the NEXT
+     * one, filled and breathing while that boss is on the field, gold once it
+     * is beaten. The FINAL one is larger — scale is the channel that survives
+     * being glanced at — and violet.
      */
-    g.font = '700 13px ui-monospace, monospace';
-    g.textAlign = 'center';
-    g.textBaseline = 'top';
-    // FINAL, not BOSS, on the last cycle — the one word that tells a player the
-    // game has an end without them having to count the pips.
-    const bossWord = isFinalCycle ? 'FINAL' : 'BOSS';
-    g.fillStyle = onBossWave
-      ? isFinalCycle
-        ? 'hsl(275, 95%, 78%)'
-        : 'hsl(352, 95%, 72%)'
-      : 'rgba(226,234,250,0.78)';
-    if (onBossWave) {
-      // FINAL is five characters at 13px against a 7px-wide track, so it needs
-      // its own smaller size or it runs into the playfield. Measured by looking
-      // at it, not computed.
-      if (isFinalCycle) g.font = '700 10px ui-monospace, monospace';
-      g.fillText(bossWord, x, bot + 8);
-    } else {
-      g.fillText(String(left), x, bot + 8);
+    const diamond = (cy: number, r: number, state: DiamondState, final: boolean, label: string): void => {
+      const hue = final ? 275 : 352;
+      const next = state === 'next' || state === 'active';
+      g.beginPath();
+      g.moveTo(x, cy - r);
+      g.lineTo(x + r * 0.83, cy);
+      g.lineTo(x, cy + r);
+      g.lineTo(x - r * 0.83, cy);
+      g.closePath();
+      if (state === 'beaten') {
+        g.fillStyle = 'rgba(255,215,60,0.92)';
+        g.fill();
+      } else if (state === 'active') {
+        g.fillStyle = `hsla(${hue}, 95%, 62%, ${(0.7 + Math.sin(t * 4.2) * 0.28).toFixed(3)})`;
+        g.fill();
+      } else {
+        g.strokeStyle = final
+          ? `rgba(214,170,255,${next ? 0.95 : 0.6})`
+          : `rgba(226,234,250,${next ? 0.95 : 0.5})`;
+        g.lineWidth = (final ? 1.8 : 1.2) * u;
+        g.stroke();
+      }
+      g.font = `${next ? 700 : 600} ${css(9).toFixed(1)}px ui-monospace, monospace`;
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      g.fillStyle =
+        state === 'beaten'
+          ? 'rgba(255,215,60,0.92)'
+          : next
+            ? final
+              ? 'hsl(275, 95%, 84%)'
+              : 'rgba(240,246,255,0.95)'
+            : 'rgba(190,205,235,0.5)';
+      g.fillText(label, x + r + 5 * u, cy);
+    };
+    for (let k = 0; k < map.diamonds.length; k++) {
+      const final = k === map.diamonds.length - 1;
+      const lastSeg = Math.min(n - 1, (k + 1) * per - 1);
+      const cy = final ? top + cap / 2 : bottomOf(lastSeg) - seg - gapBig / 2;
+      diamond(cy, (final ? FINAL_R : MINI_R) * u, map.diamonds[k], final, map.labels[k]);
     }
-    if (!onBossWave) {
-      g.font = '600 8px ui-monospace, monospace';
-      g.fillStyle = 'rgba(190,205,235,0.6)';
-      g.fillText(left === 1 ? 'WAVE' : 'WAVES', x, bot + 23);
+
+    /*
+     * The stack, LEFT-ALIGNED at the edge: centred on the track's x, `WAVE 16
+     * OF 16` and `THE FINAL SET` clipped off the left of the screen. Line 2
+     * keys on `bossActive` as well as the wave — see `runMap` for why that
+     * bends, without breaking, the old bar's "two states" finding.
+     */
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    g.font = `700 ${css(12).toFixed(1)}px ui-monospace, monospace`;
+    g.fillStyle = 'rgba(226,234,250,0.92)';
+    g.fillText(map.line1, 6 * u, bot + 8 * u);
+    g.font = `600 ${css(9).toFixed(1)}px ui-monospace, monospace`;
+    g.fillStyle =
+      map.line2Kind === 'final'
+        ? 'hsl(275, 95%, 78%)'
+        : map.line2Kind === 'boss'
+          ? 'hsl(352, 95%, 72%)'
+          : 'hsla(352, 80%, 72%, 0.85)';
+    g.fillText(map.line2, 6 * u, bot + 23 * u);
+    g.restore();
+  }
+
+  /**
+   * The boss HP bar, flush to the top edge.
+   *
+   * THE XP BAR'S OWN RULE — "thin, along an edge, not a widget"
+   * (`docs/progression.md`) — and the edge is chosen by what is NOT there. It
+   * used to sit at y 22 across the top middle, and the photo pass found it
+   * crossing the lives row: `.hud-tl` starts 12 CSS px down and the gear
+   * `.hud-tr` likewise, so the only DOM-free band is y 0–12, and the only
+   * DOM-free column at y 8–18 is the centre, which is where the label goes.
+   * The track is 6 CSS px, not 6 view px, so it stays a bar and not a hair on
+   * the phone; the ticks are the phase thresholds, drawn from the boss itself.
+   *
+   * DRAWN AFTER THE WARP RIM, which owns y 1–7: warp is only dropped on death,
+   * idle or the aft hold, so it persists into a boss fight, and a rim painted
+   * after a flush bar paints over it. The old bar was drawn first.
+   *
+   * THE FINALE'S BAR IS VIOLET AND THE MINIS' IS RED, and the four extra ticks
+   * are the other half of the tell. The minis ramp red to orange as the boss
+   * dies, which is the two mini variants' own hues (340 and 15) — and exactly
+   * why the final boss cannot use it: a player who has fought three of these
+   * reads that bar as "a boss", and the last fight in the game should not look
+   * like the three before it. Violet is not used anywhere else on this screen
+   * except the FINAL diamond, which is the point.
+   *
+   * THE HUE ARITHMETIC IS `(350 + 30·(1 − frac)) % 360`, NOT `lerp(350, 20,
+   * ·)`. The lerp read as red-to-orange and went the long way round: 350 →
+   * 267 (violet — the finale's own band) at three-quarter health, 185, 129,
+   * 20. Endpoint-preserving through 360 is the short way: 350, 357, 5, 12, 20.
+   */
+  private drawBossHp(g: CanvasRenderingContext2D, map: RunMap | null): void {
+    const w = this.world;
+    const boss = w.enemies.find((e) => e.archetype === 'conductor');
+    if (!boss) return;
+    const frac = clamp01(boss.hp / boss.maxHp);
+    if (!Number.isFinite(frac)) return;
+    const u = 1 / this.cssPerView;
+    const bh = 6 * u;
+    const fin = boss.bossFinal;
+    g.save();
+    g.fillStyle = 'rgba(10,12,22,0.75)';
+    g.fillRect(0, 0, w.viewW, bh);
+    g.fillStyle = fin
+      ? `hsl(${lerp(285, 258, 1 - frac)}, 92%, ${lerp(56, 66, 1 - frac)}%)`
+      : `hsl(${(350 + 30 * (1 - frac)) % 360}, 95%, 58%)`;
+    g.fillRect(0, 0, w.viewW * frac, bh);
+    // Phase ticks, so the player can see the drops coming.
+    g.fillStyle = 'rgba(255,255,255,0.6)';
+    for (const th of boss.phaseThresholds) g.fillRect(w.viewW * th, 0, u, 9 * u);
+    if (map) {
+      g.font = `700 ${(Math.max(9, 10) * u).toFixed(1)}px ui-monospace, monospace`;
+      g.textAlign = 'center';
+      g.textBaseline = 'top';
+      g.fillStyle = fin ? 'hsl(275, 95%, 84%)' : 'hsl(352, 95%, 80%)';
+      g.fillText(map.hpLabel, w.viewW / 2, 8 * u);
     }
     g.restore();
   }
@@ -2532,37 +2653,9 @@ export class Renderer {
     g.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     g.clearRect(0, 0, w.viewW, w.viewH);
 
-    const boss = w.enemies.find((e) => e.archetype === 'conductor');
-    if (boss) {
-      const frac = clamp01(boss.hp / boss.maxHp);
-      g.fillStyle = 'rgba(10,12,22,0.75)';
-      g.fillRect(40, 22, w.viewW - 80, 12);
-      /*
-       * THE FINALE'S BAR IS VIOLET AND THE MINIS' IS RED, and the four extra
-       * ticks are the other half of the tell.
-       *
-       * The ramp `lerp(350, 20, 1 - frac)` is red-to-orange, which is the two
-       * mini variants' own hues (340 and 15) — correct, and exactly why the
-       * final boss cannot use it: a player who has fought four of these reads
-       * that bar as "a boss", and the last fight in the game should not look
-       * like the four before it. Violet is not used anywhere else on this
-       * screen. It ramps too, over a narrower span, so the "nearly dead" signal
-       * survives; and the bar already CARRIES the structural difference for
-       * free, because `phaseThresholds` has four entries instead of two and
-       * those ticks are drawn from the boss itself.
-       */
-      const fin = boss.bossFinal;
-      g.fillStyle = fin
-        ? `hsl(${lerp(285, 258, 1 - frac)}, 92%, ${lerp(56, 66, 1 - frac)}%)`
-        : `hsl(${lerp(350, 20, 1 - frac)}, 95%, 58%)`;
-      g.fillRect(42, 24, (w.viewW - 84) * frac, 8);
-      g.strokeStyle = fin ? 'rgba(226,196,255,0.5)' : 'rgba(255,255,255,0.25)';
-      g.lineWidth = 1;
-      g.strokeRect(40.5, 22.5, w.viewW - 81, 11);
-      // Phase ticks, so the player can see the drops coming.
-      g.fillStyle = 'rgba(255,255,255,0.6)';
-      for (const t of boss.phaseThresholds) g.fillRect(42 + (w.viewW - 84) * t, 20, 1, 16);
-    }
+    // The run map, computed once per frame and shared by the HP bar and the
+    // run bar; null when the world is missing a field (see `runMapNow`).
+    const map = this.runMapNow();
 
     this.drawBanner(g);
 
@@ -2601,9 +2694,9 @@ export class Renderer {
      * The gauge lives at the right EDGE, which is exactly where the vignette
      * is darkest — up to 0.75 alpha of near-black at high tension. Drawn
      * before it, a 0.92-alpha cyan bar came out grey and the track was
-     * invisible against the room's colour. The boss bar above gets away with
-     * being under the vignette because it sits across the top middle, where
-     * the gradient has barely started.
+     * invisible against the room's colour. The boss HP bar and the run bar
+     * are drawn after it for the same reason: the top edge and the left edge
+     * are both inside the gradient.
      */
     /*
      * WARP, AS A FRAME AROUND THE WHOLE PICTURE.
@@ -2640,11 +2733,13 @@ export class Renderer {
 
     this.drawThrottle(g);
     /*
-     * The boss bar shares the throttle's argument for being drawn after the
+     * The run bar shares the throttle's argument for being drawn after the
      * vignette: it lives at the left EDGE, where the gradient is darkest, and a
-     * dark-red bar under 0.75 alpha of near-black is a bar nobody can see.
+     * dark-red bar under 0.75 alpha of near-black is a bar nobody can see. The
+     * HP bar is drawn here too, AFTER the warp rim — see `drawBossHp`.
      */
-    this.drawBossBar(g);
+    this.drawBossHp(g, map);
+    this.drawRunBar(g, map);
 
     /*
      * THE XP BAR MOVED OUT OF THE CANVAS.

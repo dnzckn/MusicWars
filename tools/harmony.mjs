@@ -389,56 +389,106 @@ if (seventhMax === 0 || ninthMax === 0) {
   console.log('  ok   onsets — unlocking the ninth replaces a tone rather than adding one');
 }
 
-/* ------------------- 4. no sustained lane holds a low cluster */
+/* ------------------- 4. the chords lane does not sustain, and is not a supersaw */
 
 /*
- * THE FOLD CAN MAKE MUD, and this is the assertion that catches it.
+ * WHAT STOOD HERE, AND WHY IT WAS REPLACED RATHER THAN RELAXED.
  *
- * Every lane in this score folds its tones into a declared window
- * (`theory.LANE_RANGE`), and a fold is an octave transposition: it preserves
- * pitch class and destroys spacing. On a two-note shape that is harmless — a
- * fifth folds to a fourth — but a three- or four-note chord folded into
- * thirteen semitones puts tones a SECOND apart, and a second held for a whole
- * bar at 110-220 Hz is the most reliable way there is to make a mix muddy.
+ * Section 4 was CLUSTER: the pad — a sustained dyad folded into
+ * `LANE_RANGE.pad` — must never hold two tones within two semitones. It caught
+ * a real defect on the day the chord grew a seventh (`[49,50,54,57]` in 38 of
+ * 88 bars, every register gate green) and it stayed green for 176 pad bars on
+ * the last tree that had a pad.
  *
- * MEASURED when it happened: the pad emitted `[49,50,54,57]` and
- * `[49,52,54,57]` in **38 of 88 bars** the day the chord grew a seventh, with
- * every register gate green — because a cluster is not a register defect, it
- * is a SPACING defect, and nothing in the repo was looking at spacing.
+ * The pad is deleted. So is the colour pair. The owner's words, verbatim:
+ * "also the synth sound is really bad i hate it remove that and clean up the
+ * music", after "the synth high pitch sound is not good" and "too much high
+ * pitch synth always playing, its taxing on the ears". Two capping commits
+ * (`2524fcb`, `6e6bdc4`) lowered filters and levels and did not answer it.
+ * Measured on that tree: the colour pair was the top sustained voice above
+ * 500 Hz from bar 11 of a run once the lead rests (expo 0.037-0.041 vs the
+ * lead's 0.031), and bass+chords was 47% of all masking weight, 2620 of its
+ * 3265 inside the pad's own window. A gate whose SUBJECT is deleted by design
+ * is not a gate being relaxed (AGENTS.md §3, `leadcheck`'s own header records
+ * the same shape); keeping CLUSTER would mean asserting spacing on a lane that
+ * holds nothing.
  *
- * SUSTAINED LANES ONLY. The stab and the clav are transient; the ear reads a
- * close interval in a 220 ms strike as bite rather than as mud, and forbidding
- * it there would ban the guide-tone pair this same file asserts two sections
- * up (a third and a seventh are a second apart in several qualities). The pad
- * is the lane that holds its notes under everything.
+ * The two assertions that replace it are STRONGER in the sense that matters:
+ * they are the ones that would go red the day somebody puts the pad back.
  *
- * How it could be gamed: by emptying the pad, so the count of bars that
- * actually produced two or more pad tones is printed and zero is a failure.
+ *   NO SUPERSAW   No hap the chords lane emits carries `s === 'supersaw'` —
+ *                 in any section, any feel, and under the three flags that
+ *                 used to floor the colour pair open (`shuffle` is a feel, NOVA
+ *                 a powerup, HUSHED a movement). `harmony` used to build one
+ *                 state — sustain/boomchick — and a pad voice re-added only in
+ *                 the breakdown, or only under NOVA, would have passed. The hap
+ *                 count is printed per section and per flag, so a state that
+ *                 emits nothing (the breakdown, by design) is visible rather
+ *                 than counted as clean by default. Seen red by restoring one
+ *                 pad voice.
+ *
+ *   NO SUSTAIN    No chords hap sounds for more than half a bar. `hold` is
+ *                 `clip`, a FRACTION OF THE SLOT (`articulation.ts`), so the
+ *                 sounding length is `whole.duration × clip` — a stab on the
+ *                 eighth grid at hold 0.62 is 0.08 of a bar, a whole-note pad
+ *                 at 0.86 is 0.86. The longest sounding length seen is
+ *                 printed. Giving the stab the `bowed` touch does NOT cross
+ *                 this line (0.86 × 1/8 = 0.11), which is the point: the
+ *                 assertion is about the lane's RHYTHM, not its envelope. Seen
+ *                 red by giving the stab a whole-note struct.
+ *
+ * How either could be gamed: by emptying the lane. The total hap count over
+ * the sweep is printed and zero is a failure.
+ *
+ * SEEN RED, each on its own, 2026-09-04, on the tree that deleted the pad:
+ * one short supersaw voice (`struct('x ~ ~ ~ ~ ~ ~ ~')`, unison 3) added to
+ * the lane -> "NO SUPERSAW — 2700 of 10800 chords haps are a supersaw" with
+ * NO SUSTAIN still green; the stab's struct replaced by a whole note ->
+ * "NO SUSTAIN — 4860 of 4860 chords haps sound longer than 0.5 of a bar" with
+ * NO SUPERSAW still green. Both edits reverted and byte-verified. Green on
+ * that tree: 8100 haps over 1620 states, breakdown 0 (by design — the lane is
+ * `silence` there), longest hap 0.140 of a bar.
  */
-const CLUSTER = 2;
-const clusters = [];
-let padBars = 0;
-for (const mode of MODES_TO_TEST) {
-  for (const [degree] of PROGRESSIONS[mode]) {
-    for (const extend of ['seventh', 'ninth']) {
-      for (const tension of [0.2, 0.6]) {
-        const m = state({ mode, degree, extend, tension });
-        const evs = notesIn(buildChords(m), 1);
-        // The bed. Identified by `VOICE_TAGS.pad`, never by a literal here.
-        const pad = [
-          ...new Set(
-            evs
-              .filter((e) => isTag(e, VOICE_TAGS.pad))
-              .map((e) => (typeof e.note === 'number' ? e.note : Number(e.note)))
-              .filter((n) => Number.isFinite(n)),
-          ),
-        ].sort((a, b) => a - b);
-        if (pad.length < 2) continue;
-        padBars++;
-        for (let i = 1; i < pad.length; i++) {
-          if (pad[i] - pad[i - 1] <= CLUSTER) {
-            clusters.push(`${mode}/deg${degree}/${extend}/t${tension}  pad=[${pad}]`);
-            break;
+const SWEEP_SECTIONS = ['intro', 'build', 'drop', 'breakdown', 'sustain', 'fill'];
+const SWEEP_FEELS = ['boomchick', 'chase', 'gallop', 'shuffle', 'halftime'];
+const SWEEP_FLAGS = [
+  { name: 'plain', over: {} },
+  { name: 'nova', over: { powerups: { nova: 3 } } },
+  { name: 'hush', over: { movement: 'hush' } },
+];
+const SUSTAIN_MAX = 0.5;
+const supersawHaps = [];
+const sustained = [];
+const perSection = {};
+const perFlag = {};
+const perFeel = {};
+let sweepHaps = 0;
+let sweepStates = 0;
+let longest = 0;
+let longestWhere = '';
+for (const section of SWEEP_SECTIONS) {
+  for (const feel of SWEEP_FEELS) {
+    for (const flag of SWEEP_FLAGS) {
+      for (const mode of MODES_TO_TEST) {
+        for (const extend of ['seventh', 'ninth']) {
+          const m = state({ mode, degree: 0, extend, tension: 0.6, section, feel, ...flag.over });
+          const evs = notesIn(buildChords(m), 1);
+          sweepStates++;
+          sweepHaps += evs.length;
+          perSection[section] = (perSection[section] ?? 0) + evs.length;
+          perFlag[flag.name] = (perFlag[flag.name] ?? 0) + evs.length;
+          perFeel[feel] = (perFeel[feel] ?? 0) + evs.length;
+          const where = `${section}/${feel}/${flag.name}/${mode}/${extend}`;
+          for (const e of evs) {
+            if (e.s === 'supersaw') supersawHaps.push(`${where}  note ${e.note} s=${e.s} unison=${e.unison}`);
+            // A hap with no `clip` sounds for its whole slot.
+            const clip = typeof e.clip === 'number' ? e.clip : 1;
+            const sounding = (e.end - e.begin) * clip;
+            if (sounding > longest) {
+              longest = sounding;
+              longestWhere = where;
+            }
+            if (sounding > SUSTAIN_MAX) sustained.push(`${where}  note ${e.note} sounds ${sounding.toFixed(2)} of a bar`);
           }
         }
       }
@@ -446,11 +496,23 @@ for (const mode of MODES_TO_TEST) {
   }
 }
 console.log('');
-if (padBars === 0) fail('CLUSTER — the pad produced no bar with two tones. That is a failure, not a pass.', []);
-else if (clusters.length) {
-  fail(`CLUSTER — ${clusters.length} of ${padBars} pad bars hold two tones ${CLUSTER} semitones or closer:`, clusters);
+console.log(`  chords haps over ${sweepStates} states (${SWEEP_SECTIONS.length} sections x ${SWEEP_FEELS.length} feels x ${SWEEP_FLAGS.length} flags x ${MODES_TO_TEST.length} modes x 2 extensions): ${sweepHaps}`);
+console.log(`    per section  ${SWEEP_SECTIONS.map((s) => `${s} ${perSection[s] ?? 0}`).join('  ')}`);
+console.log(`    per flag     ${SWEEP_FLAGS.map((f) => `${f.name} ${perFlag[f.name] ?? 0}`).join('  ')}`);
+console.log(`    per feel     ${SWEEP_FEELS.map((f) => `${f} ${perFeel[f] ?? 0}`).join('  ')}`);
+if (sweepHaps === 0) {
+  fail('NO SUPERSAW / NO SUSTAIN — the chords lane emitted nothing over the whole sweep. A zero denominator is a failure, not a pass.', []);
 } else {
-  console.log(`  ok   spacing — none of ${padBars} pad bars holds two tones within ${CLUSTER} semitones`);
+  if (supersawHaps.length) {
+    fail(`NO SUPERSAW — ${supersawHaps.length} of ${sweepHaps} chords haps are a supersaw. The pad or the colour pair is back:`, supersawHaps);
+  } else {
+    console.log(`  ok   no supersaw — 0 of ${sweepHaps} chords haps carry s=supersaw, in every section, feel and flag`);
+  }
+  if (sustained.length) {
+    fail(`NO SUSTAIN — ${sustained.length} of ${sweepHaps} chords haps sound longer than ${SUSTAIN_MAX} of a bar. The lane sustains again:`, sustained);
+  } else {
+    console.log(`  ok   no sustain — the longest chords hap sounds ${longest.toFixed(3)} of a bar (${longestWhere}); the line is ${SUSTAIN_MAX}`);
+  }
 }
 
 console.log('');

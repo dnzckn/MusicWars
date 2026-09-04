@@ -24,6 +24,35 @@
  * duck-typed world — `Renderer` imports `World` as a **type only**, so a plain
  * object with the right fields is enough and none of `world.ts` is loaded. No
  * browser, no dev server, no canvas.
+ *
+ * ------------------------------------------------------------------------
+ * THE RUN BAR'S FAIL-TEST LOG (AGENTS.md §3: a gate that has never been seen
+ * red is not evidence, per ASSERTION). Each break was made in the source,
+ * this file run, the red line read, the file restored and byte-compared
+ * against a copy taken before the break.
+ *
+ *   break                                       assertion turned RED
+ *   -----------------------------------------   ---------------------------
+ *   1  stub `stagePhase: 'nope'` (guard bails)  the bar put N fillRects in
+ *                                               its track (0); the fill
+ *                                               table; the labels; the stack
+ *   2  stub `waveIndex: 3`                      the fill table (3 past / 1);
+ *                                               the stack (WAVE 6 OF 16 not
+ *                                               found)
+ *   3  renderer skips `fillText(label, …)`      all 4 diamond labels (4
+ *                                               missing)
+ *   4  renderer skips `fillText(map.line2, …)`  the stack (BOSS IN 2: false)
+ *   5  `runMapInputOk` returns true             the missing-field frame: the
+ *                                               guard let 20 bar ops through
+ *                                               AND the recorder saw
+ *                                               `fillText "WAVE NaN OF 16"`
+ *                                               — the exact failure the
+ *                                               guard exists for
+ *
+ * The first version of assertion 1 counted every fillRect with x in the
+ * track and found 3 in a frame with no bar at all (starfield); it now counts
+ * the bar's own inks, and prints both numbers.
+ * ------------------------------------------------------------------------
  */
 import './lib/ts.mjs';
 
@@ -48,6 +77,13 @@ const { VIEW_W, VIEW_H, PLAYFIELD_W, PLAYFIELD_H } = await import('../src/game/f
  * fiction — see the note on that field.
  */
 const { CRUISE_SPEED } = await import('../src/game/player.ts');
+/*
+ * The run's shape and the run bar's geometry, imported for the same reason.
+ * `renderer.ts` imports both modules itself, so nothing new enters the graph;
+ * `runmap.ts` is DOM-free and `waves.ts` imports only the rng and a type.
+ */
+const { BOSS_COUNT, TOTAL_WAVES } = await import('../src/game/waves.ts');
+const { RUN_BAR } = await import('../src/game/runmap.ts');
 
 let Renderer;
 try {
@@ -128,7 +164,15 @@ function recorder(sink) {
     createRadialGradient: (...a) => { num('createRadialGradient', ...a); return grad(); },
     drawImage: (...a) => num('drawImage', ...a.slice(1)),
     measureText: (t) => ({ width: String(t).length * 7 }),
-    fillText: (t, x, y) => { num('fillText', x, y); if (BAD.test(String(t))) sink(`fillText "${t}"`); },
+    // Text is recorded as an op too, WITH its string: the run bar's whole
+    // job is two lines a player reads, and "did a fillRect land at x 26" is
+    // not "did WAVE 6 OF 16 land under it" (AGENTS.md §3, assert what a
+    // person SEES).
+    fillText: (t, x, y) => {
+      num('fillText', x, y);
+      if (BAD.test(String(t))) sink(`fillText "${t}"`);
+      ops.push({ op: 'fillText', style: String(fill), a: [x, y], text: String(t) });
+    },
     strokeText: (t, x, y) => num('strokeText', x, y),
     getContext: () => g,
   };
@@ -275,6 +319,9 @@ function makeWorld(effects, novas = [], wells = []) {
     snapshot: {
       running: true, level: 3, xp: 2, xpToNext: 9, choosing: false, abilities: {},
       instrumentSlots: 3, rigSlots: 3, time: 12, pendingOffers: 0,
+      // The run bar's inputs that live on the snapshot — see the note on
+      // `waveIndex` below for why every one of these is spelled out.
+      waveProgress: 0.4, bossActive: false, acts: BOSS_COUNT,
     },
     isOver: false,
     /*
@@ -300,6 +347,25 @@ function makeWorld(effects, novas = [], wells = []) {
     warpRelease: 0,
     bossProgress: 0.4,
     wavesToBoss: 2,
+    /*
+     * THE RUN BAR'S INPUTS, every one. `Renderer.runMapNow` feeds these
+     * public getters into `runMap()` behind `runMapInputOk`, which bails on
+     * any that is missing — so a field forgotten HERE does not draw NaN, it
+     * draws NOTHING, and a bar that is silently skipped looks exactly like a
+     * clean pass. That is the failure the note above records for the first
+     * bar, one guard later. THE RUN BAR IS DRAWN below counts the bar's ops
+     * so an absent field is a red line and not a quiet one.
+     *
+     * Wave 6 (index 5) of a run with one boss down, mid-spawn: a state with
+     * past, current and future segments, a gold diamond and a lit one, so
+     * every fill and every diamond state has something to draw.
+     */
+    waveIndex: 5,
+    stagePhase: 'spawning',
+    bossesBeaten: 1,
+    bossesLeft: BOSS_COUNT - 1,
+    onFinalWave: false,
+    victory: false,
     bus: { on() {} },
   };
 }
@@ -316,11 +382,17 @@ const huesIn = (ops) => {
 
 const transport = { beat: 4.25, bpm: 128, advance() {}, get barPhase() { return 0.0625; } };
 
-/** Render one frame with `effects` present and return the recorded ops. */
-function frame(effects, novas = [], wells = []) {
+/**
+ * Render one frame with `effects` present and return the recorded ops.
+ *
+ * `mutate` edits the stub world before the renderer sees it — THE RUN BAR IS
+ * DRAWN uses it to delete a field and prove the frame survives.
+ */
+function frame(effects, novas = [], wells = [], mutate = null) {
   const rec = recorder(fail);
   installDom(rec);
   const world = makeWorld(effects, novas, wells);
+  if (mutate) mutate(world);
   const r = new Renderer(rec.g.canvas, rec.g.canvas, world);
   r.bloomEnabled = false;
   r.bloomAuto = false;
@@ -592,6 +664,96 @@ console.log('\nMANY AT ONCE');
   console.log(`    24 mixed effects: ${ops.length} ops, ${huesIn(ops).size} distinct hues`);
   if (huesIn(ops).size < 10) fail(`only ${huesIn(ops).size} distinct hues from 24 differently-coloured effects`);
   else pass(`24 effects produce ${huesIn(ops).size} distinct hues — they are individually coloured`);
+}
+
+/*
+ * THE RUN BAR — the one readout on this canvas that says where the run IS.
+ *
+ * The stub carries every field `Renderer.runMapNow` reads because the guard
+ * behind it bails on a missing one, and a bar that bails draws NOTHING —
+ * which, in a tool that counts the ops an effect adds over an empty frame,
+ * is invisible: the empty frame and the bar-less frame have the same count.
+ * So the bar is asserted on its own terms: `fillRect`s inside its track
+ * (`RUN_BAR.x` ± 6 view px; the track is 6 CSS px wide at scale 1), the fill
+ * table's two colours in the counts the stub's state implies, the diamond
+ * labels to the right of the track, and the two lines a player reads under
+ * it — found by their TEXT and their position, because a fillRect at x 26 is
+ * not `WAVE 6 OF 16`.
+ *
+ * And the failure the guard exists for is exercised: delete a field, render,
+ * and the frame must complete with no non-finite value and no bar — absent,
+ * not wrong. The first bar drew 128 NaNs and killed the frame.
+ */
+console.log('\nTHE RUN BAR IS DRAWN');
+{
+  /*
+   * BY INK, NOT BY POSITION ALONE. The first version counted every fillRect
+   * with x in the track and found 3 in a frame with NO bar — starfield, which
+   * lands anywhere — so "count > 0" was a gate that passed with the bar gone
+   * (AGENTS.md §3: ask how someone could pass it while changing nothing).
+   * The bar's inks are its own: the backing, the two 352-hue fills and the
+   * boundary tick. Both counts are printed.
+   */
+  const BAR_INK = (s) => s === 'rgba(6,8,15,0.82)' || /^hsl\(352,/.test(s) || s === 'rgba(226,234,250,0.45)';
+  const inTrack = (ops) =>
+    ops.filter((o) => o.op === 'fillRect' && o.a[0] >= RUN_BAR.x - 6 && o.a[0] <= RUN_BAR.x + 6);
+  const barOps = (ops) => inTrack(ops).filter((o) => BAR_INK(o.style));
+  const ops = frame([]);
+  const bar = barOps(ops);
+  const texts = ops.filter((o) => o.op === 'fillText');
+  const under = (s) => texts.find((o) => o.text === s && o.a[0] < RUN_BAR.x && o.a[1] > VIEW_H * RUN_BAR.bot);
+  const line1 = under(`WAVE 6 OF ${TOTAL_WAVES}`);
+  const line2 = under('BOSS IN 2');
+  console.log(
+    `    fillRect ops with x in [${RUN_BAR.x - 6}, ${RUN_BAR.x + 6}]: ${inTrack(ops).length}, ` +
+      `of which ${bar.length} in the bar's inks   fillText ops in the frame: ${texts.length}`,
+  );
+  if (bar.length === 0) fail('the run bar drew no fillRect in its track — a stub field is missing and the guard bailed, or the bar is gone');
+  else pass(`the run bar put ${bar.length} fillRects in its track`);
+
+  const past = bar.filter((o) => o.style === 'hsl(352, 45%, 40%)').length;
+  const cur = bar.filter((o) => o.style === 'hsl(352, 95%, 62%)').length;
+  console.log(`    past segments filled: ${past}   current: ${cur}   (waveIndex 5, waveProgress 0.4)`);
+  if (past !== 5 || cur !== 1) fail(`the fill table is not on the canvas: ${past} past / ${cur} current for waveIndex 5 mid-wave`);
+  else pass('five past segments and one current segment, each in its own colour');
+
+  const wanted = [];
+  for (let n = 1; n <= BOSS_COUNT; n++) wanted.push(n === BOSS_COUNT ? 'FINAL' : String(n));
+  const labels = wanted.filter((s) => texts.some((o) => o.text === s && o.a[0] > RUN_BAR.x && o.a[0] < RUN_BAR.x + 40));
+  console.log(`    diamond labels right of the track: ${labels.join(' ')} of ${wanted.join(' ')}`);
+  if (labels.length !== wanted.length) fail(`${wanted.length - labels.length} diamond label(s) missing beside the track`);
+  else pass(`all ${wanted.length} diamond labels are drawn beside the track`);
+
+  if (!line1 || !line2) {
+    fail(`the stack under the bar is not drawn (WAVE 6 OF ${TOTAL_WAVES}: ${!!line1}, BOSS IN 2: ${!!line2})`);
+  } else {
+    pass(
+      `WAVE 6 OF ${TOTAL_WAVES} at (${line1.a[0]}, ${line1.a[1].toFixed(0)}) and BOSS IN 2 at ` +
+        `(${line2.a[0]}, ${line2.a[1].toFixed(0)}) under the track (bottom ${(VIEW_H * RUN_BAR.bot).toFixed(0)})`,
+    );
+  }
+
+  // A stub missing a field must not kill the frame: the guard bails, the
+  // bar is absent, the rest of the frame is intact, and nothing non-finite
+  // reached the canvas.
+  const before = failures;
+  let threw = null;
+  let broken = [];
+  try {
+    broken = frame([], [], [], (w) => { delete w.waveIndex; });
+  } catch (err) {
+    threw = err;
+  }
+  const barless = barOps(broken).length;
+  console.log(
+    `    with waveIndex deleted: ${threw ? `THREW ${threw.message}` : `${broken.length} ops`}, ` +
+      `${inTrack(broken).length} in the track of which ${barless} in the bar's inks, ${failures - before} non-finite value(s)`,
+  );
+  if (threw) fail('a stub world missing waveIndex killed the frame');
+  else if (barless !== 0) fail(`the guard let a world with no waveIndex draw ${barless} bar ops`);
+  else if (failures !== before) fail('a missing field reached the canvas as a non-finite value');
+  else if (broken.length < 10) fail(`the frame without the bar drew only ${broken.length} ops — it did not survive`);
+  else pass(`a world missing a field draws the frame (${broken.length} ops) without the bar, and no NaN`);
 }
 
 console.log('\nDEGENERATE INPUT');

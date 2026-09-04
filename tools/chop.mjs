@@ -246,7 +246,16 @@ const BUS = { sub: 'low*', kick: 'drums', clap: 'drums', hats: 'drums', bass: 'l
   chords: 'harm*', arp: 'harm*', lead: 'harm*', fx: 'air', motifs: 'air', power: 'air' };
 // Layers whose material is held rather than struck. These are the ones a gate
 // is audible on; percussion is supposed to swing.
-const HELD = new Set(['sub', 'chords', 'lead', 'fx']);
+/*
+ * `chords` IS NOT HELD ANY MORE. The lane was a sustained supersaw pad plus a
+ * colour pair plus a stab; the pad and the pair were deleted on the owner's
+ * word ("the synth sound is really bad i hate it remove that"), and what is
+ * left is a two-to-four-hit sawtooth stab — a lane whose p90-p10 swing is
+ * enormous BY DESIGN. Leaving it in this set would have turned the swing
+ * verdict red for a defect that does not exist. It is still measured and
+ * printed with the rest; it is not gated as held.
+ */
+const HELD = new Set(['sub', 'lead', 'fx']);
 const STEMS = Object.keys(BUS);
 
 await p.evaluate(setWave, WAVE);
@@ -296,9 +305,44 @@ if (perc < 20) {
 /*
  * The hole count has its own controls, and they run the opposite way from the
  * swing controls: percussion is SUPPOSED to be full of holes, and a sustained
- * pad is supposed to have none. If the kick does not register as holed the
- * detector cannot see a gap at all; if the pad does, something is cutting it.
+ * lane is supposed to have none. If the hat does not register as holed the
+ * detector cannot see a gap at all; if the sustained lane does, something is
+ * cutting it.
+ *
+ * THE NEGATIVE CONTROL IS THE SUB NOW, AND IT IS AN ASSERTION. It used to be
+ * `chords`, "a sustained pad", and it only ever PRINTED a note — the sole
+ * exit-1 path in this file was the swing verdict. The pad is deleted (see
+ * `HELD`), so the control moved to the one lane that still holds a note under
+ * everything: the sub, a sine pedal that `STEM_CURVES.sub.in = 0` keeps in
+ * every section including the breakdown. And it fails now rather than noting:
+ * a sub with more than one hole a second is being chopped, which is exactly
+ * the defect this tool exists to find, and a control that cannot fail is not
+ * a control. The denominators — holes per second and the share of time holed,
+ * over `REPS` passes of `HOLD` ms — are printed beside it.
+ *
+ * NOT YET SEEN RED, AND THE REASON IS A DEFECT IN THIS FILE'S OWN CONTROL.
+ * On 2026-09-04, on the tree that deleted the pad, the sub was chopped on
+ * purpose — `kit.ts`'s `sub()` given `struct('x*8')` and the `struck` touch,
+ * six eighth-note blips a bar in place of the pedal, ~100 ms of sound and
+ * ~100 ms of gap at 140 bpm, squarely inside the 25-400 ms hole window — and
+ * the detector read 0.49 holes/s on it (0.30 unchopped): green both times.
+ * In the same two runs the POSITIVE CONTROL FAILED: "hats" registered 1.02
+ * and 1.53 holes/s against the 2/s the control demands, and the tool printed
+ * its own "cannot see a gap. Ignore the hole numbers" — and then exited 0,
+ * because the control only prints. So no hole figure in either run is
+ * evidence, this assertion included. Two explanations, not yet separated:
+ * the machine was under load (a 32-bar offline capture, `registermap` and
+ * `arc` all running) and the realtime page starved; or the control has been
+ * failing since `buildHats` was deleted — the stem still called `hats` is the
+ * MOTOR, a pitched eighth-note line whose gaps are not a hi-hat's, and the
+ * sixteenth hat grid that would satisfy a 2/s control now lives inside
+ * `clap`. Re-run on a quiet machine; if the control still reads under 2/s,
+ * the control is pointing at the wrong lane and fixing THAT is the next
+ * change to this file — not lowering 2, and not lowering `SUB_HOLES_MAX`.
+ * Until a run shows the control passing and the chopped sub failing, treat
+ * the SUB line as a printed number with a threshold beside it, not a gate.
  */
+const SUB_HOLES_MAX = 1;
 /*
  * The positive control is the HI-HAT, not the kick.
  *
@@ -314,9 +358,12 @@ const hatHoles = get('hats').holes;
 console.log(`\nHOLE DETECTOR  (a gap ${HOLE_DB}dB down, lasting ${HOLE_MS}-${HOLE_MAX_MS}ms)`);
 console.log(`  positive control — hats, gaps of ~100ms    : ${hatHoles.toFixed(2)}/s, ${get('hats').holed.toFixed(1)}% of the time`);
 console.log(`  (kick is not the control: its gaps are ~450ms, longer than a chop, and count as rests)`);
-console.log(`  negative control — chords, a sustained pad : ${get('chords').holes.toFixed(2)}/s, ${get('chords').holed.toFixed(1)}% of the time`);
-if (get('chords').holes > 1) {
-  console.log('  NOTE: the pad is being cut. That is the defect this tool exists to find.');
+const subHoles = get('sub').holes;
+console.log(`  negative control — sub, a sustained pedal  : ${subHoles.toFixed(2)}/s, ${get('sub').holed.toFixed(1)}% of the time (max ${SUB_HOLES_MAX}/s, over ${REPS} pass(es) of ${HOLD} ms)`);
+console.log(`  (chords is a stab now, not a pad — measured above, not a control)   : ${get('chords').holes.toFixed(2)}/s, ${get('chords').holed.toFixed(1)}% of the time`);
+const subCut = subHoles > SUB_HOLES_MAX;
+if (subCut) {
+  console.log(`  >>> THE SUB IS BEING CUT: ${subHoles.toFixed(2)} holes/s on a lane that holds one note. That is the defect this tool exists to find. <<<`);
 }
 if (hatHoles < 2) {
   console.log('  CONTROL FAILED: the hi-hat did not register as holed, so this cannot see a gap. Ignore the hole numbers.');
@@ -335,4 +382,6 @@ console.log(
     ? `\n>>> A HELD LAYER SWINGS ${(worstHeld.mean - get('fx').mean).toFixed(1)}dB MORE THAN THE UN-GATED REFERENCE — SOMETHING IS CUTTING IT UP <<<`
     : `\nheld layers stay held`,
 );
-process.exit(verdict ? 1 : 0);
+// The sub control is a second exit-1 path, independent of the swing verdict.
+if (subCut) console.log('the sub negative control FAILED (see HOLE DETECTOR above)');
+process.exit(verdict || subCut ? 1 : 0);

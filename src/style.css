@@ -391,6 +391,28 @@ body::before {
   color: var(--ink-2);
 }
 .opener-rule kbd { margin: 0 1px; }
+/* The run's shape — sixteen waves, a boss every fourth, the fourth is the
+   last. Set a step brighter than the rule's second line so it reads as a
+   fact rather than a footnote, and kept short enough for the 363px mobile
+   stage: the text is derived in hud.ts and is 47 characters at 10px. */
+.opener-rule .shape {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-top: 2px;
+  text-align: center;
+}
+/* Each clause is unbreakable, so the phone wraps at a separator and not in
+   the middle of "THE 4TH IS THE LAST". `inherit` because `.opener-rule span`
+   above would otherwise restyle the inner spans. */
+.opener-rule .shape span {
+  white-space: nowrap;
+  font-size: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
 
 /*
  * A cue sheet, not a caption.
@@ -691,6 +713,17 @@ body::before {
   font-size: 11px;
   letter-spacing: .16em;
   color: var(--cool);
+}
+/* The pause screen's "where the run is" row, between the stats and the music
+   line: the same size as the music line, in ink rather than the accent, so
+   the two read as a pair of facts and not as one heading. */
+.runline {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /*

@@ -178,6 +178,7 @@
     "pursuit": "node --experimental-transform-types tools/pursuit.mjs",
     "warp": "node --experimental-transform-types tools/warp.mjs",
     "finale": "node --experimental-transform-types tools/finale.mjs",
+    "runmap": "node --experimental-transform-types tools/runmap.mjs",
     "beatlock": "node --experimental-transform-types tools/beatlock.mjs",
     "fontlanes": "node --experimental-transform-types tools/fontlanes.mjs",
     "fontcheck": "node tools/fontcheck.mjs",

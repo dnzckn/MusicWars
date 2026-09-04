@@ -185,8 +185,8 @@ export function bootAudio(bpm: number): Promise<Repl> {
     // There is no master limiter anywhere in superdough, and this game stacks
     // ~11 layers with long release tails. Capping polyphony is the cheapest
     // insurance against a pile-up turning into clipping — but too low a cap
-    // steals voices from the sustained pad, which is audible as notes cutting
-    // out mid-chord.
+    // steals voices from the sustained lanes (the sub, the lead's open tail;
+    // the chords pad, when there was one), audible as notes cutting out.
     setMaxPolyphony(96);
 
     const r = webaudioRepl({ audioContext: ctx, sync: false });

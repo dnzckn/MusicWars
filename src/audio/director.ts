@@ -31,6 +31,7 @@ import { soundfontGeneration } from './soundfonts';
 import { ensureMasterCeiling, masterVolume, musicTrim } from './volume';
 import {
   MOVEMENT_MIX,
+  stabGuideTones,
   buildArp,
   buildBass,
   buildChords,
@@ -302,7 +303,13 @@ const INTRO_GATE_FLOOR = 0.38;
  * allocations against 21% here, because almost all of the waste sits in that
  * 8dB band, which is precisely the `YIELD_FAR` population.
  */
-const AUDIBLE_FLOOR = 0.0025;
+/*
+ * EXPORTED for `tools/opening.mjs`, which counts the intro's bass and stab by
+ * this same test rather than by onset count — a hap the director would refuse
+ * a voice must not count as "harmony present". The tool imports it; a copy
+ * would lie the day it moved (AGENTS.md §3).
+ */
+export const AUDIBLE_FLOOR = 0.0025;
 
 export interface DirectorReadout {
   section: SectionName;
@@ -833,27 +840,23 @@ export class MusicDirector {
       density: signal(() => clamp01(remap(this.intensity, 0.18, 0.5, 0, 1))),
       ornament: signal(() => clamp01(remap(this.intensity, 0.68, 0.9, 0, 1))),
       fill: signal(() => clamp01(remap(this.intensity, 0.58, 0.82, 0, 1))),
-      colour7: signal(() => clamp01(remap(this.p.tension, 0.2, 0.5, 0, 1))),
       /*
-       * The NINTH is reserved until the intensification.
+       * `colour7` and `colour9` stood here — the faders on the chords lane's
+       * colour pair: the ninth on `tension` 0.2-0.5 and, once
+       * `ACT_SHAPE.ninth` unlocked it, the thirteenth on 0.55-0.85. The pair
+       * is deleted (the tombstone in `buildChords`) and nothing read either
+       * signal once it was gone; an unread signal is the "unmeasured
+       * properties rot" case (AGENTS.md §3), so both went with the voices
+       * rather than staying as two live reads per hap on nothing.
        *
-       * The second piece of held-back material, and the cheapest one in the
-       * file: the chord already computes both colour tones every bar and the
-       * caller only decides how much of each is heard, so withholding one costs
-       * a multiplication. It is the right one to hold because it is the tone
-       * that makes a triad sound like a record rather than like a chord — so
-       * the moment it arrives, three quarters of the way through a run, the
-       * harmony audibly opens without a single new lane appearing.
-       *
-       * Gated on the act rather than faded across it, deliberately. A colour
-       * tone that ramps in over four minutes is a colour tone nobody notices
-       * arriving, which is the same "saturated input" defect this file has
-       * found five times. It arrives on the phrase line the act changes on, in
-       * company with the shape change and the tempo ceiling lifting.
+       * The act still spends the ninth, and this is the stronger half of the
+       * idea that survives: from the intensification on it is a MEMBER of the
+       * chord (`chordForBar`'s extension, where the phrase chords are built below), which
+       * the stab states in the register a listener follows. A colour tone
+       * swelling in over four minutes was a colour tone nobody noticed
+       * arriving; a chord that changes on the phrase line the act changes on
+       * is heard.
        */
-      colour9: signal(() =>
-        ACT_SHAPE[this.act].ninth ? clamp01(remap(this.p.tension, 0.55, 0.85, 0, 1)) : 0,
-      ),
     };
   }
 
@@ -1440,8 +1443,8 @@ export class MusicDirector {
     /*
      * The intro gets a floor too, because otherwise its design never happens.
      *
-     * `INTRO_ENTRY` encodes a deliberate order — pad and sub from bar 0, the
-     * tune at 16% ("a tune that arrives a third of the way through its own
+     * `INTRO_ENTRY` encodes a deliberate order — when this was written, pad and
+     * sub from bar 0, the tune at 16% ("a tune that arrives a third of the way through its own
      * introduction has not been introduced"), drums after. But levels are
      * `stemLevel(id, gate) * introGate(...)`, and at the start of a run
      * `tension` sits near `progressFloor`, around 0.15. `STEM_CURVES.lead.in`
@@ -1450,7 +1453,9 @@ export class MusicDirector {
      * that had not opened yet.
      *
      * Measured before this: the first 7.5 seconds of a run were a pad at 0.29
-     * and nothing else, with the lead arriving at 9s. The file's own note says
+     * and nothing else, with the lead arriving at 9s. (The pad is deleted now
+     * — `buildChords` — and the order is sub, bass, stab, motor, kick, tune;
+     * the floor below is unchanged and still what lets that order be heard.) The file's own note says
      * a bar of silence after pressing start "reads as the game failing to boot
      * rather than as an intro" — this was seven seconds of nearly that.
      *
@@ -1875,8 +1880,8 @@ export class MusicDirector {
        *
        * EXCEPT ON A HUSHED WAVE, and that exception was measured rather than
        * reasoned. HUSHED is the one movement in the game built out of absence:
-       * `MOVEMENT_MIX` already takes the kit to 0.1-0.28 and pushes the pad and
-       * the tune up, and `rankTonal` hands the spare slot to the ARP because
+       * `MOVEMENT_MIX` already takes the kit to 0.1-0.28 and pushes the stab
+       * (the pad, before `buildChords` lost it) and the tune up, and `rankTonal` hands the spare slot to the ARP because
        * there are no enemies worth voicing. Stacking the act's reservation on
        * top of that took the arp out too — and the arp is the movement's air
        * source, so the thing HUSHED is supposed to open closed instead.
@@ -2517,8 +2522,10 @@ export class MusicDirector {
      *
      * `leadRegister` and the tension bucket were both here and are both gone:
      * neither selects a note any more, so neither can justify a rebuild. The
-     * register rides on the melody as `sig.register` and the chord extensions
-     * fade on `sig.colour7`/`sig.colour9`.
+     * register rides on the melody as `sig.register`; the chord's ninth is
+     * spelled into the chord itself from the intensification on
+     * (`ACT_SHAPE.ninth`, where the phrase chords are built) and stated by the stab — the
+     * `colour7`/`colour9` faders it used to ride went with the colour pair.
      */
     this.keyFields = [
       ['section', section],
@@ -2773,8 +2780,9 @@ export class MusicDirector {
      * chord is the one the music is already sitting on, re-spelled.
      *
      * Voice-led like every other chord in the phrase, so it joins the sentence
-     * rather than interrupting it, and the bass and the pad both take it for
-     * free because they read `chord.root` and `chord.notes`.
+     * rather than interrupting it, and the bass and the stab both take it for
+     * free because they read `chord.root` and `chord.notes` (the stab's guide
+     * tones on a pivot are the leading tone and the flat seventh).
      *
      * NOT gated on the act. A modulation is an arrival wherever it happens,
      * and the exposition is precisely where a listener is still learning where
@@ -2800,14 +2808,17 @@ export class MusicDirector {
              * it.
              *
              * `ACT_SHAPE.ninth` is false through the exposition and the
-             * development and true from the intensification on. It already
-             * gated `sig.colour9` — a FADER on a tone an octave above the pad —
-             * and that is the weak version of the idea: a colour tone swelling
-             * in is not a different chord, it is the same chord with a
-             * twinkle. Passing it here makes the ninth a member of the chord
-             * itself for the second half of a run, which the stab states in the
-             * register a listener follows. Same voice count either side; see
-             * `theory.Extension` for why it replaces the third instead of
+             * development and true from the intensification on. It used to
+             * gate a second thing as well: `sig.colour9`, a FADER on the
+             * chords lane's colour pair, which swelled the thirteenth in over
+             * tension 0.55-0.85. That pair is deleted (`buildChords`) and the
+             * signal with it, so this is now the ONLY thing the flag does — and
+             * it was always the strong version of the idea: a colour tone
+             * swelling in is not a different chord, it is the same chord with
+             * a twinkle. Passing it here makes the ninth a member of the chord
+             * itself for the second half of a run, which the stab states in
+             * the register a listener follows. Same voice count either side;
+             * see `theory.Extension` for why it replaces the third instead of
              * joining it.
              */
             chordForBar(this.tonic, this.mode, progression, i, ACT_SHAPE[this.act].ninth ? 'ninth' : 'seventh');
@@ -3437,14 +3448,18 @@ export class MusicDirector {
       { label: 'kick', code: `"${kickRhythm(kickIntensity, false, this.feel)}"` },
       { label: 'motor', code: `note("${this.motorLineText}").s("pulse")` },
       /*
-       * No +12. The pad stopped transposing when the registers were corrected —
-       * `buildChords` now uses `m.chord.notes` as voiceLead placed them — and
-       * this mirror kept adding the octave, so the panel printed pitches an
-       * octave above the ones being played. A readout that disagrees with the
-       * mix is worse than no readout, and this is the fourth time the two have
-       * drifted apart in this file.
+       * THE STAB'S GUIDE TONES, from the function the lane itself calls.
+       *
+       * This line printed `chord.notes` as a `note("[...]")` voicing. It was
+       * the fourth drift of this mirror when it added an octave the pad had
+       * stopped adding, and it became the sixth the day the pad was deleted:
+       * a voicing no lane sustains, shown as the code that is playing. The
+       * chords lane IS the stab now, so what the stab plays is what the panel
+       * shows — `stabGuideTones` in `layers.ts`, one function for both. Built
+       * at bar 0 without voice leading, as before, so it is the phrase's first
+       * chord as the stab would state it.
        */
-      { label: 'chord', code: `note("[${chord.notes.join(',')}]")` },
+      { label: 'chord', code: `note("[${stabGuideTones(chord).join(',')}]")` },
       { label: 'bass', code: `note("${root} ~ ${root} ~")` },
       { label: 'scale', code: `"${keyLabel(this.tonic, this.mode)}" · ${FEEL_LABELS[this.feel]}` },
     ];

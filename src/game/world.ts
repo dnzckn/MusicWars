@@ -91,10 +91,12 @@ import {
   planWave,
   STAGE_FLOOR,
   stagePressure,
+  TOTAL_WAVES,
   type Formation,
   type SpawnRing,
   type WavePlan,
 } from './waves';
+import type { StagePhase } from './runmap';
 
 /**
  * One instrument as `fireInstruments` folds it: the table row, the level it is
@@ -116,8 +118,17 @@ export interface BandVoice {
   s: InstrumentStats;
 }
 
-/** What a centre-screen announcement is about. */
-export type BannerKind = 'wave' | 'boss' | 'phase' | 'grade' | 'archetype' | 'item';
+/**
+ * What a centre-screen announcement is about.
+ *
+ * `act` is the boss-down banner — BOSS 1 OF 4 DOWN / ACT 1 CLEAR — and it is
+ * its own kind rather than a `grade` because two things key on it: the
+ * renderer colours it (gold, the beaten diamond's colour) and `beginWave`
+ * reads it back to decide whether the next WAVE banner may fire at all. A
+ * kind that has to be recognised cannot be matched by text; that is the rule
+ * this type exists for.
+ */
+export type BannerKind = 'wave' | 'boss' | 'phase' | 'grade' | 'archetype' | 'item' | 'act';
 
 /*
  * The field size and the view size now live in `./field`, and are re-exported
@@ -534,7 +545,12 @@ const MAX_MULTIPLIER = 60;
  */
 const MAX_PLAYER_BULLETS = 700;
 
-type Phase = 'idle' | 'spawning' | 'awaiting-boss' | 'conductor' | 'interlude' | 'over';
+/*
+ * Written once, in `runmap.ts`, because the run bar's fill table is a switch
+ * over exactly this set and a copy here would be the second one — the bar
+ * would draw a sixth state as an empty segment and nothing would say so.
+ */
+type Phase = StagePhase;
 
 /**
  * A live instrument effect that is not a projectile.
@@ -1625,10 +1641,13 @@ export class World {
    * Boss encounters CLEARED this run, 0..BOSS_COUNT.
    *
    * Counted rather than derived from `waveIndex`, because the two disagree in
-   * the case that matters: `jumpToWave(19)` puts the world on the finale having
-   * beaten nothing, and a run-progress readout that claimed four minis were
-   * down would be lying on the one screen a developer uses to look at the
-   * ending. It is also what the act pips on the boss bar fill from.
+   * the case that matters: `jumpToWave(FINAL_BOSS_WAVE)` puts the world on the
+   * finale having beaten nothing, and a run-progress readout that claimed
+   * three minis were down would be lying on the one screen a developer uses
+   * to look at the ending. (`jumpToWave` now brings the count with it — see
+   * there — so the two agree on a jump too; the field stays a count because a
+   * real run counts its own kills.) It is what the run bar's diamonds turn
+   * gold from.
    */
   bossesBeaten = 0;
 
@@ -2153,6 +2172,28 @@ export class World {
      * and the plan cannot disagree about which stage this is.
      */
     this.stage = stagePressure(this.stage) + 1;
+    /*
+     * THE PLAN IS RESET WITH THE REST, and it was not for the whole life of
+     * the AGAIN button.
+     *
+     * `plan` is only ever assigned in `beginWave`, which the idle timer reaches
+     * two bars after this call. Until then every getter that reads it —
+     * `wavesToBoss`, `bossProgress`, `onFinalWave`, `snapshot.waveProgress` —
+     * described the PREVIOUS run's last wave. Measured on a retried run 3.4 s
+     * after AGAIN: `wavesToBoss 0`, `bossProgress 1`, `onFinalWave true`, on a
+     * world whose `waveIndex` was 0. So a player who died on a boss wave and
+     * pressed AGAIN saw a full red bar reading BOSS for the first two bars of
+     * wave 1. Wave 0 at this stage is what `beginWave(0)` will plan anyway;
+     * planning it here makes the runway describe the run it belongs to.
+     *
+     * `entryCursor` goes with it, and `tools/runmap.mjs` found that half
+     * rather than reasoning found it: with the plan reset alone, a retried
+     * run's first frame read `bossProgress 0.056` — the finale's spent cursor
+     * divided by wave 1's entry count. A cursor into a list that has just been
+     * replaced is a fraction of nothing.
+     */
+    this.plan = planWave(0, this.stage);
+    this.entryCursor = 0;
     this.score = 0;
     this.combo = 0;
     this.comboTimer = 0;
@@ -2455,14 +2496,55 @@ export class World {
         this.announce('THE FINAL SET', 'PLAY IT OUT', 'boss');
       } else if (this.plan.isBoss) {
         /*
-         * Minis are NUMBERED, and the numeral is the whole point: "BOSS 2 / 4"
+         * Minis are NUMBERED, and the numeral is the whole point: "BOSS 2 OF 4"
          * is a run with a shape and "BOSS INCOMING" is a run without one. This
          * is the cheapest possible statement of the Ball x Pit cycle the owner
          * asked for, and it costs one string.
+         *
+         * ONE DENOMINATOR, `BOSS_COUNT`, EVERYWHERE. This read `MINI BOSS /
+         * 1 OF 3` under a bar carrying four act pips, and the victory screen
+         * then said ALL 4 BOSSES DOWN — photographed as a contradiction, not
+         * reasoned about. The finale is boss 4 of 4 and the run has four
+         * bosses; a player is not asked to know that minis are counted apart.
+         * CLEAR THE ESCORT says what the next twenty seconds are, because the
+         * boss does not arrive until the escort is dead and nothing else on
+         * screen said so.
          */
-        this.announce('MINI BOSS', `${actOf(index)} OF ${BOSS_COUNT - 1}`, 'boss');
+        this.announce('BOSS WAVE', `BOSS ${actOf(index)} OF ${BOSS_COUNT} · CLEAR THE ESCORT`, 'boss');
+      } else if (this.bannerKind === 'act' && this.bannerAge < 2.4) {
+        /*
+         * THE WAVE BANNER YIELDS TO THE BOSS-DOWN BANNER, and it yields by
+         * NOT FIRING rather than by the interlude being made longer.
+         *
+         * The interlude after a kill is one bar (`finishWave`), and one bar is
+         * shorter than a banner's 2.4 s life — so `WAVE 5 OF 16` landed at
+         * ~1.9 s and wrote over the act banner before its own fade, measured
+         * on every boss kill. Lengthening the interlude to two bars was the
+         * first answer and it contradicts a recorded measurement: two bars
+         * left enough dead air that the arrangement sat in a breakdown for a
+         * third of the run, and the director asks for a breakdown on
+         * `boss:defeat`, so the extra bar IS breakdown. Skipping an announce
+         * costs nothing: the bar under the diamonds reads the wave number
+         * for the whole wave, which is the same argument the movement branch
+         * above makes for `WAVE 5` yielding to FLANKED. A movement never
+         * follows a boss wave (`movementFor` fires on `index % 4 === 1`), so
+         * this branch only ever competes with the plain wave banner.
+         *
+         * `bannerKind`, not the text: `tools/introductions.mjs` records why a
+         * banner matched by its words is a banner that a new string breaks.
+         */
       } else {
-        this.announce(`WAVE ${index + 1}`, '', 'wave');
+        /*
+         * OF 16, so the number has a denominator. `WAVE 5` on its own was the
+         * only large structural text a player ever saw on an ordinary wave
+         * and it carried no structure beyond the number — a run of sixteen
+         * waves that never once said sixteen. The subtitle stays EMPTY on
+         * purpose: `drawBanner` captions an empty subtitle with the key and
+         * groove the music just switched into, which is the finding that the
+         * fight and the music are the same thing. The bar's second line
+         * carries BOSS IN k, so nothing is lost by leaving the caption alone.
+         */
+        this.announce(`WAVE ${index + 1} OF ${TOTAL_WAVES}`, '', 'wave');
       }
     }
   }
@@ -3344,7 +3426,15 @@ export class World {
           // A bar to breathe, and to hear the music turn over.
           e.invuln = 1.4;
           this.shock(e.x, e.y, 480, 3800);
-          this.announce(`PHASE ${['I', 'II', 'III'][phase] ?? phase + 1}`, '', 'phase');
+          /*
+           * Numerals for all five, not three. The finale has five phases and
+           * the table stopped at III, so its last two gates announced
+           * `PHASE 4` and `PHASE 5` — photographed — in a run whose every
+           * other phase was roman. The fallback stays for a boss with more
+           * phases than this list, but the list now covers the boss the game
+           * actually ships.
+           */
+          this.announce(`PHASE ${['I', 'II', 'III', 'IV', 'V'][phase] ?? phase + 1}`, '', 'phase');
         }
       }
 
@@ -4840,6 +4930,36 @@ export class World {
       }
 
       case 'awaiting-boss':
+        /*
+         * THE TELEGRAPH, IN WORDS, AND ONE UPDATE LATE ON PURPOSE.
+         *
+         * `boss:telegraph` went to the director only: the riser was audible
+         * and nothing on screen said a boss was seven seconds away — the
+         * BOSS WAVE banner had expired fourteen seconds earlier and the bar
+         * had read the same two words since the wave began. Photographed
+         * (`04-boss-telegraph.png`): an empty field, a full bar, no banner.
+         *
+         * It is NOT announced at the emit, in the `spawning` case above,
+         * because the emit lands in whichever update `settled` goes true in,
+         * and `settled` is a census rather than a clock — it can go true on
+         * the `simDt = 0` frame the bot answers a card, the same update that
+         * `openOfferNow` writes LEVEL n or `applyOfferInput` writes JOINS THE
+         * BAND. Two announces in one update is the clobber `tools/wiring.mjs`
+         * exists for, and the phase gate below defers on exactly this
+         * coincidence ("caught it at steps 20699 and 31500").
+         *
+         * `bannerAge` is zeroed by `announce` and advanced AFTER `updateWave`,
+         * so `bannerAge > 0` here means nothing was announced earlier in this
+         * update — and it stays 0 under a card screen, where `simDt` is 0.
+         * That is the phase gate's deferral in one comparison. The flag was
+         * declared, set, and read only as `void this.bossTelegraphed` for the
+         * whole life of the telegraph; this is the read it was declared for.
+         */
+        if (this.bossTelegraphed && this.bannerAge > 0) {
+          this.bossTelegraphed = false;
+          if (this.plan.isFinalBoss) this.announce('THE LAST ONE', 'INCOMING', 'boss');
+          else this.announce(`BOSS ${actOf(this.waveIndex)} OF ${BOSS_COUNT}`, 'INCOMING', 'boss');
+        }
         this.topUp(World.BOSS_ESCORT_FLOOR);
         this.phaseTimer -= dt;
         if (this.phaseTimer <= 0) {
@@ -4942,7 +5062,6 @@ export class World {
         break;
     }
 
-    void this.bossTelegraphed;
   }
 
   private finishWave(): void {
@@ -5009,13 +5128,47 @@ export class World {
     });
     this.totals.wavesCleared++;
     if (grade === 'perfect') this.totals.flawless++;
-    this.announce(
-      grade === 'perfect' ? 'FLAWLESS' : grade === 'clean' ? 'WAVE CLEAR' : 'WAVE CLEAR',
-      grade === 'perfect' ? `UNTOUCHED · x${1 + this.wavePeakCombo}` : '',
-      'grade',
-    );
+    if (this.plan.isBoss) {
+      /*
+       * A BOSS KILL IS THE ONLY MILESTONE THE RUN HAS, AND IT SAID WAVE CLEAR.
+       *
+       * The same two words every ordinary wave gets, measured three times in
+       * one run, while the reward — a reroll and a banish, from
+       * `onBossDefeated` — was granted in silence and the only new pixel was
+       * a 4 px gold dot. This REPLACES the grade banner rather than adding a
+       * second announce: `rewardBoss` and this method run in one update, and
+       * two announces in one update is the clobber `tools/wiring.mjs` fails
+       * on. The grade is still computed and still on `wave:clear`, so the
+       * director's breakdown and the flawless total are untouched; only the
+       * words changed.
+       *
+       * NOT "CHECKPOINT". The game has no restart point — AGAIN is
+       * `start()` and wave 1 — and a word that promises one is a promise the
+       * next death breaks. ACT n CLEAR is the game's own unit, parallel to
+       * WAVE CLEAR. `bossesLeft` is read after the increment above, so the
+       * count is what is still owed, and at one left it names the finale
+       * rather than counting it: the last act is the one the run ends on and
+       * the banner is where the game says so.
+       */
+      const act = actOf(this.waveIndex);
+      const left = this.bossesLeft;
+      const next = left <= 1 ? 'THE FINAL SET IS NEXT' : `${left} TO GO`;
+      this.announce(
+        `BOSS ${act} OF ${BOSS_COUNT} DOWN`,
+        `ACT ${act} CLEAR · ${next} · +1 REROLL · +1 BANISH`,
+        'act',
+      );
+    } else {
+      this.announce(
+        grade === 'perfect' ? 'FLAWLESS' : grade === 'clean' ? 'WAVE CLEAR' : 'WAVE CLEAR',
+        grade === 'perfect' ? `UNTOUCHED · x${1 + this.wavePeakCombo}` : '',
+        'grade',
+      );
+    }
     // One bar of breathing room. Two left long enough dead air between waves
-    // that the arrangement sat in a breakdown for a third of the run.
+    // that the arrangement sat in a breakdown for a third of the run. The
+    // act banner above outlives this bar; `beginWave` yields to it rather
+    // than this timer being stretched — see there.
     this.phaseTimer = BEATS_PER_BAR * this.transport.secondsPerBeat();
     this.phase = 'interlude';
   }

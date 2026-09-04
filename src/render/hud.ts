@@ -39,6 +39,7 @@ import type { DirectorReadout } from '../audio/director';
 import { STEM_LABELS, type StemId } from '../audio/layers';
 import { ARCHETYPE_INFO } from '../game/enemies';
 import { powerupDef } from '../game/powerups';
+import { BOSS_COUNT, BOSS_EVERY, TOTAL_WAVES } from '../game/waves';
 import { characterOf, labelOf, maxLevelOf, slotOf } from '../game/weapons';
 import { characterHue, readyFusions, pendingFusions } from './levelup';
 
@@ -47,6 +48,34 @@ const $ = (id: string): HTMLElement => {
   if (!el) throw new Error(`missing element #${id}`);
   return el;
 };
+
+/** `4TH`, for the opener's one line about the run's shape. */
+const ordinal = (n: number): string => {
+  const r = n % 100;
+  const s = r >= 11 && r <= 13 ? 'TH' : n % 10 === 1 ? 'ST' : n % 10 === 2 ? 'ND' : n % 10 === 3 ? 'RD' : 'TH';
+  return `${n}${s}`;
+};
+
+/**
+ * The shape of the run, in one line under the opener's rule: `16 WAVES · A
+ * BOSS EVERY 4TH · THE 4TH IS THE LAST`.
+ *
+ * Derived from `waves.ts`, whose own note is "ONE CONSTANT, AND EVERYTHING
+ * ELSE IS DERIVED"; the map that preceded this line found the last widget
+ * that had forgotten it, reading `OF 3` under four pips.
+ *
+ * THREE CLAUSES, so the line can wrap only between them. It is 338 CSS px at
+ * 10px and fits every desktop window on one line; the 363-px mobile stage
+ * gives the rule 283 px of content and the line wrapped as `THE 4TH IS /
+ * THE LAST`, photographed. Each clause is its own no-wrap span, so the phone
+ * reads `16 WAVES · A BOSS EVERY 4TH ·` over `THE 4TH IS THE LAST`.
+ */
+export const RUN_SHAPE_PARTS: readonly string[] = [
+  `${TOTAL_WAVES} WAVES`,
+  `A BOSS EVERY ${ordinal(BOSS_EVERY)}`,
+  `THE ${ordinal(BOSS_COUNT)} IS THE LAST`,
+];
+export const RUN_SHAPE_LINE = RUN_SHAPE_PARTS.join(' · ');
 
 /**
  * The standing rule for a wave, in the HUD's own words.
@@ -65,15 +94,18 @@ const MOVEMENT_UI: Record<'flank' | 'elite' | 'hush', [string, string]> = {
  * The lanes the opening watches for, and what each one is for.
  *
  * Four bars pass between START and the first enemy while the arrangement builds
- * itself. Measured entry on this build is chords immediately, lead by bar 3,
- * hats by bar 4 and kick by bar 5 — but nothing here is timed: a row lights
- * when the director's level for that stem crosses, so if the intro is re-voiced
- * the display follows it rather than lying about it. `sub`, `fx` and `power`
- * are deliberately not listed: they are up from the first frame, so a list
- * including them would start fully lit and tell the story backwards.
+ * itself. The BASS states the key now: the chords lane's sustained supersaw pad
+ * was deleted (see `buildChords`), so the row that used to read CHORD reads
+ * BASS, and `INTRO_ENTRY` brings it in first (measured onsets on this build,
+ * `tools/opening.mjs`: bass bar 2, the stab and the motor bar 4, kick and lead
+ * bar 6) — but nothing here is timed: a row lights when the director's level
+ * for that stem crosses, so if the intro is re-voiced the display follows it
+ * rather than lying about it. `sub`, `fx` and `power` are deliberately not
+ * listed: they are up from the first frame, so a list including them would
+ * start fully lit and tell the story backwards.
  */
 const OPENING_LANES: readonly [StemId, string][] = [
-  ['chords', 'the key you are fighting in'],
+  ['bass', 'the key you are fighting in'],
   ['lead', 'the line that follows you'],
   ['hats', 'the pulse underneath it'],
   ['kick', 'the floor the rest stands on'],
@@ -173,6 +205,15 @@ export class Hud {
       $('opening-list').appendChild(li);
       this.openerRows.push({ id, li, fill, lit: false });
     }
+    // One no-wrap span per clause, separated by ` · ` text nodes the line can
+    // break at; `textContent` of the whole is `RUN_SHAPE_LINE`.
+    const shape = $('opening-shape');
+    RUN_SHAPE_PARTS.forEach((part, i) => {
+      if (i > 0) shape.appendChild(document.createTextNode(' · '));
+      const span = document.createElement('span');
+      span.textContent = part;
+      shape.appendChild(span);
+    });
 
     const toggle = () => this.setSettings(this.settingsEl.classList.contains('hidden'));
     $('ui-gear').addEventListener('click', toggle);

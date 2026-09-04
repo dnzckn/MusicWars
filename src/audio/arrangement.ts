@@ -104,7 +104,12 @@ export interface ActShape {
   tempo: number;
   /** Is the sub accent unlocked yet? See `STEM_CURVES.sub` for what it is. */
   sub: boolean;
-  /** Is the chordal ninth unlocked yet? See `Signals.colour9`. */
+  /**
+   * Is the chordal ninth unlocked yet? Spelled into the chord itself from the
+   * intensification on — see `theory.Extension` and the note beside
+   * `chordForBar` in `director.ts`. (It used to gate `Signals.colour9`, a
+   * fader on the colour pair; that pair and the signal are deleted.)
+   */
   ninth: boolean;
   /** Which harmonic sentence the phrases are built from. See `theory.ts`. */
   shape: ProgressionShape;

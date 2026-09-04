@@ -754,13 +754,14 @@ if (!spanFail) {
  * (windowsChecked === 0)` guard below catches total loss and not partial loss,
  * which is the AGENTS.md §3 denominator problem one level up.
  *
- * So the mapping is derived, and the COUNT it must reach is asserted: five
- * groups, one per entry in `VOICE_TAGS`. That is one more than the old table
- * had — `colour` was excluded because `chords/triangle` was two different parts
- * sharing an oscillator (the deleted clavinet and the colour tones), and with
- * the clav gone the ambiguity that forced the exclusion is gone with it.
+ * So the mapping is derived, and the COUNT it must reach is asserted: one
+ * group per entry in `VOICE_TAGS`, whatever that number is. It was five; it
+ * is three since the chords pad (`pad`, supersaw u3) and the colour pair
+ * (`colour`, supersaw u2) were deleted on the owner's word — the count fell
+ * with the table rather than with a hand edit here, which is the whole point
+ * of deriving it. `STEM_OF_LANE` lost its two dead keys at the same time.
  */
-const STEM_OF_LANE = { pad: 'chords', colour: 'chords', stab: 'chords', motor: 'motor', arp: 'arp' };
+const STEM_OF_LANE = { stab: 'chords', motor: 'motor', arp: 'arp' };
 const GROUP_WINDOW = {};
 for (const t of Object.values(VOICE_TAGS)) {
   GROUP_WINDOW[keyForTag(STEM_OF_LANE[t.lane], t)] = t.lane;

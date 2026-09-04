@@ -1514,3 +1514,103 @@ the weakest**: it is a `strike`, TIMPANI is a `strike`, and on a still frame
 they are rings appearing over there. QUADRILLE's four axes are unmistakable in
 motion and nearly invisible in a photograph, which is a real risk for the one
 weapon whose whole identity is where the bolts went.
+
+## 2026-09-04 — The run map, and the synth deleted rather than capped
+
+Three reports from play, landed together: "needs a new screenshot in the
+readme"; "progression thru the level is unclear where checkpoints are etc";
+"the synth sound is really bad i hate it remove that and clean up the music".
+Every claim below is MEASURED off haps, a headless run, or a photograph unless
+marked HEARD — and nothing was heard.
+
+### The run map (`src/game/runmap.ts`, `renderer.ts`, `world.ts`)
+
+The old left bar counted waves inside ONE boss cycle, with four 4 px act pips
+above it; a boss kill printed the same WAVE CLEAR as any wave; the telegraph
+had no words; pause and game-over never said how many bosses were down; and a
+RETRIED run showed the previous run's last plan for ~3.75 s because `start()`
+never reset `plan`. Photographed at 1440x900 before anything moved.
+
+Now: a run bar of `TOTAL_WAVES` segments in `BOSS_COUNT` groups with a diamond
+at every boss (`1 2 3 FINAL`, hollow ahead, lit next, breathing while the boss
+is on the field, gold once beaten), a two-line stack `WAVE 6 OF 16 / BOSS IN
+2` sized in CSS px (9 px floor at every window — the view is zoomed and a
+13-view-px numeral was 6.7 CSS px on a phone), the boss HP bar flush to the
+top edge with `BOSS 2 OF 4` / `THE FINAL SET` centred under it and its hue
+ramp fixed (`lerp(350, 20)` ran through violet and green; a mini at 76% read as
+the finale's violet), banners `WAVE n OF 16`, `BOSS WAVE / BOSS a OF 4 · CLEAR
+THE ESCORT`, `BOSS a OF 4 / INCOMING` at the telegraph (deferred one update so
+it cannot clobber a LEVEL banner — `wiring` stays green), `BOSS a OF 4 DOWN /
+ACT a CLEAR · k TO GO · +1 REROLL · +1 BANISH` on the kill (the next WAVE
+banner yields to it instead of the interlude growing — two bars was the
+measured breakdown-for-a-third-of-the-run defect), roman numerals through
+PHASE V, an opener line `16 WAVES · A BOSS EVERY 4TH · THE 4TH IS THE LAST`
+derived from the constants, the pause row `ACT a OF 4 · WAVE w OF 16 · b
+BOSSES DOWN`, the loss line `· b of 4 bosses down`, and `WAVE w OF 16 · ACT a`
+under LEVEL n on the offer. The word CHECKPOINT is not used: the game has no
+restart point and a word that promises one is a promise the next death breaks.
+
+Gates: `runmap` (new) drives whole runs and asserts the bar's STRINGS against
+the world's public getters — 240,584 frames over two winning runs, 0 segment
+retreats, act banner x3 and telegraph x4 per run, 0 double announces, the
+retried run's first frame reads WAVE 1 OF 16; twelve breaks seen red, logged in
+its header. `effectsdraw` now asserts the bar is drawn by its own inks and
+strings (it was silently skipped in the stub and green — the vacuous pass).
+`_warpshots` imports the geometry instead of holding a copy; 1280x600 added,
+the resume pill un-hidden: all five windows CLEAR. Photographed at 1440x900,
+900x700, 1280x600 and 375x812 at every moment listed in the spec.
+
+### The synth (`src/audio/layers.ts`, `director.ts`, `soundfonts.ts`)
+
+Attribution, measured three ways rather than recalled: the chords lane's
+three-voice supersaw PAD (116-233 Hz) was the first pitched sound of every run
+— bars 2-3, alone, three seeds; its two-voice supersaw COLOUR pair (740-1480
+Hz) was the top sustained voice above 500 Hz in the drop once the lead rests;
+and bass+chords was 47% of all masking weight, 2620 of its 3265 inside the
+pad's own window. Two capping commits (`2524fcb`, `6e6bdc4`) had lowered their
+filters and levels and did not answer the complaint. Both are DELETED; the
+chords lane is the sawtooth stab. The STUTTER motif (the recorded "pinging
+noise", the top high voice of intro bar 5) went an octave down with its
+lowpass halved. `colour7`/`colour9` and the `pad`/`colour` soundfont roles went
+with them; `LANE_RANGE.pad`/`.colour` and `chord.colour` stay as the
+voice-leading window. The intro opens sub -> bass -> stab -> motor -> kick ->
+lead; the TUNING UP row reads BASS.
+
+Measured, same code before and after: simultaneous pitched voices mean 12.0 ->
+8.0, per-bar peak median 15 -> 11, max 16 -> 12; masking audible weight 874.7
+-> 493.9 per bar, bass+chords 3264.7 -> 504.8, 0 of 46 lane pairs heavy (was 1
+of 66); chords fader mean 0.42 -> 0.47 (it describes the stab now); the full
+32-bar drop capture's 1 kHz octave -38.3 -> -40.0 dBFS and 2 kHz -40.1 ->
+-40.8 (the 1 kHz move is the only one past the 1.3 dB floor — the lane was
+already 30 dB under the mix); the chords stem soloed: supersaw x128 + sawtooth
+x52 -> sawtooth x52, -34.6 -> -48.2 dBFS rms. `harmony` replaces CLUSTER with
+NO SUPERSAW (sections x feels x {nova, hush}, 8,100 haps) and NO SUSTAIN (whole
+x clip, longest 0.14 bar), both seen red; `opening` counts harmony by
+AUDIBILITY (`gain² · fader² > AUDIBLE_FLOOR`, imported) — bass audible 6/8
+intro bars, stab 14/24 before the drop, both seen red; `chop`'s negative
+control is the sub (its positive control failed under load both runs, so its
+hole numbers are not evidence yet); `bosscheck`, red on HEAD for the deleted
+Lavender Town treatment, rewritten for the current boss score, four
+assertions seen red; `registermap` 3 mapped groups, `harm@lpf` unchanged per
+remaining group; `fontlanes` lost the two rows out loud.
+
+Red at HEAD and left alone, stated: `session` (headroom: lead and chords
+`full` above max energy 0.80), `faders` (arp range 0.01-0.08 — the arp is
+inaudible in play, fader mean 0.03, 100% near zero), `phrasing` (a TypeError in
+its own apex arithmetic; reproduced on a HEAD checkout served on :5176).
+
+Scope, stated: in the first 20 s the top high voices AFTER this change are the
+lead pulse with its supersaw width (climbing to 1760 Hz under the encirclement
++12 register latch), the stutter square, and the bass reese. The lead is
+untouched — four re-voicings on record and its own recorded next step ("a
+STAB, not a line"). If the owner still hears "synth" in the opening, that is
+the next pass, by name.
+
+### README
+
+Prose corrected to the audited facts (bullet hell on a treadmill; throttle and
+warp controls; 3000 wide and unbounded; 30 instruments, 103 arrangements, 8+8
+starters; the run's shape; RASP / SORDINO / INTERLUDE; four fonts off, 1.4 s
+warp arm) and the screenshot retaken on this tree: wave 6, act 2, warp
+latched, 187 alive, the run bar showing the first boss beaten.
+

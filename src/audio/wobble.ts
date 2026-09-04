@@ -430,7 +430,8 @@ export function wub(notes: Patternable, o: WubOpts): Pattern {
        * `registermap` grouped this voice as `bass/sine` and read `room 0.00`.
        * The halftime feel is 27.8% of the bars in the game by the recorded
        * rota, so a bone-dry lane here is a bone-dry low end for a quarter of
-       * every run while the pad above it sends 0.58. One room, one building.
+       * every run while the harmony above it sent 0.58 (the pad, then; the
+       * stab sends 0.28-0.7 now). One room, one building.
        * Small (size 2) because a long tail on a wobble fills the gaps the LFO
        * cuts, and the gaps ARE the part.
        */
