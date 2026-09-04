@@ -1131,9 +1131,12 @@ export interface Chord {
   /**
    * True on the one bar per modulation that is the incoming key's dominant.
    *
-   * READ BY NO LANE since the pad was deleted: `stabGuideTones` states the
-   * incoming leading tone on a pivot because it is a guide tone, without
-   * asking. Kept because the flag is the fact and it costs nothing. It existed
+   * READ BY THE STAB since the pad was deleted: `stabGuideTones` spells the
+   * dominant's root and the leading tone on a pivot instead of the guide
+   * tones, and `buildChords` lets the stab play a pivot bar inside a breakdown
+   * — the one bar that lane otherwise rests. Measured by `tools/arc.mjs`
+   * ARRIVAL: 12/12 modulations announced with the pad, 10/12 with guide tones
+   * alone, 12/12 owed back by this. The flag existed
    * because of a collision between two good rules. The pad dropped the THIRD
    * whenever the melody was sounding — the
    * third is the tone that grinds against a tune held for a whole bar, and the
