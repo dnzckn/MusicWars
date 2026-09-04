@@ -174,7 +174,10 @@ export const MINI_BOSSES = BOSS_COUNT - 1;
  * The wave index of the final boss. Clearing it ends the run in a WIN.
  *
  * Boss waves are `index % BOSS_EVERY === BOSS_EVERY - 1`, so the n-th boss is
- * at `n * BOSS_EVERY - 1` counting from one: 3, 7, 11, 15, 19.
+ * at `n * BOSS_EVERY - 1` counting from one: 3, 7, 11, 15 at `BOSS_COUNT` 4.
+ * (This line used to end "…, 19" from the five-boss draft the table above
+ * cut; the run ends at 15 and a comment listing a sixteenth act's boss is the
+ * drift the constant exists to prevent.)
  */
 export const FINAL_BOSS_WAVE = BOSS_COUNT * BOSS_EVERY - 1;
 

@@ -59,7 +59,7 @@ const GROUPS = [
    * painting the whole world with every other gate still green — which is
    * precisely the sort of thing this list exists to catch.
    */
-  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn', 'gridcost', 'gridview']],
+  ['rules', 300, ['mirror', 'stats', 'levelup', 'wiring', 'discovery', 'aimcheck', 'offerchurn', 'gridcost', 'gridview', 'runmap']],
   ['slow', 600, [
     'brain', 'pause', 'drops', 'overdrive', 'session', 'realprobe',
     /*

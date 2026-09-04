@@ -47,6 +47,7 @@
 
 import type { AbilityId, AbilitySlot, EvolvedId, GameSnapshot, GraceKind } from '../core/events';
 import { clamp01, TAU } from '../core/math';
+import { TOTAL_WAVES } from '../game/waves';
 import {
   DUET_INPUT_LEVEL,
   FUSIONS,
@@ -1018,7 +1019,7 @@ export class LevelUpOverlay {
     }
     g.globalAlpha = 1;
 
-    this.drawHeader(g, W, H, page, barPhase, downbeat);
+    this.drawHeader(g, snap, W, H, page, barPhase, downbeat);
     this.layout(cards, W, H);
 
     for (let i = 0; i < cards.length; i++) {
@@ -1043,6 +1044,7 @@ export class LevelUpOverlay {
    */
   private drawHeader(
     g: CanvasRenderingContext2D,
+    snap: GameSnapshot,
     W: number,
     H: number,
     page: number,
@@ -1070,12 +1072,17 @@ export class LevelUpOverlay {
      * position UNLESS that would put the block into the cards, in which case
      * the block moves up; and if the band is too shallow to hold it even at
      * the top of the screen, `k` shrinks the whole header instead of letting
-     * it overrun. At 720 and above nothing moves — the origin lands at 43.9
-     * where it used to land at 44.6 — which is deliberate: this is a fix for
-     * short windows and must not redesign the ordinary one.
+     * it overrun. This is a fix for short windows and must not redesign the
+     * ordinary one: at 880 (1440x900) the origin lands at its design 54.6.
+     *
+     * The subtitle moved from `y + 66` to `y + 79` when the run line went in
+     * under the heading (below), so `DEEP` grew by 13 and the block now
+     * starts moving up at 800 rather than 720 — at 728 (1280x600) it sits 14
+     * px higher than it did. `tools/levelupdraw.mjs`'s straddle check is the
+     * gate on that arithmetic.
      */
     const band = H * 0.175;
-    const DEEP = 66 + 13 * 0.62 + 8;
+    const DEEP = 79 + 13 * 0.62 + 8;
     const k = Math.min(1, band / (DEEP + 14));
     const y = Math.min(H * 0.062, band - DEEP * k);
 
@@ -1150,6 +1157,25 @@ export class LevelUpOverlay {
      * is worth. The chip beside the heading says the number; this says what
      * the number means.
      */
+    /*
+     * WHERE THE RUN IS, under the heading: `WAVE 6 OF 16 · ACT 2`.
+     *
+     * This screen hides the HUD and the run bar — measured at 43 visits in
+     * one run (`docs/progression.md` §1.7) — so for the whole time a player
+     * is weighing a card the only structural readout on the screen was gone.
+     * One line, in the snapshot's own numbers (`wave` is `#ui-wave`'s number,
+     * `act` is published so nothing hard-codes four), not a card type: the
+     * four-card offer is zero-sum (AGENTS.md §5) and this takes no slot.
+     */
+    // 12 view px bold against the subtitle's 13 regular: a step smaller, a
+    // step heavier, so the two read as a pair and not as one line wrapped.
+    // (11 was 8.6 CSS px at 900x700, photographed — under the run bar's
+    // 9 CSS px floor. This panel is sized in view px throughout, so on the
+    // phone every line here is small; that is the panel's, not this line's.)
+    g.font = `700 ${(12 * k).toFixed(1)}px ui-monospace, monospace`;
+    g.fillStyle = `rgba(190,205,235,${(a * 0.8).toFixed(3)})`;
+    g.fillText(`WAVE ${snap.wave + 1} OF ${TOTAL_WAVES} · ACT ${snap.act}`, cx, y + 63 * k);
+
     g.font = `600 ${(13 * k).toFixed(1)}px ui-monospace, monospace`;
     g.fillStyle = `hsla(200, 60%, 78%, ${a * 0.72})`;
     g.fillText(
@@ -1157,7 +1183,7 @@ export class LevelUpOverlay {
         ? `${this.queued + 1} levels to spend — who joins first?`
         : 'the band is waiting — who joins?',
       cx,
-      y + 66 * k,
+      y + 79 * k,
     );
   }
 

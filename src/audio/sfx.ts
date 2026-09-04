@@ -600,8 +600,8 @@ export function sfxWaveClear(notes: readonly number[], grade: 'perfect' | 'clean
 /**
  * Curtain up.
  *
- * The scheduler needs a moment to spin up, and the intro pad has a 450ms
- * attack, so the first pattern-driven sound of a run measured ~2.9s after the
+ * The scheduler needs a moment to spin up, and the intro pad (deleted since —
+ * `buildChords`; the sub opens a run now) had a 450ms attack, so the first pattern-driven sound of a run measured ~2.9s after the
  * player pressed start — an eternity when you have just clicked a button. This
  * goes through the unquantised path (~30ms) so the game answers the click
  * immediately, and it swells rather than hits, so it reads as the track opening
@@ -622,8 +622,10 @@ export function sfxRunStart(notes: readonly number[]): void {
        * A 50%-duty pulse per voice, spread across the stereo field, gives the
        * same swelling three-part chord without the detune beating. Width comes
        * from the three notes being placed apart rather than from each one being
-       * seven of itself — which is how the canon gets width, and is also why
-       * this now matches the pad the intro is about to bring in.
+       * seven of itself — which is how the canon gets width, and was also why
+       * this matched the pad the intro used to bring in. That pad is deleted;
+       * the run opens on the sub and then the bass, and this chord is now the
+       * only sustained pitched thing in the first bar, on purpose.
        *
        * Envelope untouched: the long attack and tail were right, and the note
        * above them about swelling rather than hitting is the best sentence in

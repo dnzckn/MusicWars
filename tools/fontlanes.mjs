@@ -75,7 +75,8 @@ function state(over = {}) {
  */
 const BUILDERS = [
   { name: 'buildBass', build: (s) => L.buildBass(s), roles: ['bass'] },
-  { name: 'buildChords', build: (s) => L.buildChords(s), roles: ['pad', 'colour', 'stab'] },
+  // `stab` only: the `pad` and `colour` roles went with the voices (see SHIPPED).
+  { name: 'buildChords', build: (s) => L.buildChords(s), roles: ['stab'] },
   { name: 'buildMotor', build: (s) => L.buildMotor(s), roles: ['motor'] },
   { name: 'buildLead', build: (s) => L.buildLead(s), roles: ['leadTune', 'leadDecor'] },
 ];
@@ -134,10 +135,25 @@ line('');
  * pulse would have failed a lane that never had it. Named per lane, from the
  * source as it stood, for the same reason as the oscillator itself.
  */
+/*
+ * TWO ROWS ARE GONE, AND THIS TABLE WENT RED ON PURPOSE WHEN THEY WENT.
+ *
+ *   pad     { s: 'supersaw', unison: 3, extras: ['detune', 'spread'] }
+ *   colour  { s: 'supersaw', unison: 2, extras: ['detune', 'spread'] }
+ *
+ * Those were the chords lane's sustained bed (116-233 Hz, root+fifth) and its
+ * held upper structure (740-1480 Hz, the 9th and 13th). Both voices, and both
+ * `soundfonts.ts` roles, were deleted on the owner's word — "also the synth
+ * sound is really bad i hate it remove that and clean up the music" — after
+ * two capping commits (`2524fcb`, `6e6bdc4`) lowered their filters and levels
+ * and did not answer it. This table's own doctrine (above) is that it must not
+ * track the source, so the removal made it fail with `role "pad" has no entry
+ * in SHIPPED`-shaped errors from the other direction, and the two rows are
+ * removed here by hand, out loud, as that doctrine requires. The chords lane
+ * ships one role now, the stab.
+ */
 const SHIPPED = {
   bass: { s: 'sawtooth', extras: [] },
-  pad: { s: 'supersaw', unison: 3, extras: ['detune', 'spread'] },
-  colour: { s: 'supersaw', unison: 2, extras: ['detune', 'spread'] },
   stab: { s: 'sawtooth', extras: [] },
   motor: { s: 'pulse', pw: 0.34, extras: ['pwrate', 'pwsweep'] },
   /*

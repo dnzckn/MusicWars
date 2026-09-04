@@ -240,7 +240,10 @@
             premise of the soundtrack. That premise is worth the first line;
             it is not worth all four bars.
           -->
-          <p class="opener-rule"><b>they come from behind you</b><span>the ship never stops &mdash; <kbd>W</kbd><kbd>S</kbd> only choose how fast</span></p>
+          <!-- The shape of the run, in one line, filled by `Hud` from the
+               constants in `waves.ts` so it cannot drift from the schedule.
+               The run has an end and nothing on this screen said so. -->
+          <p class="opener-rule"><b>they come from behind you</b><span>the ship never stops &mdash; <kbd>W</kbd><kbd>S</kbd> only choose how fast</span><span class="shape" id="opening-shape"></span></p>
           <ul id="opening-list" class="opener-list"></ul>
           <p class="opener-foot">nothing you are about to hear was recorded in advance</p>
         </div>
@@ -321,7 +324,7 @@
               of a dodge. The gauge shows the hold filling and the banner names
               it, but both of those happen after the decision.
             -->
-            <div><dt>Warp</dt><dd><em>hold</em> <kbd>W</kbd><em>1.5s &mdash; the stage floods and the boss comes fast. Hold</em> <kbd>S</kbd><em>to drop out</em></dd></div>
+            <div><dt>Warp</dt><dd><em>hold</em> <kbd>W</kbd><em>1.4s &mdash; the stage floods and the boss comes fast. Hold</em> <kbd>S</kbd><em>to drop out</em></dd></div>
             <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
             <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
             <div><dt>Level up</dt><dd><kbd>Space</kbd><em>spend the levels you have banked</em></dd></div>
@@ -423,6 +426,10 @@
             <div><dt>MULTIPLIER</dt><dd id="pause-mult">x1</dd></div>
             <div><dt>NOTES</dt><dd id="pause-notes">0</dd></div>
           </dl>
+          <!-- Where the run is: ACT a OF 4 · WAVE w OF 16 · b BOSSES DOWN. A
+               pause is the one moment a player can read anything, and the
+               screen said nothing about the run's shape. Filled in main.ts. -->
+          <p class="runline" id="pause-run"></p>
           <p class="nowplaying" id="pause-music"></p>
 
           <!-- The build plan. The HUD's one-line banner shows only the most
@@ -439,7 +446,7 @@
                axis is a throttle, and SPACE is what spends a banked level. -->
           <dl class="controls">
             <div><dt>Throttle</dt><dd><kbd>W</kbd><kbd>S</kbd><em>faster or slower &mdash; the ship never stops</em></dd></div>
-            <div><dt>Warp</dt><dd><em>hold</em> <kbd>W</kbd><em>1.5s &mdash; the stage floods and the boss comes fast. Hold</em> <kbd>S</kbd><em>to drop out</em></dd></div>
+            <div><dt>Warp</dt><dd><em>hold</em> <kbd>W</kbd><em>1.4s &mdash; the stage floods and the boss comes fast. Hold</em> <kbd>S</kbd><em>to drop out</em></dd></div>
             <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
             <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
             <div><dt>Focus</dt><dd><kbd>Shift</kbd><em>tighter, harder</em></dd></div>
@@ -473,7 +480,9 @@
           <!-- Empty on a loss; the victory line on a win. Populated in main.ts. -->
           <p class="outcome" id="final-outcome"></p>
           <p class="stat"><span id="final-score">0</span></p>
-          <p class="sub">reached wave <span id="final-wave">1</span></p>
+          <!-- `#final-wave` stays a bare number: `tools/_finaleshots.mjs`
+               reads it. The bosses-down count on a loss is its own node. -->
+          <p class="sub">reached wave <span id="final-wave">1</span><span id="final-bosses"></span></p>
           <p class="sub" id="final-best">best 0</p>
           <dl class="runstats">
             <div><dt>NOTES</dt><dd id="final-notes">0</dd></div>

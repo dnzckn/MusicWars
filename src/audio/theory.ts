@@ -255,6 +255,15 @@ export type LaneId = 'sub' | 'bass' | 'pad' | 'motor' | 'stab' | 'lead' | 'colou
  *     colour   the 9th and the 13th, on top of the chord, not wandering
  *     arp      SPARKLE, above the tune AND above the extensions
  *
+ * TWO OF THOSE ROWS NO LONGER SOUND. The pad and the colour pair were deleted
+ * from `buildChords` on the owner's word (the tombstone there has the
+ * measurements). Their windows STAY in this table, and the reason is written
+ * beside each: `pad` is `voiceLead`'s window and scoring ceiling, `colour` is
+ * where `voiceLead` leads `chord.colour` and where the arp's floor was
+ * measured against. A window a lane is placed AGAINST is a contract even when
+ * no lane is placed IN it. The band, bottom to top, as it sounds now: sub,
+ * bass, motor, stab, lead, arp.
+ *
  * Overlaps that remain are deliberate and they are the ones an arranger keeps:
  * the bass line crosses the bed, and the upper structure sits under the tune.
  * What is gone is two lanes occupying the SAME window with the same pitches,
@@ -270,17 +279,24 @@ export const LANE_RANGE: Record<LaneId, LaneWindow> = {
   // 87-220 Hz. `buildBass` writes `root - 12` and reaches an octave above it.
   bass: { anchor: 45, lo: 38, hi: 57 },
   /*
-   * 116-233 Hz, and it is DOWN from a measured 51-62.
+   * THE VOICE-LEADING WINDOW. No lane sounds it.
    *
-   * The pad is the only lane whose register move has been measured twice with
-   * opposite verdicts, so the history matters. Capping it as a full triad made
+   * 116-233 Hz, and it is DOWN from a measured 51-62. This was the chords pad's
+   * register — a sustained root-and-fifth dyad under everything — and the pad
+   * is deleted (`buildChords`). The window stays because it was never only
+   * the pad's: it is `voiceLead`'s default `low`/`high`, the ceiling its
+   * scoring charges a stack for climbing above, and the register `chord.notes`
+   * arrive in before the stab folds them into `LANE_RANGE.stab` and the motor
+   * into its own. Move it and every lane's fold starts from a different place.
+   *
+   * The pad's own history, kept because it is the only register in this table
+   * measured twice with opposite verdicts: capping it as a full triad made
    * roughness WORSE (1950 -> 2066 pairs) because the displaced voices simply
-   * collided further down. Opening it to fifths changed the object, and the
-   * same move re-tested against a DYAD was worth -18% on `chords+lead`. This
-   * table continues that second result rather than reversing the first.
-   *
-   * The floor is 46 and not 45 because `buildChords` highpasses this lane at
-   * 80 Hz to keep it off the sub, and MIDI 46 is 116 Hz — comfortably above.
+   * collided further down; opening it to fifths changed the object, and the
+   * same move re-tested against a DYAD was worth -18% on `chords+lead`. The
+   * floor is 46 and not 45 because the pad highpassed at 80 Hz to keep off the
+   * sub, and MIDI 46 is 116 Hz. The next sustained lane anyone writes here
+   * inherits both facts.
    */
   pad: { anchor: 52, lo: 46, hi: 58 },
   // 220-440 Hz. Unchanged, and named in `layers.ts` as MOTOR_BOTTOM/MOTOR_TOP.
@@ -290,7 +306,17 @@ export const LANE_RANGE: Record<LaneId, LaneWindow> = {
   // 440-988 Hz. The tune's own octave, and nothing else sustains in it.
   lead: { anchor: 69, lo: 69, hi: 83 },
   /*
-   * 740-1480 Hz, and it is the largest single narrowing in the table: the
+   * NO LANE SOUNDS THIS WINDOW EITHER. The colour pair — the chords lane's
+   * two-voice supersaw on the ninth and the thirteenth — is deleted
+   * (`buildChords`). `LANE_RANGE.colour` and `chord.colour` stay: `voiceLead`
+   * leads the two tones into this window every bar, `pivotChord` and
+   * `buildChord` spell them, `tools/phrasing.mjs` scores melody clashes
+   * against them, and the arp's floor of 87 (below) was chosen by measuring
+   * against this window's top. They exist for voice-leading and placement,
+   * not for sound. The measurement below is the record of how the window was
+   * chosen and is kept as such.
+   *
+   * 740-1480 Hz, and it was the largest single narrowing in the table: the
    * extension pair measured 56-90, a 34-semitone spread for TWO voices.
    *
    * They are extensions of a chord, so they belong on top of that chord and
@@ -911,11 +937,12 @@ export function pivotChord(fromTonic: number, toTonic: number): Chord {
     // same partition every other chord carries; see `Chord.core`.
     core: [root, root + 4, root + 7],
     tensions: [root + 10],
-    // The ninth and the thirteenth above it. Faded by `sig.colour7/9` like
-    // every other colour tone, so the pull is strongest when the mix is open.
+    // The ninth and the thirteenth above it. Unsounded — the colour pair that
+    // faded them on `sig.colour7/9` is deleted — but led by `voiceLead` like
+    // every other chord's, so the arp's placement and `phrasing` see them.
     colour: [root + 14, root + 21],
-    // The symbol the pad and the stab spell it from. `7` is the iReal key for
-    // a dominant seventh, so a pivot voices like every other chord.
+    // The symbol the stab spells it from (and the pad did). `7` is the iReal
+    // key for a dominant seventh, so a pivot voices like every other chord.
     symbol: NOTE_NAMES[(((root % 12) + 12) % 12)] + '7',
     root,
     /*
@@ -928,7 +955,7 @@ export function pivotChord(fromTonic: number, toTonic: number): Chord {
     degree: 4,
     // The last bar of a phrase, where the tune falls into its cadence.
     contour: contourForBar(BARS_PER_PHRASE - 1),
-    // The pad keeps its third here, and only here. See `Chord.pivot`.
+    // The pad kept its third here, and only here. See `Chord.pivot`.
     pivot: true,
   };
 }
@@ -947,7 +974,7 @@ export function pivotChord(fromTonic: number, toTonic: number): Chord {
  * form, which is the only reason the harmony is allowed to know it — the pitches
  * stay a pure function of (theme, phrase, bar) and this is a constant.
  *
- * `voiceLead` uses it to keep the pad's top voice from moving WITH the tune.
+ * `voiceLead` uses it to keep the voicing's top voice from moving WITH the tune.
  * That is the rule counterpoint actually has: contrary motion is best, oblique
  * motion — one part moving while the other holds its common tone — is the
  * second best and is most of what a real inner voice does, and only similar
@@ -1104,8 +1131,11 @@ export interface Chord {
   /**
    * True on the one bar per modulation that is the incoming key's dominant.
    *
-   * Read by `buildChords`, and it exists because of a collision between two
-   * good rules. The pad drops the THIRD whenever the melody is sounding — the
+   * READ BY NO LANE since the pad was deleted: `stabGuideTones` states the
+   * incoming leading tone on a pivot because it is a guide tone, without
+   * asking. Kept because the flag is the fact and it costs nothing. It existed
+   * because of a collision between two good rules. The pad dropped the THIRD
+   * whenever the melody was sounding — the
    * third is the tone that grinds against a tune held for a whole bar, and the
    * motor is stating it anyway (see the open-fifths note in `buildChords`). On
    * a pivot that rule deletes the only note that matters: the major third of
@@ -1149,7 +1179,7 @@ export interface Chord {
  *
  * Replacing the third is also what a keyboard player does. The third is the
  * tone that grinds against a sustained melody a semitone or a tone away — the
- * pad already drops it for exactly that reason — and the MOTOR states it
+ * pad dropped it for exactly that reason, when there was one — and the MOTOR states it
  * continuously in its own register, so the chord's quality is never in doubt.
  * What the substitution buys is the sound of a ninth chord, at the same voice
  * count, in the one lane a listener follows the harmony in.
@@ -1202,13 +1232,14 @@ export function buildChord(
    * The 9th and the 13th, and the field's meaning moved up a rung with the
    * chord.
    *
-   * `Signals.colour7` and `colour9` are named for what they used to fade — the
-   * seventh and the ninth — and they now ride the NINTH and the THIRTEENTH.
-   * The names are director-side and renaming them would touch four files for
-   * no behavioural change, so it is recorded here instead: `colour[0]` is what
-   * `colour7` fades and `colour[1]` is what `colour9` fades, whatever they are
-   * called. What matters is the ordering, which is unchanged — the lower
-   * extension arrives first.
+   * `Signals.colour7` and `colour9` were the faders on these two — named for
+   * the seventh and the ninth they used to fade, riding the ninth and the
+   * thirteenth by the end. Both signals are gone with the colour pair that
+   * read them (`buildChords`). Nothing SOUNDS `colour` now; it is led by
+   * `voiceLead` into `LANE_RANGE.colour` so that the arp's window placement
+   * and `phrasing.mjs`'s clash scoring keep seeing the same two tones. The
+   * ordering is unchanged — the lower extension first — for whoever sounds
+   * them next.
    */
   const colour = [ninth, thirteenth];
   // No contour by default: a chord built outside the phrase — for the key
@@ -1254,8 +1285,10 @@ export function buildChord(
  * Two more things are scored, and both are about the pad's relationship to
  * things this function cannot see. It may not LEAP in the direction the tune is
  * going (`Chord.contour`), and it is charged for climbing above the melody's
- * floor. Neither is voice leading in the textbook sense; both are the pad
- * remembering that it is the bed and not the tune.
+ * floor. Neither is voice leading in the textbook sense; both are the voicing
+ * remembering that it is the bed and not the tune. (The pad that SOUNDED this
+ * voicing is deleted — `buildChords` — but the voicing is still where the
+ * stab's fold and the arp's placement start from, so the rules stay.)
  *
  * The chord's `root` is deliberately left alone — the bass keeps playing the
  * true root while the upper voices lead. That division of labour is the
@@ -1399,7 +1432,7 @@ export function voiceLead(
     let score = 40 * Math.max(0, stack[voices - 1] - (high + 6));
     for (let v = 0; v < voices; v++) score += Math.abs(stack[v] - was(v));
     /*
-     * And a pad that stays under the tune.
+     * And a voicing that stays under the tune.
      *
      * Voice leading is all relative — every voicing is chosen against the one
      * before it — so nothing here knows how high the whole thing has floated.
@@ -1440,7 +1473,7 @@ export function voiceLead(
     candidates.push({ stack, score });
   }
   /*
-   * And the pad may not LEAP the way the tune is going.
+   * And the voicing may not LEAP the way the tune is going.
    *
    * A flat penalty on similar motion rather than a bonus for contrary motion:
    * it removes an option instead of pushing a direction, so it cannot lurch and

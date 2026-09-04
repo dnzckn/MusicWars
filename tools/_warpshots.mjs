@@ -10,6 +10,16 @@
  */
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
+import './lib/tsnode.mjs';
+
+/*
+ * The run bar's geometry, IMPORTED. This file held its own copy — `0.42·H −
+ * 17` and `0.86·H + 31` — which would have kept reporting CLEAR after the bar
+ * moved (AGENTS.md §3: a tool holding its own copy of a constant will lie the
+ * day it moves). `headroom` and `stackHeight` are CSS px, which is the unit
+ * the DOM rects below are in.
+ */
+const { RUN_BAR } = await import('../src/game/runmap.ts');
 
 const OUT = new URL('./_warpshots/', import.meta.url);
 mkdirSync(OUT, { recursive: true });
@@ -138,7 +148,9 @@ await shot('b7-dropped');
 //    bar sits below that band, so the case to photograph is a SHORT window.
 // ---------------------------------------------------------------------------
 console.log('\nC. other windows\n');
-for (const [vw, vh] of [[1000, 800], [1920, 1080], [1280, 720], [900, 600]]) {
+// 1280x600 is the shortest window the run bar is measured at: the stack under
+// the bar against the resume pill, which is un-hidden for the measurement.
+for (const [vw, vh] of [[1000, 800], [1920, 1080], [1280, 720], [900, 600], [1280, 600]]) {
   const q = await b.newPage({ viewport: { width: vw, height: vh } });
   await q.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
   await q.click('#start-button');
@@ -158,11 +170,22 @@ for (const [vw, vh] of [[1000, 800], [1920, 1080], [1280, 720], [900, 600]]) {
   await q.waitForTimeout(14000);
   const name = 'c-' + vw + 'x' + vh;
   await q.screenshot({ path: new URL(name + '.png', OUT).pathname.replace(/^\//, '') });
-  const st = await q.evaluate(() => {
+  const st = await q.evaluate((bar) => {
     const wd = window.__musicwars.world;
     const tl = document.querySelector('.hud-tl').getBoundingClientRect();
     const foot = document.querySelector('.hud-foot').getBoundingClientRect();
     const stage = document.querySelector('#stage').getBoundingClientRect();
+    // The resume pill, shown for the measurement with the text hud.ts gives
+    // it: it is the lowest thing the stack under the bar can hit, and it is
+    // hidden unless the AudioContext is suspended.
+    const res = document.querySelector('#ui-resume');
+    const wasHidden = res.classList.contains('hidden');
+    const hadText = res.textContent;
+    res.classList.remove('hidden');
+    if (!res.textContent) res.textContent = '♪ tap to resume the music';
+    const resumeTop = Math.round(res.getBoundingClientRect().top - stage.top);
+    res.textContent = hadText;
+    if (wasHidden) res.classList.add('hidden');
     return {
       frac: +wd.bossProgress.toFixed(2),
       left: wd.wavesToBoss,
@@ -170,11 +193,12 @@ for (const [vw, vh] of [[1000, 800], [1920, 1080], [1280, 720], [900, 600]]) {
       stageH: Math.round(stage.height),
       hudTlBottom: Math.round(tl.bottom - stage.top),
       footTop: Math.round(foot.top - stage.top),
-      barTop: Math.round(stage.height * 0.42) - 17,
-      barBottom: Math.round(stage.height * 0.86) + 31,
+      resumeTop,
+      barTop: Math.round(stage.height * bar.top) - bar.headroom,
+      barBottom: Math.round(stage.height * bar.bot) + bar.stackHeight,
     };
-  });
-  const clear = st.hudTlBottom < st.barTop && st.barBottom < st.footTop;
+  }, RUN_BAR);
+  const clear = st.hudTlBottom < st.barTop && st.barBottom < Math.min(st.footTop, st.resumeTop);
   console.log(name.padEnd(14), JSON.stringify(st), clear ? 'CLEAR' : '*** COLLIDES');
   await q.close();
 }

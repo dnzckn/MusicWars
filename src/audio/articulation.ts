@@ -174,7 +174,9 @@ export const TOUCH: Record<TouchName, Touch> = {
     hold: [0.94, 0.88],
   },
   /*
-   * BOWED — the pad. A bed that speaks slowly and STOPS.
+   * BOWED — written for the pad; the CONDUCTOR motif's tritone pedal is its
+   * one user now (the pad is deleted, `buildChords`). A bed that speaks
+   * slowly and STOPS.
    *
    * Was attack 450 ms / release 900-2200 ms with no hold at all. The attack was
    * never the defect and is barely changed; the release is, because a 2.2 s
@@ -193,7 +195,12 @@ export const TOUCH: Record<TouchName, Touch> = {
     hold: [0.78, 0.86],
   },
   /*
-   * BREATHED — the colour tones, the upper structure. The slowest onset in the
+   * BREATHED — written for the colour tones, the upper structure, and it has
+   * NO USER since that pair was deleted (`buildChords`). Kept: a touch is a
+   * named envelope, and the next lane that wants the slowest onset in the file
+   * should find it here rather than write a fourth copy. `vibprobe` and
+   * `attackfloor` read haps, so an unused row costs them nothing.
+   * The slowest onset in the
    * file, because a tone that arrives after the chord under it is heard as an
    * inflection of that chord rather than as a fifth voice. Its tail is shorter
    * than the pad's despite being the gentler part: it sits above the tune,

@@ -299,7 +299,8 @@ export const REST_WAVES_PER_SLOT = 3;
  *
  * WHAT MAY REST, and the list is short on purpose. Only `counter` and `colour`
  * roles: `arp`, `motifs`, `power`. Never `lead` (it is the tune), never
- * `chords` (it is the bed, and "percussion with decoration" is a recorded
+ * `chords` (it was the bed and is the harmony chair — a two-to-four-hit stab
+ * since the pad was deleted — and "percussion with decoration" is a recorded
  * failure of this project), and never any of the six lanes exempt from the
  * budget — `research-music.md` is explicit that the motor "must stay exempt
  * from any new section-tacet rule", because the pulse inversion the whole
@@ -443,7 +444,8 @@ export interface ScoreContext {
  *
  *   - The TUNE first, always. Rule 1.
  *   - Then HARMONY, because a melody with no chord under it has no context and
- *     the pad is also the cheapest way to make a texture sound intentional.
+ *     a chord under it is also the cheapest way to make a texture sound
+ *     intentional. (The chair is a stab now, not a pad — `buildChords`.)
  *   - Then whichever countersubject the moment is actually about. On a normal
  *     stage that is the enemies (`motifs`) — the premise of this game is that
  *     the stage and the score are the same thing, so what is on screen outranks
@@ -745,6 +747,20 @@ export const ENSEMBLE_MIX: Partial<Record<string, StemId>> = {
   phantom: 'motifs', //  a figure with nothing behind it
   anvil: 'kick', //      struck metal, all body
   gravel: 'sub', //      grit dragged low
+  /*
+   * EVERY `chords` LIFT BELOW LANDS ON THE STAB. These captions were written
+   * for a lane that was a sustained supersaw pad plus a colour pair plus a
+   * stab; the pad and the pair are deleted (`layers.ts`, the tombstone in
+   * `buildChords`) and the stab — two to four sawtooth hits a bar — is the
+   * lane. "One held low tone", "a slow drawn breath", "the answering choir",
+   * "a pad pulled back" are therefore captions of a sound the lift no longer
+   * reaches. NOT re-routed in the pass that deleted the pad, deliberately: a
+   * lift ≤0.18 on a stab is still an audible change on a busy bar, and moving
+   * twenty-five abilities' lanes is a balance change with its own measurement
+   * (`tools/instruments.mjs`, `openers.mjs`). The one that matters first is
+   * `bow` — a STARTER — and `openers.mjs` is the gate that says whether the
+   * opening choice still changes the sound.
+   */
   nocturne: 'chords', // one held low tone and nothing above it
   nova: 'kick', //       GLARE: a ring ON THE BEAT — it is the downbeat
   blackhole: 'sub', //   FERMATA: a suspension that will not resolve
