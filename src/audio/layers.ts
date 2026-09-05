@@ -14,12 +14,12 @@
 
 // `saw` went with the downlifter — the only thing in this file that swept a
 // filter across a bar. See the cymbal note in `buildFx`.
-import { note, reify, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
+import { note, rand, reify, s, silence, sine, stack, type Pattern, type Patternable } from '@strudel/core';
 import type { EnemyArchetype, GameSnapshot, PowerupKind, SectionName } from '../core/events';
 import { clamp01, lerp, remap } from '../core/math';
 import type { Chord, ChordSpan, Extension, LaneId, ModeName } from './theory';
 import { LANE_RANGE, buildChord, contourForBar, degreeToSemitone, foldInto, laneTones } from './theory';
-import { articulate, type TouchName } from './articulation';
+import { articulate, shape, type TouchName } from './articulation';
 // `riser` is no longer imported: the build is a timpani roll now, and a
 // white-noise uplifter has no equivalent in the canon this score is aiming at.
 // The function is left in `kit.ts` rather than deleted — it is a correct
@@ -61,12 +61,16 @@ import {
   hatLayer,
   impact,
   kick,
+  kick808,
   metal,
   ORBIT_AIR,
+  ORBIT_DELAY,
   ORBIT_DRUMS,
   ORBIT_HARMONY,
   ORBIT_LOW,
   ORBIT_ROOM,
+  rim,
+  shaker,
   snare,
   sub,
 } from './kit';
@@ -645,6 +649,13 @@ export const STEM_CURVES: Record<StemId, StemCurve> = {
  * silence after pressing start), the bass follows at 0.2 and states the key,
  * and the stab enters at 0.3 behind it. The order that results, by entry:
  *
+ * (2026-09-05: the lane has a held voice again — the sine BED in `buildChords`,
+ * written gain 0.22 in the intro — and it shares this stem and this entry
+ * with the stab. 0.3 STAYS: the sub still opens the run, the bass still
+ * states the key first, and the bed arrives with the stab behind it. If
+ * `tools/opening.mjs` ever reports the stab inaudible before the drop, the
+ * bed's intro LEVEL is what moves, not the stab and not this entry.)
+ *
  *     sub -0.14   bass 0.2   chords 0.3   hats 0.42   kick 0.55   lead 0.72
  *     clap 0.8    arp 0.9
  *
@@ -898,10 +909,12 @@ export const MOVEMENT_MIX: Record<Movement, Partial<Record<StemId, number>>> = {
    * a hushed wave was the mechanism that made HUSHED harmonically OPEN). Both
    * are deleted (the tombstone in `buildChords`). The lift lands on the stab —
    * two to four sawtooth hits a bar — so HUSHED is the lead with its open
-   * tail, a two-hit stab, and the bass at 0.55, over a kit at 0.18-0.28. The
-   * multiplier is unchanged on purpose: a movement built out of absence has
-   * lost a sustained voice, which is the direction it points. Not re-measured
-   * with `tools/movements.mjs` in the pass that deleted the pad; that is owed.
+   * tail, a two-hit stab, and the bass at 0.55, over a kit at 0.18-0.28 —
+   * and, since 2026-09-05, the sine BED (`bedSounds` names hush as one of its
+   * four sections), so the harmony the movement was written to open onto is a
+   * held dyad under 300 Hz rather than nothing. The multiplier is unchanged
+   * on purpose. Not re-measured with `tools/movements.mjs` in either pass;
+   * that is owed.
    */
   hush: { kick: 0.18, clap: 0.1, hats: 0.28, bass: 0.55, arp: 0.4, motifs: 0.45, fx: 0.6, chords: 1.15, lead: 1.15 },
   /*
@@ -1007,11 +1020,24 @@ const roled = (lane: LaneId, role: VoiceRole): VoiceTag => {
  * tombstone in `buildChords`; the `soundfonts.ts` roles went in the same
  * change. `harmony.mjs` asserts no chords hap is a supersaw, so a row put back
  * here is red before it is heard.
+ *
+ * ONE ROW IS BACK, AND IT IS NOT THAT ROW. `bed` (2026-09-05, "sounds cheapy"
+ * Stage 3) is a plain sine in the same 46-58 window: no role, no font, no
+ * unison, no detune — nothing `soundfonts.ts` or `session.mjs` has to know
+ * about. It is written as a literal like `arp`, not through `roled`, because
+ * there is no instrument to fall back FROM: the reference it copies
+ * (`chord().voicing().s('sine').lpf(200)`, screenshot 2 of the owner's
+ * references) is the oscillator. The count the gates derive moved 3 -> 4 with
+ * the row; `harmony.mjs` asserts that every chords hap that sustains carries
+ * exactly this tag, that the tag IS a sine, and that it sounds only in the
+ * four thin sections — so a supersaw put back under the name `bed` is red
+ * twice over.
  */
 export const VOICE_TAGS = {
   stab: roled('stab', 'stab'),
   motor: roled('motor', 'motor'),
   arp: { lane: 'arp', s: 'triangle' },
+  bed: { lane: 'pad', s: 'sine' },
 } satisfies Record<string, VoiceTag>;
 
 /**
@@ -1301,49 +1327,80 @@ export function kickRhythm(intensity: number, fill: boolean, feel: Feel = 'boomc
     return `${k} ~ [~ ${k}] [${k} ~]`;
   }
   if (feel === 'gallop') {
-    // da  da-da  da  da-da
+    /*
+     * da  da-da  da  da-da — and four on the floor from 0.5 (see the boomchick
+     * tombstone below for why). The gallop's own figure is the triplet pickup
+     * INTO a beat, so the four-on-the-floor version keeps it as the pickup
+     * into the next bar's downbeat and lets beats 1-2-3 be the floor. Every
+     * rung is a superset of the one below it — the gallop ladder was already
+     * additive and stays so: 1,3 -> +pickup -> +2. No rung above that: a
+     * `[k k k]` fourth beat measured six kicks a bar and put the feel two
+     * haps over the budget `tools/kitcheck.mjs` holds the drop to; the fill
+     * bar already carries that triplet.
+     */
     if (intensity < 0.35) return `${k} ~ ${k} ~`;
-    if (intensity < 0.7) return `${k} [~ ${k} ${k}] ${k} ~`;
-    return `${k} [~ ${k} ${k}] ${k} [~ ${k} ${k}]`;
+    if (intensity < 0.5) return `${k} ~ ${k} [~ ${k} ${k}]`;
+    return `${k} ${k} ${k} [~ ${k} ${k}]`;
   }
   if (feel === 'shuffle') {
+    // Already four on the floor from 0.4 — `[k@2 ~] k [k@2 ~] k` is a kick on
+    // every beat with the swung lengths — so the spec's ">= 0.5" was true
+    // before it was written. Unchanged.
     if (intensity < 0.4) return `${k} ~ ${k} ~`;
     return `[${k}@2 ~] ${k} [${k}@2 ~] ${k}`;
   }
 
   /*
-   * Home base, and the single most literal thing in this file that said
-   * "techno": `c1*4` — a kick on all four beats — sat in the MIDDLE of the
-   * ladder, which is to say it was the most-played state in the game.
+   * TOMBSTONE (2026-09-05). The paragraph that stood here removed four-on-
+   * the-floor from this ladder in 2026-08 on the argument that "there is no
+   * four-on-the-floor anywhere in the canon this score is aiming at — not in
+   * Chrono Trigger, not in Castlevania, not in Mega Man 2, not in Link's
+   * Awakening, not in Pokémon R/B", and capped the ladder at three onsets
+   * because `buildMotor` keeps time. It was right about that canon, and the
+   * canon has been superseded twice on record since: the Aphex brief
+   * (`percGrid`'s header) and the dubstep brief (`docs/research-dubstep.md`)
+   * both moved the target, and on 2026-09-04 the owner pasted their own
+   * references (`scratchpad/refs/references.md`) — reference B is
+   * `sound("<bd>*4").bank("RolandTR909")` at 135 bpm, a kick on every beat
+   * for the whole track. Their word for the score without it was "cheapy".
    *
-   * There is no four-on-the-floor anywhere in the canon this score is aiming
-   * at. Not in Chrono Trigger, not in Castlevania, not in Mega Man 2, not in
-   * Link's Awakening, not in Pokémon R/B. Where a kit exists at all it plays a
-   * rock backbeat; where it does not, the pulse is entirely pitched.
+   * So four on the floor is back from intensity 0.5 for the straight feels
+   * (boomchick here, gallop and shuffle above); half-time and chase keep their
+   * holes, because screenshot 1 is a half-time sketch and both feels are
+   * wanted. The `[~ k]` push that the old top rungs carried is kept for the
+   * last rung and the fill bar.
    *
-   * The ladder is now capped at three onsets and stays additive — a step never
-   * moves a hit that was already sounding, it only adds one between them, which
-   * is the property `tools/retention.mjs` measures. And it can afford to be this
-   * sparse because the kick is no longer what keeps time: `buildMotor` is. That
-   * is the whole trade, and it is why this change is cheap here and would have
-   * been impossible before.
+   * What the old paragraph got RIGHT is kept and, for the first time,
+   * actually true: the ladder is additive. The old one was not — `k ~ k ~`
+   * to `k ~ [~ k] ~` MOVED beat 3 to the "and" of 3, which `retention`
+   * measured at 65% kept. Every rung below is a strict superset of the rung
+   * under it: 1 -> 1,3 -> 1,3,4 -> 1,2,3,4 -> 1,2,3,4,4.5. Nothing moves.
    */
   if (intensity < 0.14) return `${k} ~ ~ ~`;
   if (intensity < 0.34) return `${k} ~ ${k} ~`;
-  if (intensity < 0.62) return `${k} ~ [~ ${k}] ~`;
-  if (intensity < 0.82) return `${k} ~ [~ ${k}] ${k}`;
-  return `${k} ~ [~ ${k}] [~ ${k}]`;
+  if (intensity < 0.5) return `${k} ~ ${k} ${k}`;
+  if (intensity < 0.82) return `${k} ${k} ${k} ${k}`;
+  return `${k} ${k} ${k} [${k} ${k}]`;
 }
 
 export function clapRhythm(intensity: number, fill: boolean, feel: Feel = 'boomchick', bar = 0): string {
   if (fill) return '~ x ~ [x x x]';
-  // A ghost note on the second and sixth bars: small, but it is the difference
-  // between a groove and a metronome.
-  if (bar % 4 === 1 && intensity > 0.45 && feel !== 'chase') return '~ x [~ x] x';
   // Trap puts the backbeat on 3 alone — the half-time signature. So does
   // dubstep; its ghost notes are a separate layer in `buildClap` rather than a
   // busier string here, so that getting busier adds hits instead of moving them.
+  //
+  // BEFORE the bar-1/bar-5 ghost below, since 2026-09-05. It came after, so
+  // half-time bars 1 and 5 above intensity 0.45 got `~ x [~ x] x` — backbeats
+  // on 2, 2.5 and 4 on a feel whose whole signature is one backbeat on 3.
+  // Measured off the haps (`tools/_scratch_kitprobe.mjs`, since deleted):
+  // half-time bars 1 and 5 carried 28 drum haps against 24 on their
+  // neighbours, and the extra four were a second and third snare-and-clap.
+  // The line excluded `chase` by name and `halftime` was added later, in the
+  // dubstep pass, without the exclusion following it.
   if (feel === 'chase' || feel === 'halftime') return '~ ~ x ~';
+  // A ghost note on the second and sixth bars: small, but it is the difference
+  // between a groove and a metronome.
+  if (bar % 4 === 1 && intensity > 0.45) return '~ x [~ x] x';
   if (intensity < 0.6) return '~ x ~ x';
   return '~ x ~ [x ~ x]';
 }
@@ -1528,11 +1585,37 @@ export function percGrid(m: MusicalState): PercGrid {
   accents.sort((a, b) => a - b);
   const isAccent = new Set(accents);
 
+  /*
+   * THE BED IS THE OFF-BEATS, and the sixteenth layer is the fill bar's.
+   *
+   * Before 2026-09-05 `eighths` was every even step not taken by an accent
+   * (which includes beats 2, 3 and 4 when the grouping misses them) and
+   * `sixteenths` every odd one, so a bar carried 16 hat steps plus ghosts,
+   * ratchets and a bell: 30-34 drum haps a bar measured over 32 bars
+   * (`scratchpad/cheap/reports/audit.md` §3), against 20-24 in the owner's
+   * reference B. Their word was "cheapy".
+   *
+   * Reference B's hat line is `<- hh>*8` — the "and" of every beat and
+   * nothing else — over `<sh>*8`, a shaker on every eighth. So on an
+   * ordinary bar the bed is steps 2, 6, 10 and 14 minus whatever the accent
+   * grouping already claims, and the odd steps are silent: the shaker in
+   * `percLayers` carries the eighth-note motion now, and the accents carry the
+   * displacement. The fill bar keeps the whole lattice — every even and every
+   * odd step — because the roll below needs owners for steps 12-15 and the
+   * fill is the one bar in eight where "busier" is the gesture.
+   *
+   * `tools/kitcheck.mjs` counts the result: the drop's ordinary bars are
+   * bounded, the fill bar is printed separately and is not.
+   */
   const eighths: number[] = [];
   const sixteenths: number[] = [];
   for (let i = 0; i < PERC_STEPS; i++) {
     if (isAccent.has(i)) continue;
-    (i % 2 === 0 ? eighths : sixteenths).push(i);
+    if (m.fillBar) {
+      (i % 2 === 0 ? eighths : sixteenths).push(i);
+    } else if (i % 4 === 2) {
+      eighths.push(i);
+    }
   }
 
   /*
@@ -1561,38 +1644,23 @@ export function percGrid(m: MusicalState): PercGrid {
    * pattern laid over a moving one.
    */
   const ratchets: Record<number, number> = {};
-  const candidates: number[] = [];
-  for (let i = 0; i < accents.length; i++) {
-    candidates.push(i % 2 === 0 ? accents[i] : (accents[i] + PERC_STEPS - 1) % PERC_STEPS);
-  }
   /*
-   * RATCHET COUNT IS CAPPED, and the cap is a frame-time fix as much as a
-   * musical one.
-   *
-   * `npm run jank` measures the frame-time tail. Silencing the two percussion
-   * stems halves the dropped frames — 5.5% -> 2.7% over 33ms, 2.6% -> 1.5%
-   * visible hitches, p99 73.1 -> 59.8ms — which makes this the densest thing
-   * the 10Hz scheduler has to query and the only stem whose cost is visible in
-   * the tail at all.
-   *
-   * A ratchet is the expensive part: `[x x x]` puts three haps where one was,
-   * and the old formula grew them with BOTH intensity and the stutter count.
-   * Those are the same conditions under which the field is fullest and the
-   * frame budget is tightest, so the score was at its most expensive exactly
-   * when the game could least afford it.
-   *
-   * Capped at three slots rather than five, and the stutter term is gone. It
-   * is defensible on its own terms too: by the time intensity is high the
-   * arrangement already has ghost snares, a sixteenth grid and the bell
-   * running, and stacking five thirty-second subdivisions on top of that is
-   * where a groove stops being legible and becomes a texture.
+   * TOMBSTONE (2026-09-05): the per-bar ratchets are gone; only the fill bar
+   * rolls. The two paragraphs above argued the PLACEMENT (on the accent
+   * itself on odd draws, because the step before an accent is a bed step and
+   * "every ratchet in a calm bar was silent") and a block that stood here
+   * argued the CAP (three slots, no stutter term, because `npm run jank`
+   * halved its dropped frames by silencing the percussion stems and
+   * `[x x x]` is where the hap count doubles for the least legible gain).
+   * Both were right about the thing they measured and neither is why the
+   * ratchets went: the owner's references carry no thirty-second ratchets at
+   * all outside a fill, and their word for the kit that had one to three a
+   * bar was "cheapy" (`scratchpad/cheap/reports/audit.md` §3, "ratchets to
+   * 22 events/s in a slot"). A ratchet every bar is a texture; a roll on the
+   * eighth bar is a gesture. `tools/perccheck.mjs` now asserts the stronger
+   * claim — a ratchet appears on the fill bar and on no other — in place of
+   * the old "more than 40% of bars carry one".
    */
-  const want = Math.min(candidates.length, 3, Math.round(m.intensity * 2.0));
-  for (let k = 0; k < want; k++) {
-    const at = candidates[(seed >>> (3 * k + 7)) % candidates.length];
-    // 2 or 3: a thirty-second pair, or a sixteenth-note triplet in one slot.
-    ratchets[at] = ((seed >>> (2 * k + 11)) & 1) === 0 ? 2 : 3;
-  }
   if (m.fillBar) {
     /*
      * The stutter fill. The last beat of the phrase ratchets in place rather
@@ -1793,14 +1861,70 @@ export function buildKick(m: MusicalState): Pattern {
    */
   const intensity = half ? Math.min(m.intensity, 0.3) : m.intensity;
   const weight = clamp01(intensity * 0.7 + m.tension * 0.3);
-  return kick(kickRhythm(intensity, m.fillBar, m.feel), weight);
+  const k = kick(kickRhythm(intensity, m.fillBar, m.feel), weight);
+  /*
+   * THE 808 UNDER THE 909, on the DOWNBEAT of half-time bars.
+   *
+   * Half-time puts the kick once where the straight feels put it four times,
+   * and that one hit carries the bar; the genre stacks a sub-kick under the
+   * punchy one for exactly this (`kick808` in kit.ts says what it is). The
+   * downbeat only, not the whole rhythm: the pushes and the sixteenth pickup
+   * are the 909's articulation and an 808 under each would be the same boom
+   * three times a bar — and every drum hap costs a voice, on the lane
+   * `tools/kitcheck.mjs` budgets. Not under TIMEWARP, which is the powerup's
+   * half-time and already the arrangement holding its breath. `silence` when
+   * the kit is not sampled, so the fallback kick is the kick it always was.
+   */
+  if (m.feel !== 'halftime' || half) return k;
+  return stack(k, kick808('x ~ ~ ~'));
 }
 
 export function buildClap(m: MusicalState): Pattern {
   const half = (m.powerups.timewarp ?? 0) > 0;
   const nova = m.powerups.nova ?? 0;
   const rhythm = half ? '~ ~ ~ x' : clapRhythm(m.intensity, m.fillBar, m.feel, m.barInPhrase);
-  const layers: Pattern[] = [clap(rhythm, m.brightness)];
+  /*
+   * THE BACKBEAT IS A SNARE AND A CLAP, STACKED — reference B's `<- sd>*4,
+   * <- cp:3>*4`, two 909 sounds on the same hits. Before 2026-09-05 this was
+   * `clap()` alone (a noise crack with a tuned body, "a SNARE now" by its own
+   * comment) with the real `snare()` stacked under it only in half-time.
+   * Now every feel gets both: the snare is the body and the crack, the clap
+   * is the spread on top of it. The clap sits at velocity 0.8 of the snare,
+   * and velocity is SQUARED like gain (`superdough.mjs:609`), so that is
+   * -3.9 dB of energy, not -1.9 — it is meant to read as one hit with a
+   * clap's width, not as two drummers.
+   *
+   * On the oscillator kit the same two functions stack their noise bodies,
+   * so the fallback backbeat also gained the snare's body outside half-time.
+   * That is a change to the fallback and it is deliberate: the WRITING is
+   * shared and only the sound falls back.
+   *
+   * Half-time keeps its 0.44 send into the drums room — the old snare layer's
+   * number, written for a 5 s IR. The IR is 2.5 s now (`kit.ts` ORBIT_ROOM,
+   * halved 2026-09-05 with the reason in its table) and the SEND stays 0.44:
+   * a send is a ratio of dry to wet, and halving the room's decay already
+   * halves the tail's energy on its own, so the half-time hit keeps "one
+   * enormous hit, and space either side of it" with a space that clears
+   * before the next bar (1.78 s at 135 bpm) instead of piling under it. NOT
+   * re-measured by ear — nothing in this pass has been heard; the rejected
+   * alternative was raising the send to compensate for the shorter room,
+   * which would put the reference's `room(.1)`-`room(.3)` clap at a higher
+   * send than any of them use.
+   *
+   * AND A DELAY, on every feel. Screenshot 1's clap is `.room(.1)...
+   * .delay(.2)` and the audit read "no drum or bass hap carries `delay`" off
+   * this score (`scratchpad/cheap/reports/audit.md` §2c). 0.2 is the
+   * reference's send, into the drums orbit's shared line — 1/8 · 0.30,
+   * `ORBIT_DELAY` in kit.ts, one node per orbit, so the sync and the feedback
+   * are the orbit's and not this stack's (the nova layer below sends into the
+   * same node). Applied OUTSIDE `snare()`/`clap()` so both kit bodies carry
+   * it: the delay is a property of the PART, like the room and the orbit.
+   */
+  const backbeat = stack(snare(rhythm, m.feel === 'halftime' ? 0.72 : 0.5), clap(rhythm, m.brightness).velocity(0.8))
+    .delay(0.2)
+    .delaysync(ORBIT_DELAY[ORBIT_DRUMS].sync)
+    .delayfeedback(ORBIT_DELAY[ORBIT_DRUMS].feedback);
+  const layers: Pattern[] = [m.feel === 'halftime' && !half ? backbeat.room(0.44).roomsize(ORBIT_ROOM[ORBIT_DRUMS]) : backbeat];
   if (nova > 0) {
     // A wide room clap on the nova pulse beats, so the defensive ring and the
     // backbeat are audibly the same event.
@@ -1810,31 +1934,23 @@ export function buildClap(m: MusicalState): Pattern {
         .bpf(1600)
         .room(0.42)
         .delay(0.22)
-        .delaysync(1 / 8)
-        .delayfeedback(0.28)
+        // The drums orbit's line, not this layer's own: one feedback delay
+        // per orbit (`ORBIT_DELAY` in kit.ts), and the backbeat under this
+        // sends into the same node. The 1/8 was already this layer's; the
+        // feedback moved 0.28 -> 0.30 to match the orbit.
+        .delaysync(ORBIT_DELAY[ORBIT_DRUMS].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_DRUMS].feedback)
         .gain(0.3),
     );
   }
   if (m.feel === 'halftime' && !half) {
     /*
-     * A dubstep snare is two sounds hitting together, not one.
+     * A dubstep snare is two sounds hitting together, not one — and since
+     * 2026-09-05 that is the backbeat on EVERY feel (see `backbeat` above),
+     * so the half-time snare layer that stood here is folded into it. What
+     * half-time keeps that the others do not is the 0.44 room send and the
+     * fill-bar triplet, which `clapRhythm` already writes.
      *
-     * In half-time the backbeat lands once a bar, so it is carrying the pulse
-     * on its own and it has to be big enough to do that — a clap alone is a
-     * spray with no pitch in it, and at this spacing the ear hears a gap rather
-     * than a beat. Stacking the tuned snare body under the clap and giving it a
-     * real room is the standard trick and it is the whole character of the
-     * genre's drums: one enormous hit, and space either side of it.
-     *
-     * Unlike the tension-gated snare below, this is not conditional. If the
-     * backbeat comes and goes with intensity then half-time has no anchor.
-     */
-    layers.push(
-      snare(m.fillBar ? '~ ~ x [x x x]' : '~ ~ x ~', 0.72)
-        .room(0.44)
-        .roomsize(ORBIT_ROOM[ORBIT_DRUMS]),
-    );
-    /*
      * Ghost sixteenths, and this is where the funk is.
      *
      * Half-time drums are mostly silence, which is the point, but silence with
@@ -1842,9 +1958,19 @@ export function buildClap(m: MusicalState): Pattern {
      * "a" of 2 and either side of 4 — the classic funk placements, under the
      * beat rather than on it — and they ride `sig.fill`, so a busy screen
      * fills the gaps in without touching the backbeat that defines the groove.
+     *
+     * On the RIM now (`rim()` in kit.ts: the 909 rimshot, or the softest
+     * snare in the score when the kit is not sampled), and these are half-
+     * time's ONLY ghosts: `percLayers` skips the grid's 2-3 ghost draws on
+     * this feel, because seven ghost hits a bar under a one-hit backbeat is
+     * the density the owner called "cheapy" — `tools/kitcheck.mjs` budgets
+     * the bar. Velocity carries the fill-riding level, not `.gain()`: `rim`
+     * sets its own gain and a later `.gain()` would replace it (AGENTS §4,
+     * later writes win), while velocity multiplies. 0.14-0.46 is the grid
+     * ghosts' range, derived in `percLayers`.
      */
     layers.push(
-      clap('~ [~ ~ ~ x] ~ [x ~ x ~]', m.brightness)
+      rim('~ [~ ~ ~ x] ~ [x ~ x ~]')
         /*
          * THE POINT OF GHOST NOTES IS THAT THEY ARE NOT IDENTICAL. This layer
          * played the same four ghosts every bar. `degradeBy(0.25)` plays three
@@ -1859,13 +1985,36 @@ export function buildClap(m: MusicalState): Pattern {
          */
         .degradeBy(0.25)
         .seed(11)
-        .velocity(0.38)
-        .gain(m.sig.fill.range(0, 0.42))
-        .pan(0.42),
+        .velocity(m.sig.fill.range(0.14, 0.46))
+        /*
+         * Random pan within +-0.15 of the old 0.42, per hit: screenshot 1's
+         * claps are `.pan(rand.range(.01, 1))`. `rand` is a pure function of
+         * query time, so every gate stays deterministic; and it is `rand`, not
+         * `sometimesBy`, so the cycle-zero RNG edge (the legacy rand reads
+         * exactly 0 at t = 0) could only put a hit AT the bar line on the left
+         * edge of the range — never delete one — and no ghost sits on the bar
+         * line. Measured: bar 0's ghosts read 0.35/0.27/0.44.
+         */
+        .pan(rand.range(0.27, 0.57))
+        // A ghost's echo, under the backbeat's: 0.15 against the stack's 0.2,
+        // into the same drums line (`ORBIT_DELAY`, kit.ts — one node per
+        // orbit, so sync and feedback are the orbit's). The grid ghosts in
+        // `percLayers` carry the same send.
+        .delay(0.15)
+        .delaysync(ORBIT_DELAY[ORBIT_DRUMS].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_DRUMS].feedback),
     );
-  } else if (m.intensity > 0.7 && !half) {
-    layers.push(snare(m.fillBar ? 'x x x [x x]' : '~ ~ ~ x', m.tension));
   }
+  /*
+   * TOMBSTONE (2026-09-05): the tension snare — `snare('~ ~ ~ x', tension)`
+   * above intensity 0.7, `'x x x [x x]'` on the fill — is gone. It doubled
+   * beat 4, which `clapRhythm` already puts a backbeat on from `~ x ~ x`, with
+   * a second, heavier hit of the same drum; with the backbeat now a stacked
+   * snare-and-clap on every feel there is no "heavier" left to add, and on
+   * the sampled kit it was the same wav twice at one instant. The old code's
+   * own note that half-time's anchor "is not conditional" now applies to
+   * every feel.
+   */
   if (!half) layers.push(...percLayers(m));
   return stack(...layers);
 }
@@ -1928,24 +2077,100 @@ function percLayers(m: MusicalState): Pattern[] {
    * UNVERIFIED — this is a level chosen from a spectrum by someone who cannot
    * hear it, and it is the single number in this block most likely to be
    * wrong.
+   *
+   * ---------------------------------------------------------------------
+   * THE KIT AS A DRUM MACHINE (2026-09-05), and what changed in the table
+   * ---------------------------------------------------------------------
+   *
+   * Every number above was measured on white noise, and the reasoning about
+   * bands and decays was right for white noise. The kit is sampled now
+   * (`kit.ts`, `samples.ts`) and the references it is aimed at are drum
+   * machines, so the table is re-drawn from reference B's three-machine
+   * layering and the audit's density finding (30-34 haps a bar, "cheapy"):
+   *
+   *   accents   909 closed hat, written 0.8, on the additive grouping; the
+   *             LAST accent of the bar is the 909 OPEN hat instead. One open
+   *             hat a bar, on the "and" before the downbeat more often than
+   *             not, is the oldest device in hi-hat writing and the one the
+   *             old `hatLayer` comment promised for a year.
+   *   bed       909 closed hat on the off-beats (`<- hh>*8`), FLOORED at
+   *             written 0.45 in build/drop/sustain so the off-beat hat is
+   *             always a part — before, it rode `density` from 0 and in a
+   *             calm bar sat under `AUDIBLE_FLOOR`, so the reference's one
+   *             non-negotiable hat line was absent exactly when the kit was
+   *             sparse enough to hear it. 0.45 is squared to 0.20 — reference B's
+   *             `<- hh>*8 .gain(.2)` exactly (Strudel's gain is linear there;
+   *             this project squares) — 12.4 dB
+   *             under the accents.
+   *   16ths     LinnDrum closed hat, the fill bar only (see `percGrid`),
+   *             riding `fill` to 0.3 at most: the roll's material.
+   *   ghosts    909 rim, velocity as before, random pan.
+   *   shaker    808 cabasa on every eighth at a fixed written 0.5 (0.25
+   *             squared), pan 0.6, in build/drop/sustain/fill and never in
+   *             the intro, the breakdown or a hush.
+   *
+   * TOMBSTONE for "a hat line where every hit is the same level is a
+   * shaker", three paragraphs up. It was written as a warning and it is now
+   * the spec: reference B has BOTH a hat line with articulation AND
+   * `<sh>*8` at one level, and the shaker is the one line allowed to be
+   * flat. The hats keep their three levels.
+   *
+   * THE HAT AND SHAKER LEVELS ARE THE SPEC'S, AND THAT WAS MEASURED TWICE.
+   * The first render at these numbers had the sampled clap stem at -32.3
+   * dBFS RMS soloed (`tools/capture.mjs`, 4 drop bars, 0x51ed) against the
+   * oscillator stem's -39.1, and the full mix at 0.0 dBFS peak where the old
+   * drop peaked at -3.0 — so everything in the kit was trimmed -5 dB. That
+   * was the wrong cut: over 32 bars the mix's 8 kHz band fell from -37.9
+   * dBFS (the old noise kit, which was 90% of everything above 2 kHz) to
+   * -49.9, and above-2 kHz went from 3.8% of the energy to 0.6%, while the
+   * 250 Hz band still sat 7 dB above the old render and the peak still hit
+   * full scale in the loudest window. The excess was the 125-250 Hz BODIES
+   * — the 909 kick, snare and clap — not the hats: at these hat levels the
+   * 4-bar window had read 8 kHz -38.0, equal to the old kit. So the bodies
+   * carry the trim (`kit.ts`: kick 0.5, 808 0.4, snare/clap/rim 0.6) and the
+   * hats and the shaker are the spec's. Still unheard.
    */
-  out.push(
-    hatLayer(stepStruct(g.accents, g.ratchets), m.brightness, 0.82, 1, 0.046),
-  );
-  out.push(
-    hatLayer(stepStruct(g.eighths, g.ratchets), m.brightness, m.sig.density.range(0, 0.48), 0.8, 0.022)
-      // Opposite the accents' 0.56. The two hat densities are separated in the
-      // field rather than in the spectrum, because they are the same noise
-      // source through the same filter and there is nowhere else to put them.
-      .pan(0.44),
-  );
-  out.push(
-    hatLayer(stepStruct(g.sixteenths, g.ratchets), m.brightness, m.sig.fill.range(0, 0.34), 0.6, 0.014)
-      .pan(0.62),
-  );
+  const inDrive = m.section === 'build' || m.section === 'drop' || m.section === 'sustain' || m.section === 'fill';
+  const lastAccent = g.accents[g.accents.length - 1];
+  const closedAccents = g.accents.slice(0, -1);
+  if (closedAccents.length) {
+    out.push(hatLayer(stepStruct(closedAccents, g.ratchets), m.brightness, 0.8, 1, 0.046, 'closed'));
+  }
+  if (lastAccent !== undefined) {
+    // No ratchet on the open hat: a ratcheted open hat is two 300 ms tails
+    // 55 ms apart, which is a smear, not a roll. The roll lives on the
+    // closed layers.
+    out.push(hatLayer(stepStruct([lastAccent]), m.brightness, 0.8, 1, 0.046, 'open'));
+  }
+  if (g.eighths.length) {
+    out.push(
+      hatLayer(
+        stepStruct(g.eighths, g.ratchets),
+        m.brightness,
+        m.sig.density.range(inDrive ? 0.45 : 0, 0.55),
+        0.8,
+        0.022,
+        'closed',
+      )
+        // Opposite the accents' 0.56. The two hat densities are separated in
+        // the field rather than in the spectrum, because they are the same
+        // source through the same filter and there is nowhere else to put
+        // them.
+        .pan(0.44),
+    );
+  }
+  if (g.sixteenths.length) {
+    out.push(
+      hatLayer(stepStruct(g.sixteenths, g.ratchets), m.brightness, m.sig.fill.range(0, 0.3), 0.6, 0.014, 'sixteenth')
+        // +-0.15 around the old 0.62, per hit, deterministic in query time.
+        .pan(rand.range(0.47, 0.77)),
+    );
+  }
 
   /*
-   * Ghost snares.
+   * Ghost snares — on the rim (`rim()` in kit.ts) since 2026-09-05; the
+   * paragraphs below describe the oscillator body it falls back to, which is
+   * unchanged.
    *
    * `.velocity()` and not `.gain()`. `snare()` is a two-part construction — a
    * band-limited noise crack at 0.36 over a tuned triangle body at 0.26 — and
@@ -1960,8 +2185,12 @@ function percLayers(m: MusicalState): Pattern[] {
    * gives below ~1 — the softness of this layer comes from the velocity, not
    * from the waveshaper. Never zero either way: superdough builds the curve
    * from this value and it collapses to silence at 0.
+   *
+   * NOT IN HALF-TIME: that feel has its own ghost figure in `buildClap` (the
+   * funk placements, on the rim too), and the two together were seven ghost
+   * hits a bar under a one-hit backbeat.
    */
-  if (g.ghosts.length) {
+  if (g.ghosts.length && m.feel !== 'halftime') {
     out.push(
       /*
        * 0.14-0.46, and the range is arithmetic rather than taste. superdough
@@ -1975,10 +2204,44 @@ function percLayers(m: MusicalState): Pattern[] {
        * end is the fade-in below it. Read as an unsquared 0.14-0.46 this
        * would be about twice as loud as it is.
        */
-      snare(stepStruct(g.ghosts), 0.2)
+      rim(stepStruct(g.ghosts))
         .velocity(m.sig.fill.range(0.14, 0.46))
-        .pan(0.38),
+        // +-0.15 around the old 0.38, per hit (screenshot 1's claps are
+        // `.pan(rand.range(.01, 1))`). `rand`, not `sometimesBy`: the legacy
+        // RNG reads exactly 0 at t = 0, and a `rand` there is a pan at the
+        // left edge, not a deleted hit — and ghosts never sit on the bar line
+        // anyway (`ghostSlots` starts at step 2).
+        .pan(rand.range(0.23, 0.53))
+        /*
+         * A delay on the ghosts and NOT on the hats or the shaker. Screenshot
+         * 1 delays its `hh` lines, but those are two isolated one-bar
+         * figures; on this grid (8 hats + 8 shaker a bar) a repeat lands on
+         * the next hit and reads as smear, not space. A ghost is 12-20 dB
+         * under the backbeat and sits in the gaps, so its repeat has
+         * somewhere to go. 0.15 under the backbeat's 0.2, into the drums
+         * orbit's shared line (`ORBIT_DELAY`, kit.ts).
+         */
+        .delay(0.15)
+        .delaysync(ORBIT_DELAY[ORBIT_DRUMS].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_DRUMS].feedback),
     );
+  }
+
+  /*
+   * The shaker: `<sh>*8` on the TR808 at one level (reference B).
+   *
+   * Every eighth, fixed written 0.5 (the spec's; the trim went on the
+   * bodies, above), pan 0.6 — off-centre from the hats' 0.44/0.56 so the
+   * three eighth-note sources are three places in the field.
+   * Sections with a rhythm section only: never the intro (the kit enters
+   * there by `INTRO_ENTRY`, a shaker before the kick is a shaker solo), never
+   * the breakdown (whose whole gesture is the kit leaving), never a hush.
+   * The struct is the eighth lattice written out rather than `x*8`, so it
+   * lines up with `percGrid`'s sixteen steps by construction and the
+   * disjointness reasoning in `tools/perccheck.mjs` can read it.
+   */
+  if (inDrive && m.movement !== 'hush') {
+    out.push(shaker('x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~', 0.5).pan(0.6));
   }
 
   /*
@@ -3265,7 +3528,30 @@ export function buildBass(m: MusicalState): Pattern {
      * it are measured through this lane by `fontlanes` - which fails a declared
      * role that emits no haps. One note a bar is a real note.
      */
-    played(voice(`${low} ~ ~ ~`).gain(0.62)),
+    played(
+      voice(`${low} ~ ~ ~`)
+        .gain(0.62)
+        /*
+         * A DUB ECHO ON THE PLUCK, and on nothing else in this stack.
+         *
+         * Screenshot 1's bass is `s("saw")...lp(180).room(0.3).delay(.6)`;
+         * the audit read "no drum or bass hap carries `delay`" off this score
+         * (`scratchpad/cheap/reports/audit.md` §2c). This voice is the one
+         * place a bass delay works here: one note a bar, a recorded
+         * transient, and then three beats of nothing from it — so a dotted-
+         * eighth repeat (3/16 · 0.40, `ORBIT_DELAY[ORBIT_LOW]` in kit.ts)
+         * falls in its own silence, off the eighth-note grid the wub's LFO
+         * is on. 0.35 is under the reference's 0.6 because that bass has no
+         * wobble under it and this one does. The wub, the reese and the mid
+         * send NONE: a delayed LFO sweep is a second sweep out of phase with
+         * the first, which smears the part (`spec-v2.md` STAGE 2) — and
+         * `tools/spacecheck.mjs` fails a delay on any of them. Sync and
+         * feedback are the orbit's: one delay node per orbit.
+         */
+        .delay(0.35)
+        .delaysync(ORBIT_DELAY[ORBIT_LOW].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_LOW].feedback),
+    ),
     /*
      * THE GROWL, on the same notes. Held through the ladder with the LFO
      * playing across them - see `wobble.ts` and the `drive` note above for
@@ -3556,14 +3842,85 @@ export function stabGuideTones(chord: Chord): number[] {
     // The incoming dominant's root and the new key's leading tone (root + 4).
     return foldInto([chord.root, chord.root + 4], LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
   }
-  const rootPc = ((chord.root % 12) + 12) % 12;
-  const ivOf = (n: number): number => ((((n % 12) - rootPc) % 12) + 12) % 12;
+  const ivOf = intervalAboveRoot(chord);
   const folded = foldInto(chord.notes, LANE_RANGE.stab.lo, LANE_RANGE.stab.hi);
   // Everything that is not the root and not a perfect or diminished fifth.
   const guide = folded.filter((n) => ivOf(n) !== 0 && ivOf(n) !== 7 && ivOf(n) !== 6);
   // Never let a voicing rule empty a lane: that is a bug waiting for the one
   // chord that trips it.
   return guide.length >= 2 ? guide.slice(0, 2) : folded.slice(-2);
+}
+
+/** Interval class (0-11) of a MIDI note above the chord's root. Shared by the two chords voices. */
+function intervalAboveRoot(chord: Chord): (n: number) => number {
+  const rootPc = ((chord.root % 12) + 12) % 12;
+  return (n: number): number => ((((n % 12) - rootPc) % 12) + 12) % 12;
+}
+
+/**
+ * The bed's two tones for a chord: the OPEN tones — root and fifth (perfect,
+ * or the diminished fifth locrian gives) — folded into `LANE_RANGE.pad`
+ * (46-58, 116-233 Hz). This is the deleted pad's own dyad rule, kept for the
+ * reason it was written: two tones a fifth apart fold to a fourth, and there is
+ * no arrangement of {root, fifth} in any window that produces a second
+ * (AGENTS.md §4, "the one shape that cannot go wrong"). The third, the seventh
+ * and the ninth belong to the stab (`stabGuideTones`) and the motor, and a
+ * third tone here is the fold trap — `[49,50,54,57]` in 38 of 88 bars, every
+ * register gate green, the day the chord grew a seventh.
+ *
+ * ...EXCEPT ON A PIVOT BAR, where it is ROOT AND MAJOR THIRD, exactly as the
+ * pad kept it ("the pad kept its third here, and only here", `Chord.pivot`):
+ * the incoming dominant's third is the new key's leading tone, and an open
+ * fifth belongs to no key. Root and major third fold to a major third or a
+ * minor sixth, both cluster-free. `tools/arc.mjs` ARRIVAL counts a modulation
+ * as announced only when the bar before it spells the dominant's root and the
+ * leading tone across the harmony lanes; the stab's pivot branch supplies both
+ * as two hits and this supplies them held, so a breakdown pivot bar is
+ * announced whether or not the stab's fader is up.
+ *
+ * EXPORTED for the same reason `stabGuideTones` is: `director.sourceLines`
+ * prints it, and that mirror has drifted from the builders six times.
+ */
+export function bedTones(chord: Chord): number[] {
+  if (chord.pivot) {
+    /*
+     * Root and leading tone BY CONSTRUCTION, the same two the stab's pivot
+     * branch spells, rather than the pad's `notes.filter(iv === 4)`. A pivot
+     * chord is always `pivotChord`'s dominant seventh, so the two agree on
+     * every real bar; the difference is what happens when they do not —
+     * `harmony.mjs`'s first pivot sweep flagged minor chords as pivots and the
+     * filter form fell through to root + minor third (a major sixth after the
+     * fold, 225 of 1350 bars). The leading tone is the whole point of the bar,
+     * so it is stated, not searched for.
+     */
+    return foldInto([chord.root, chord.root + 4], LANE_RANGE.pad.lo, LANE_RANGE.pad.hi);
+  }
+  const ivOf = intervalAboveRoot(chord);
+  const chosen = chord.notes.filter((n) => ivOf(n) === 0 || ivOf(n) === 7 || ivOf(n) === 6);
+  // Never let a voicing rule empty a lane: that is a bug waiting for the one
+  // chord that trips it. `harmony.mjs` CLUSTER is what catches the fallback
+  // folding badly.
+  const opened = chosen.length >= 2 ? chosen.slice(0, 2) : chord.notes.slice(0, 2);
+  return foldInto(opened, LANE_RANGE.pad.lo, LANE_RANGE.pad.hi);
+}
+
+/**
+ * Where the bed sounds: the four THIN sections — intro, build, breakdown, and
+ * the HUSHED movement in any section — and nowhere else. Never a plain drop,
+ * sustain or fill: that is the wub's window, and bass+chords was 47% of all
+ * masking weight when the old pad sat there (`tools/masking.mjs`, the day
+ * before the deletion). The build is in because the bass fades there
+ * (`docs/research-dubstep.md` R10); a hush is in because the lead treats it as
+ * open for the same reason (`buildLead`) and `MOVEMENT_MIX.hush` lifts this
+ * lane x1.15 expecting a held harmony under it.
+ *
+ * One predicate, exported, read by the builder AND by `director.sourceLines`,
+ * so the panel cannot print a bed the lane is not playing. `harmony.mjs`
+ * holds its own list of the open sections on purpose — that is the assertion,
+ * and a gate importing the predicate it checks would measure nothing.
+ */
+export function bedSounds(section: SectionName, movement: Movement | null): boolean {
+  return section === 'intro' || section === 'build' || section === 'breakdown' || movement === 'hush';
 }
 
 export function buildChords(m: MusicalState): Pattern {
@@ -3650,20 +4007,24 @@ export function buildChords(m: MusicalState): Pattern {
    * figure states root, fifth and octave; the motor holds the chord tones
    * continuously at 57-69 ("nothing else in the mix has to hold the chord
    * for it to be present"); this stab states the guide tones. No sustained
-   * pad anywhere in the drop, the build, the sustain or the fill.
+   * pad anywhere in the drop, the sustain or the fill — still true; the BED
+   * below (2026-09-05) is a sine dyad in the intro, the build, the breakdown
+   * and under hush, and the block above it says why that is not this pad.
    *
    * WHAT THE DELETION CHANGES ELSEWHERE, written down so it is not re-derived:
    *   - the breakdown is sub + motor + the lead in its `open` treatment + fx
-   *     (+ arp, motifs, power when present). This lane emits NOTHING there —
-   *     it returned `stack(pad, colourPad)` early; it returns `silence`.
-   *     That is the first thing to listen for.
-   *   - HUSHED (`MOVEMENT_MIX.hush`) lifts this lane ×1.15: a lift on a
-   *     two-hit stab now, with the lead, over a kit at 0.18-0.28.
+   *     (+ arp, motifs, power when present). This lane emitted NOTHING there
+   *     for one day — it returned `stack(pad, colourPad)` early, then
+   *     `silence`; since 2026-09-05 it returns the bed (see below).
+   *   - HUSHED (`MOVEMENT_MIX.hush`) lifts this lane ×1.15: a lift on the
+   *     two-hit stab AND the sine bed (hush is one of the bed's sections),
+   *     with the lead, over a kit at 0.18-0.28.
    *   - `INTRO_ENTRY.chords` moved from -0.06 (first: "harmony before
    *     rhythm") to 0.3, after the bass. The sub opens every run.
    *   - the ~25 `ENSEMBLE_MIX` abilities that lift `chords` with sustained
    *     captions ("one held low tone", "a slow drawn breath", "the answering
-   *     choir") now lift the stab. Not re-routed in this pass; listed in
+   *     choir") lift the stab, and the bed wherever it sounds (intro, build,
+   *     breakdown, hush). Not re-routed in this pass; listed in
    *     `orchestration.ts`.
    *   - `LANE_RANGE.pad` stays: it is `voiceLead`'s window and its scoring
    *     ceiling. `LANE_RANGE.colour` and `chord.colour` stay: `voiceLead`
@@ -3673,9 +4034,11 @@ export function buildChords(m: MusicalState): Pattern {
    *     `soundfonts.ts` roles `pad`/`colour`, and `fanPans` went with the
    *     voices; `ACT_SHAPE.ninth` keeps its chord-spelling half.
    *   - `tools/harmony.mjs` CLUSTER (pad spacing) lost its subject and was
-   *     replaced by NO SUPERSAW and NO SUSTAIN over this lane; `chop` moved
-   *     its held-lane control to the sub; `opening` counts the bass and this
-   *     stab by AUDIBILITY; `fontlanes`' frozen table lost two rows out loud.
+   *     replaced by NO SUPERSAW and NO SUSTAIN over this lane (NO SUSTAIN has
+   *     since become NO SUSTAIN OUTSIDE THE OPEN SECTIONS, and CLUSTER is
+   *     back for the bed); `chop` moved its held-lane control to the sub;
+   *     `opening` counts the bass and this stab by AUDIBILITY; `fontlanes`'
+   *     frozen table lost two rows out loud.
    *
    * The bed's own dyad argument — two tones a fifth apart fold to a fourth
    * and are the one shape that cannot go wrong — is still true and stays in
@@ -3686,26 +4049,132 @@ export function buildChords(m: MusicalState): Pattern {
 
   const stabVoiced = stabGuideTones(m.chord);
 
+  /* ==========================================================================
+   * THE BED — the lane's held voice, in the four thin sections only.
+   * ======================================================================== */
+
   /*
-   * The breakdown is silence for this lane. It was the one section where the
-   * stab already sat out and the pad and the pair carried the harmony alone;
-   * with them gone there is nothing left for the lane to say there, and
-   * nothing bright and sustained is put in their place — see the tombstone.
-   * The sub is the breakdown's floor (`STEM_CURVES.sub.in` is 0, so it was
-   * always sounding there); the director zeroes kick, clap and bass.
+   * ---------------------------------------------------------------------
+   * WHY THIS IS NOT THE PAD THAT WAS DELETED (2026-09-05, "sounds cheapy").
+   * ---------------------------------------------------------------------
+   *
+   * The owner, the day after the deletion above: "music still needs to be a
+   * lot better, sounds cheapy — here's some good stuff in here", and the good
+   * stuff (`scratchpad/refs/references.md`, screenshot 2) is
+   *
+   *     chord("<Bm Asus G [D A]>").voicing().s('sine').lpf(200)
+   *
+   * — a HELD chord, on a sine, under 200 Hz, beneath the drums and the tune.
+   * Both screenshots carry a held harmony; the deletion answered the pad's
+   * SOUND, and the gate that followed it (`harmony.mjs` NO SUSTAIN, "no chords
+   * hap sounds longer than half a bar, anywhere") encoded a stronger claim
+   * than the complaint did (`scratchpad/cheap/reports/audit.md` §5).
+   *
+   * Side by side, off the haps of the last tree that had the pad
+   * (`audit.md` §1a and the tombstone above) against this voice:
+   *
+   *                      THE PAD (deleted)                  THE BED (this)
+   *   source             supersaw, unison 3, detune 0.14    sine — one partial
+   *   lowpass            openness.range(560, 1900) Hz       300 Hz, static
+   *   register           116-233 Hz (LANE_RANGE.pad)        the same window
+   *   written gain       0.30 (0.36 in the breakdown)       0.22
+   *   vibrato            4.6 + 0.43i Hz per voice           none
+   *   pan                fanPans across the field           centre
+   *   sections           EVERY section                      intro, build,
+   *                                                         breakdown, hush
+   *   intro rhythm       two restatements a bar             one whole note
+   *
+   * A sine under a 300 Hz lowpass at 116-233 Hz is a fundamental and nothing
+   * else: there is no harmonic for the filter to open onto, so it cannot be
+   * "high pitch synth" however the director drives `openness`, and the
+   * `harm@lpf` column `registermap` prints for it (~1.6x) is a ratio of a
+   * cutoff to a note with no partials above the note. `harmony.mjs` asserts
+   * the source, the cutoff (<= 400), the written gain (<= 0.25), the dyad, its
+   * spacing and its sections, each separately, so the pad cannot come back
+   * under this name one control at a time.
+   *
+   * WHY THESE FOUR SECTIONS. The drop, the sustain and the fill are the wub's
+   * window, and `tools/masking.mjs` measured bass+chords at 47% of all audible
+   * weight — 2620 of 3265 inside this very register — when the pad sat there.
+   * The intro and the breakdown have had no held harmony since the deletion
+   * (the breakdown emitted NOTHING from this lane except a pivot bar); the
+   * build is where the bass fades (`docs/research-dubstep.md` R10), so the
+   * bed has room there; a HUSHED wave is the one wave built out of absence and
+   * `MOVEMENT_MIX.hush` lifts this lane expecting a harmony under the tune.
+   * `bedSounds` is the one predicate, read here and by `director.sourceLines`.
+   *
+   * ONE WHOLE NOTE A BAR, INCLUDING THE INTRO. The pad restated twice a bar in
+   * the intro because "a hap whose onset is already past never fires, so a
+   * one-note-per-bar intro can wait a whole bar before making a sound —
+   * measured at four seconds of literal silence after pressing start". That
+   * argument was written when this lane entered at -0.06 of the phrase, first
+   * of everything. It enters at 0.3 now (`INTRO_ENTRY.chords`, unchanged by
+   * this pass), behind the sub and the bass, so the bar the pad was afraid of
+   * is a bar the director gates anyway. Two hits a bar would be the stab's
+   * job, and the stab has it.
+   *
+   * REJECTED: `gm_pad_halo` n=0 (spec v1) — the darkest font in the set, 63 /
+   * 125 / 250 Hz = 20 / 40 / 40%, a fundamental plus one octave. It needs a
+   * network, a `soundfonts.ts` role, a `fontlanes` row and a fallback; the
+   * reference is a sine and a sine needs none of that (spec v2, "Decisions
+   * changed from v1"). REJECTED: `.room(0.78-0.95)` and `ring 1.25` in the
+   * breakdown as the pad had — the harmony orbit's IR is 3 s now (Stage 2,
+   * `ORBIT_ROOM`), half what the pad was mixed into, and a 0.5 send into it is
+   * the reference's `.room(.3-.8)`; opening it further is the wash the
+   * breakdown is supposed to have lost. REJECTED: a `.delay()` — a whole note
+   * into a 3/16 feedback line is a smear of itself, and `spacecheck`
+   * pre-registered this lane as dry.
+   *
+   * NOT HEARD. Everything above is off the haps and off renders.
    */
+  const bedVoiced = bedTones(m.chord);
+  const bed = bedSounds(m.section, m.movement)
+    ? articulate(
+        tagVoice(note(chordOf(bedVoiced)), VOICE_TAGS.bed)
+          .pan(0.5)
+          /*
+           * Static, and that is the point: a register change is a filter change
+           * (AGENTS.md §4) and this lane's register does not move, so neither
+           * does its cutoff. 300 rather than the reference's 200 because the
+           * window tops out at 233 Hz and a cutoff below the note is the trap
+           * this file has caught three times.
+           */
+          .lpf(300)
+          /*
+           * 0.32, NOT THE SPEC'S 0.22. Rendered at 0.22 through the real chain the
+           * bed passed every gate and did not register in any full-mix octave
+           * band (< 0.2 dB; the soloed bed sat ~22 dB under the mix's own 125 Hz
+           * band) — a held voice nobody can hear is the arp's fader defect wearing
+           * a gain. The pad this replaces was 0.30 written of THREE saws, about
+           * 10 dB louder; 0.32 of one sine is +3.3 dB over 0.22 and still ~6 dB
+           * under the pad. `harmony`'s DARK cap moved 0.25 -> 0.35 with this,
+           * and says so. Unheard; the breakdown window is where to listen.
+           */
+          .gain(0.32)
+          .room(0.5)
+          .roomsize(ORBIT_ROOM[ORBIT_HARMONY])
+          .orbit(ORBIT_HARMONY),
+        'bowed',
+        // One slot: a whole note. `bowed` at 136 bpm and one slot is a 198 ms
+        // onset, a 317 ms fall, a 222 ms tail and a 0.78-0.86 hold — a bed
+        // that speaks slowly and STOPS at the bar line (`articulation.ts`).
+        { slots: 1, bpm: m.bpm, shade: m.sig.openness, hold: m.sig.hold },
+      )
+    : silence;
+
   /*
-   * ...EXCEPT ON A PIVOT BAR. The modulation still has to be announced when
-   * the phrase before it is a breakdown, and with the bass at zero and the pad
-   * gone nothing else in the harmony lanes was guaranteed to spell the
-   * dominant there — `tools/arc.mjs` ARRIVAL read 10/12 the day the pad went.
-   * Two stab hits on the one bar that pulls; every other breakdown bar stays
-   * silent for this lane.
+   * The breakdown is the bed alone for this lane — plus the stab on a PIVOT
+   * BAR. The modulation still has to be announced when the phrase before it
+   * is a breakdown; with the bass at zero, `tools/arc.mjs` ARRIVAL read 10/12
+   * the day the pad went and the stab's pivot voicing (root + leading tone)
+   * brought it back to 12/12. The bed now spells the same two pitch classes
+   * held (`bedTones`), so the announcement no longer depends on the stab's
+   * fader; the two hits stay because they are the gesture that PULLS.
    */
-  if (m.section === 'breakdown' && !m.chord.pivot) return silence;
+  if (m.section === 'breakdown' && !m.chord.pivot) return bed;
 
   /* ==========================================================================
-   * THE STAB — the lane's only voice: one voice, five rhythms.
+   * THE STAB — one voice, five rhythms.
    * ======================================================================== */
 
   /*
@@ -3765,6 +4234,47 @@ export function buildChords(m: MusicalState): Pattern {
   const stabLevel = 0.3;
   const grid = COMP_STRUCT[m.feel];
   const stabChord = `[${stabVoiced.join(',')}]`;
+  /*
+   * THE STAB, RE-CUT AGAINST SCREENSHOT 1 (2026-09-05, "sounds cheapy" Stage 3).
+   * The reference's stabs are saws with the decay, the pan and the lowpass
+   * drawn per hit — `.dec(rand.range(.04, .23)).pan(rand.range(.1, 1))
+   * .lpf(rand.range(200, 1000)).delay(.1)` — and the audit's reading of THIS
+   * lane was a sawtooth at velocity 1.41 with drive 0.65 putting 55% of its
+   * energy in the 500 Hz band, "loud, saturated, mid-register — not treble"
+   * (`audit.md` §0.6): the likeliest owner of "high pitch synth" after the pad.
+   * The register does not move (LANE_RANGE.stab, 68-80, is the harmony chair
+   * between the motor and the tune), so every change below is to the WEIGHT
+   * and the VARIETY of the hits, not to where they are:
+   *
+   *   velocity   1.41 -> 1.0    superdough squares gain x velocity, so this
+   *                             is -6 dB per hit before the fader
+   *   drive      0.65 -> 0.3    the saturation the audit called "welded
+   *                             open"; 0.2-0.4 on the signal keeps `drive` a
+   *                             live control (`tools/instruments.mjs` counts
+   *                             signals nobody reads) with the mid at 0.3
+   *   lpf        1100-3600 ->   A REGISTER CHANGE IS A FILTER CHANGE, and the
+   *              800-2200       converse holds: the register is unchanged, so
+   *                             this only DARKENS the ratio — `registermap`
+   *                             harm@lpf 4.2x -> ~2.7x on the median note.
+   *                             The saw keeps its 2nd and 3rd partials at the
+   *                             top of the window; the 1 kHz band loses the
+   *                             rest.
+   *   decay      +-25% per hit  around the `plucked` touch's own fall
+   *   pan        +-0.12 per hit around 0.58 (+ the SPREAD/FLANK terms)
+   *   delay      0.25           Stage 2's send, kept exactly
+   *
+   * NOT a keyboard: spec v1's `gm_epiano1` was dropped in v2 because the owner
+   * has rejected a keyboard stab twice already ("clavichord", "pinging" —
+   * the tombstone below). NOT heard; the sawtooth was the shipped fallback
+   * and stays the source.
+   */
+  const stabPan = clamp01(0.5 + 0.16 * clamp01(0.5 + spread * 0.16 + wide));
+  /*
+   * The touch's own decay range, read from `shape()` rather than restated, so
+   * the per-hit draw below is +-25% around the number `articulate` would have
+   * written and there is no second copy of the plucked envelope to drift.
+   */
+  const stabShape = shape('plucked', m.bpm, COMP_SLOTS[m.feel]);
   const stabVoice = (rhythm: string, level: Patternable): Pattern =>
     articulate(
       tagVoice(note(stabChord).struct(rhythm), VOICE_TAGS.stab)
@@ -3773,9 +4283,22 @@ export function buildChords(m: MusicalState): Pattern {
          * result, so this is the per-note weight and `gain` stays the lane's
          * fader — two dials that mean different things, kept apart on purpose.
          */
-        .velocity(1.41)
-        .pan(clamp01(0.5 + 0.16 * clamp01(0.5 + spread * 0.16 + wide)))
-        .lpf(m.sig.openness.range(1100, 3600))
+        .velocity(1.0)
+        /*
+         * A pan drawn per hit. `rand` is a pure function of query time
+         * (`docs/research-dubstep.md` §0.3, measured: identical across
+         * queries and rebuilds), so every gate that reads haps stays
+         * deterministic. SEEDED, because rand is a function of time ONLY —
+         * "two patterns at the same time will have the same random values"
+         * (§0.3's trap) — and without the seed the decay draw below and this
+         * one would be the same fraction on every hit: every short hit left,
+         * every long hit right. The cycle-zero edge (the legacy rand reads
+         * exactly 0 at t = 0) belongs to `sometimesBy`/`degradeBy`, where a 0
+         * against a probability DELETES the hap; on `rand.range` it is the low
+         * end of the range, a valid pan, once per 300 cycles.
+         */
+        .pan(rand.range(stabPan - 0.12, stabPan + 0.12).seed(7))
+        .lpf(m.sig.openness.range(800, 2200))
         .hpf(m.sig.thin.range(300, 700))
         /*
          * The filter envelope IS the stab now. On the old pulse a 1.1-octave
@@ -3787,13 +4310,39 @@ export function buildChords(m: MusicalState): Pattern {
         .lpenv(1.1)
         .lpattack(0.006)
         .lpdecay(0.16)
-        .drive(m.sig.drive.range(0.45, 0.85))
+        .drive(m.sig.drive.range(0.2, 0.4))
         .gain(level)
+        /*
+         * The stab's echo (Stage 2 of the "sounds cheapy" brief, 2026-09-05;
+         * Stage 3 owns the rest of this chain). Screenshot 1's saw stabs are
+         * `.delay(.1)` and `.delay(.5)`; 0.25 is between them, into the
+         * harmony orbit's shared line — 3/16 · 0.40, `ORBIT_DELAY` in
+         * kit.ts, the same node the arp, the lead and the motifs send into,
+         * so the sync and the feedback are the orbit's and only the send is
+         * this lane's.
+         */
+        .delay(0.25)
+        .delaysync(ORBIT_DELAY[ORBIT_HARMONY].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_HARMONY].feedback)
         .room(m.sig.space.range(0.28, 0.7))
         .orbit(ORBIT_HARMONY),
       'plucked',
       { slots: COMP_SLOTS[m.feel], bpm: m.bpm, shade: m.sig.drive, hold: m.sig.hold },
-    );
+    )
+      /*
+       * THE ONE CONTROL WRITTEN AFTER `articulate`, on purpose and out loud.
+       * `articulation.ts` says "call this LAST" because later writes win
+       * (AGENTS.md §4) and a restated envelope is how the score lost its
+       * lengths. This is not a restatement: the base is `shape('plucked')`'s
+       * own decay range on the same shade signal `articulate` used, and the
+       * draw multiplies it by 0.75-1.25 per hit (screenshot 1's
+       * `.dec(rand.range(.04, .23))`). Attack, sustain, release and clip are
+       * untouched, so `attackfloor`'s floors and the tail ceiling still read
+       * the touch. Unseeded, so the decay draw is `rand` itself and the pan's
+       * `.seed(7)` is what separates the two; at t = 0 the draw is 0.75x, a
+       * short hit rather than a missing one.
+       */
+      .decay(m.sig.drive.range(stabShape.decay[0], stabShape.decay[1]).mul(rand.range(0.75, 1.25)));
 
   const parts = [stabVoice(grid.core, m.sig.density.range(0, stabLevel))];
   /*
@@ -3811,7 +4360,8 @@ export function buildChords(m: MusicalState): Pattern {
         .late(m.feel === 'halftime' ? 0.016 : 0),
     );
   }
-  return stack(...parts);
+  // `bed` is `silence` outside its four sections; stacking silence costs nothing.
+  return stack(bed, ...parts);
 }
 
 /**
@@ -4014,7 +4564,7 @@ export function buildArp(m: MusicalState): Pattern {
    */
   const core = pitchAt.map((n, i) => (n !== null && i % 2 === 1 ? n : '~')).join(' ');
 
-  const voice = (line: string, transpose: number, pan: number, level: Patternable, sync: number): Pattern =>
+  const voice = (line: string, transpose: number, pan: number, level: Patternable): Pattern =>
     note(line)
       /*
        * `.add(note(n))`, never `.add(n)`.
@@ -4184,8 +4734,23 @@ export function buildArp(m: MusicalState): Pattern {
       .lpenv(1.4)
       .lpdecay(0.11)
       .delay(0.26 + homing * 0.3)
-      .delaysync(sync)
-      .delayfeedback(0.3 + homing * 0.22)
+      /*
+       * THE TIME AND THE FEEDBACK ARE THE ORBIT'S, NOT THIS VOICE'S.
+       *
+       * This was `.delaysync(sync)` with `sync` handed in per pod (3/16, 1/8,
+       * 1/16, 1/12 — see the tombstone on `pod`) and
+       * `.delayfeedback(0.3 + homing * 0.22)`. superdough keeps ONE feedback
+       * delay per orbit and retargets its time and feedback on every hap
+       * that differs (`superdoughoutput.mjs:53-67`), so four pods on four
+       * divisions were not four echoes — they were one delay line whose time
+       * jumped between four values hap by hap, on the same node the lead and
+       * the motifs send into. The audit read it off the haps (`scratchpad/
+       * cheap/reports/audit.md` §2b) and `tools/spacecheck.mjs` now fails it.
+       * HOMING keeps its LEVEL rise (the send above); the feedback rise went
+       * with the per-voice time, for the same reason.
+       */
+      .delaysync(ORBIT_DELAY[ORBIT_HARMONY].sync)
+      .delayfeedback(ORBIT_DELAY[ORBIT_HARMONY].feedback)
       /*
        * A ROOM, at last. This lane measured `room 0.00` — bone dry.
        *
@@ -4262,8 +4827,19 @@ export function buildArp(m: MusicalState): Pattern {
    * interlocking with the tune - the property `interlock` measures - is
    * unchanged in kind.
    */
-  const pod = (transpose: number, pan: number, level: number, sync: number): Pattern[] => [
-    plucked(voice(core, transpose, clamp01(pan - wing), level, sync)),
+  /*
+   * TOMBSTONE for the fourth argument, `sync`. Each pod took its own delay
+   * division — 3/16 on the lead pod, 1/8 on the second, 1/16 and 1/12 on the
+   * third and fourth — "so they audibly lag each other. You can count your
+   * drones with your ears." That was written for a delay each pod owned, and
+   * no pod owns one: the delay line is the ORBIT's (`ORBIT_DELAY` in kit.ts,
+   * one node per orbit, `superdoughoutput.mjs:53-67`), and four divisions on
+   * one node is a line whose time is reset on every hap. The pods are still
+   * countable — by their pans (0.14 / 0.86 / 0.5 / 0.4), their transpositions
+   * and their levels, all of which are per hap and all of which survive.
+   */
+  const pod = (transpose: number, pan: number, level: number): Pattern[] => [
+    plucked(voice(core, transpose, clamp01(pan - wing), level)),
   ];
   /*
    * EVERY POD LEVEL GOES UP BY HALF, and the reason is where this lane sits
@@ -4285,12 +4861,13 @@ export function buildArp(m: MusicalState): Pattern {
    * relative balance BETWEEN the pods is unchanged, so a player can still
    * count their drones.
    */
-  if (drones <= 0) return stack(...pod(0, 0.36, 0.6, 3 / 16));
-  // One voice per orbiting pod, hard-panned and on a different delay division
-  // so they audibly lag each other. You can count your drones with your ears.
-  const parts = [...pod(0, 0.14, 0.51, 3 / 16), ...pod(7, 0.86, 0.39, 1 / 8)];
-  if (drones >= 2) parts.push(...pod(12, 0.5, 0.3, 1 / 16));
-  if (drones >= 3) parts.push(...pod(-12, 0.4, 1, 1 / 12));
+  if (drones <= 0) return stack(...pod(0, 0.36, 0.6));
+  // One voice per orbiting pod, hard-panned so they arrive from different
+  // places. The per-pod delay division that used to sit here is tombstoned
+  // on `pod`.
+  const parts = [...pod(0, 0.14, 0.51), ...pod(7, 0.86, 0.39)];
+  if (drones >= 2) parts.push(...pod(12, 0.5, 0.3));
+  if (drones >= 3) parts.push(...pod(-12, 0.4, 1));
   return stack(...parts);
 }
 
@@ -4910,16 +5487,35 @@ export function buildLead(m: MusicalState): Pattern {
   return articulate(
     octave(stack(...voices))
       .delay(open ? 0.46 : 0.3)
-      .delaysync(open ? 1 / 4 : 3 / 16)
-      .delayfeedback(open ? 0.52 : 0.34)
+      /*
+       * TOMBSTONE for `.delaysync(open ? 1 / 4 : 3 / 16)` and
+       * `.delayfeedback(open ? 0.52 : 0.34)`.
+       *
+       * The open sections (intro, breakdown, HUSHED) lengthened this lane's
+       * echo to a quarter note and raised its feedback, and that read as an
+       * opening — on paper. On the node it was a fight: superdough keeps ONE
+       * feedback delay per orbit and retargets its time whenever a hap asks
+       * for a different one (`superdoughoutput.mjs:53-67`), and the arp sends
+       * into the same ORBIT_HARMONY node at 3/16 in exactly those sections.
+       * So the shared line's time was `setValueAtTime`d back and forth
+       * between 1/4 and 3/16 hap by hap, and neither lane got the echo it
+       * wrote (`scratchpad/cheap/reports/audit.md` §2b read it off the haps).
+       * The time and the feedback are the orbit's now (`ORBIT_DELAY`, kit.ts:
+       * 3/16 · 0.40 — between this lane's closed 0.34 and the echo motif's
+       * 0.45), and `tools/spacecheck.mjs` fails a second pair on the orbit.
+       * What the open sections keep: the delay SEND (0.30 -> 0.46, the line
+       * above) and the room send (0.34 -> 0.66, below), both per hap.
+       */
+      .delaysync(ORBIT_DELAY[ORBIT_HARMONY].sync)
+      .delayfeedback(ORBIT_DELAY[ORBIT_HARMONY].feedback)
       .room(m.sig.space.range(open ? 0.66 : 0.34, 0.95))
       /*
        * Not `open ? 8 : 4` any more. Same reason as the pad's: that
        * conditional rebuilt the harmony orbit's impulse response every time
        * a breakdown, an intro or a HUSHED wave began or ended. The opening
-       * is entirely intact and lives in the three lines above this one -
-       * the delay lengthens, the feedback rises and the room SEND goes
-       * 0.34 -> 0.66, none of which touches the IR. See `ORBIT_ROOM`.
+       * lives in the two SENDS — the delay level 0.30 -> 0.46 and the room
+       * send 0.34 -> 0.66 — neither of which touches the IR or the delay
+       * line's time. See `ORBIT_ROOM` and `ORBIT_DELAY`.
        */
       .roomsize(ORBIT_ROOM[ORBIT_HARMONY]),
     'sung',
@@ -5726,8 +6322,10 @@ export function buildFx(m: MusicalState): Pattern {
         .sustain(0)
         .hpf(1800)
         .delay(0.34)
-        .delaysync(1 / 8)
-        .delayfeedback(0.42)
+        // The air orbit's line (`ORBIT_DELAY`, kit.ts): 1/8 · 0.42 are this
+        // layer's own numbers, and it is the only delayed lane on the orbit.
+        .delaysync(ORBIT_DELAY[ORBIT_AIR].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_AIR].feedback)
         .room(0.5)
         .gain(0.05 + heat * 0.09)
         .pan(0.62)
@@ -5896,8 +6494,11 @@ const MOTIFS: readonly Motif[] = [
         .s('triangle')
         .lpf(2600)
         .delay(0.5)
-        .delaysync(3 / 16)
-        .delayfeedback(0.45)
+        // The harmony orbit's line (`ORBIT_DELAY`, kit.ts): 3/16 was this
+        // motif's own; feedback 0.45 -> 0.40 because the lead and the arp
+        // share the node and one pair is the rule.
+        .delaysync(ORBIT_DELAY[ORBIT_HARMONY].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_HARMONY].feedback)
         .gain(0.2)
         .pan(0.34)
         .orbit(ORBIT_HARMONY);
@@ -5943,8 +6544,10 @@ const MOTIFS: readonly Motif[] = [
         .s('triangle')
         .lpf(3000)
         .delay(0.4)
-        .delaysync(3 / 16)
-        .delayfeedback(0.4)
+        // The harmony orbit's line (`ORBIT_DELAY`, kit.ts); 3/16 · 0.40 were
+        // this motif's own numbers.
+        .delaysync(ORBIT_DELAY[ORBIT_HARMONY].sync)
+        .delayfeedback(ORBIT_DELAY[ORBIT_HARMONY].feedback)
         .gain(0.24)
         .pan(0.3)
         .orbit(ORBIT_HARMONY),

@@ -50,6 +50,7 @@ import { makeSignals, notesIn, pc } from './lib/headless-audio.mjs';
 
 const strudel = await import('@strudel/core');
 const { buildClap, percGrid } = await import('../src/audio/layers.ts');
+const { KIT_NAMES } = await import('../src/audio/samples.ts');
 const { buildChord, PROGRESSIONS } = await import('../src/audio/theory.ts');
 
 const FEELS = ['boomchick', 'chase', 'gallop', 'shuffle', 'halftime'];
@@ -285,8 +286,35 @@ if (seenFeels.size !== FEELS.length || seenIntensity.size !== 5 || seenStutter.s
   process.exit(1);
 }
 
-/** Hat haps: white noise behind the 7 kHz highpass `hatLayer` sets. */
-const isHat = (e) => e.s === 'white' && Number(e.hcutoff) >= 7000;
+/*
+ * Hat haps, in BOTH kits (2026-09-05).
+ *
+ * The kit is sampled now (`src/audio/samples.ts`): in Node the builders emit
+ * the written score, which is the three 909/LinnDrum hat names, and under
+ * `MUSICWARS_KIT=fallback` they emit the white noise behind the 7 kHz
+ * highpass `hatLayer` sets. The three names are checked against the sample
+ * table so a renamed sample goes red here rather than quietly counting zero
+ * hats — which is exactly what happened the day the kit landed: 3772 of 3772
+ * bars "had no hat at all" while every one of them had eight.
+ *
+ * The fallback rule also requires `hatLayer`'s constant 10.5 kHz lowpass,
+ * because the shaker's oscillator body (`kit.ts shaker`) is ALSO white noise
+ * above 7 kHz — through a 12 kHz lowpass — and it sits on every eighth,
+ * where the bed also sits. Two different DRUMS on one instant is the
+ * reference's own layering (`<- hh>*8` over `<sh>*8`), not the collision the
+ * DISJOINT assertion is about; the lowpass is what tells them apart.
+ */
+const SAMPLED_HATS = new Set(['mw_hh909', 'mw_hhlinn', 'mw_oh909']);
+for (const n of SAMPLED_HATS) {
+  if (!KIT_NAMES.includes(n)) {
+    console.log(`FAIL perccheck counts "${n}" as a hat but samples.ts has no such sample`);
+    process.exit(1);
+  }
+}
+const isHat = (e) =>
+  SAMPLED_HATS.has(e.s) || (e.s === 'white' && Number(e.hcutoff) >= 7000 && Number(e.cutoff) === 10500);
+/** The off-beat bed specifically: `percLayers` pans it at 0.44 and nothing else does. */
+const isBed = (e) => isHat(e) && Number(e.pan) === 0.44;
 /** Bell haps: the FM triangle `metal` builds. */
 const isBell = (e) => e.s === 'triangle' && Number(e.fmh) > 0;
 
@@ -316,10 +344,18 @@ for (const c of patternCases) {
   hatHaps += hats.length;
   if (hats.length) hatBars++;
 
-  const ab = audibleByIntensity.get(c.intensity) ?? { n: 0, sum: 0, kit: 0 };
+  const ab = audibleByIntensity.get(c.intensity) ?? { n: 0, sum: 0, kit: 0, bed: 0, bedGain: 0, bedBars: 0 };
   ab.n++;
   ab.sum += hats.filter(audible).length;
   ab.kit += evs.filter(audible).length;
+  // The off-beat bed: how many of its hits are audible, and at what written
+  // gain. Both are the response the density assertion reads now.
+  const bed = hats.filter(isBed).filter(audible);
+  ab.bed += bed.length;
+  if (bed.length) {
+    ab.bedBars++;
+    ab.bedGain += bed.reduce((a, h) => a + Number(h.gain), 0) / bed.length;
+  }
   audibleByIntensity.set(c.intensity, ab);
 
   // Two hits at the same instant in one bar, from the same noise source.
@@ -361,12 +397,12 @@ console.log(`    bars with any hat        ${hatBars}/${patternBars}  ${pctOf(hat
 console.log(`    hat haps under TIMEWARP  ${timewarpHats} over ${timewarpBars} bars`);
 
 console.log('\n  DENSITY (per bar; written = the grid, audible = past AUDIBLE_FLOOR)');
-console.log('    intensity   written  audible hats  whole kit   bars');
+console.log('    intensity   written  audible hats  whole kit  bed hits  bed gain   bars');
 for (const k of [...densityByIntensity.keys()].sort((a, b) => a - b)) {
   const b = densityByIntensity.get(k);
   const a = audibleByIntensity.get(k);
   console.log(
-    `      ${k.toFixed(2)}      ${(b.sum / b.n).toFixed(2).padStart(6)}  ${(a.sum / a.n).toFixed(2).padStart(12)}  ${(a.kit / a.n).toFixed(2).padStart(9)}  ${String(b.n).padStart(5)}`,
+    `      ${k.toFixed(2)}      ${(b.sum / b.n).toFixed(2).padStart(6)}  ${(a.sum / a.n).toFixed(2).padStart(12)}  ${(a.kit / a.n).toFixed(2).padStart(9)}  ${(a.bed / a.n).toFixed(2).padStart(8)}  ${(a.bedBars ? a.bedGain / a.bedBars : 0).toFixed(3).padStart(8)}  ${String(b.n).padStart(5)}`,
   );
 }
 
@@ -420,16 +456,41 @@ req(timewarpHats === 0, `TIMEWARP emitted ${timewarpHats} hat haps; the grid is 
  */
 const lo = audibleByIntensity.get(0.1);
 const hi = audibleByIntensity.get(0.85);
-req(
-  hi.sum / hi.n > 2 * (lo.sum / lo.n),
-  `audible hat density does not respond to intensity: ${(lo.sum / lo.n).toFixed(2)} at 0.10 vs ${(hi.sum / hi.n).toFixed(2)} at 0.85`,
-);
+/*
+ * REPLACED, NOT RELAXED (2026-09-05). This read `audible hats at 0.85 > 2 x
+ * audible hats at 0.10`, and the design it measured is gone on purpose: the
+ * off-beat bed is FLOORED at written 0.35 in build/drop/sustain
+ * (`percLayers`, from the owner's reference B — `<- hh>*8` is the one hat
+ * line that never leaves), so a calm bar now has the bed as well as the
+ * accents and the ratio is about 1.1, not 2. The response moved from COUNT
+ * to LEVEL, and the three assertions below are the stronger statement of
+ * it: the bed is heard in every calm bar (new), its written gain rises with
+ * intensity (new), and the whole kit's audible count still rises (kept, as a
+ * floor of +2 hits rather than a doubling).
+ */
 req(lo.sum / lo.n >= 3, `a calm bar has only ${(lo.sum / lo.n).toFixed(2)} audible hats — the accent figure should always sound`);
+req(lo.bedBars === lo.n, `${lo.n - lo.bedBars} of ${lo.n} calm sustain bars have no audible off-beat bed — the floor is not holding`);
+req(
+  hi.bedBars > 0 && lo.bedBars > 0 && hi.bedGain / hi.bedBars > lo.bedGain / lo.bedBars + 0.05,
+  `the bed's written gain does not rise with intensity: ${(lo.bedBars ? lo.bedGain / lo.bedBars : 0).toFixed(3)} at 0.10 vs ${(hi.bedBars ? hi.bedGain / hi.bedBars : 0).toFixed(3)} at 0.85`,
+);
+req(
+  hi.kit / hi.n >= lo.kit / lo.n + 2,
+  `the kit's audible count does not respond to intensity: ${(lo.kit / lo.n).toFixed(2)} at 0.10 vs ${(hi.kit / hi.n).toFixed(2)} at 0.85`,
+);
 
 req(shifted / bars > 0.1 && shifted / bars < 0.45, `displaced-bar share ${pctOf(shifted, bars)} outside 10-45%`);
 req(accentOffQuarter / accentOnsets > 0.35, `only ${pctOf(accentOffQuarter, accentOnsets)} of accents land off the quarter`);
 
-req(ratchetBars / bars > 0.4, `only ${pctOf(ratchetBars, bars)} of bars carry a ratchet`);
+/*
+ * REPLACED, NOT RELAXED (2026-09-05): `ratchetBars / bars > 0.4` became
+ * `ratchetBars === fillBars`. The per-bar ratchets are gone (`percGrid`'s
+ * tombstone: the references carry none outside a fill, and one to three a
+ * bar was part of "cheapy"), so the claim is now exact in both directions —
+ * every fill bar ratchets and no other bar does. A ratchet creeping back onto
+ * an ordinary bar is red here, which the old threshold could never see.
+ */
+req(ratchetBars === fillBars, `${ratchetBars} bars carry a ratchet against ${fillBars} fill bars — ratchets belong on the fill bar and nowhere else`);
 req(fillBarsWithRoll === fillBars, `${fillBars - fillBarsWithRoll} fill bars did not roll`);
 req(ghostTotal / bars >= 2, `ghost snares average ${(ghostTotal / bars).toFixed(2)} a bar`);
 

@@ -10,10 +10,37 @@
  * `s("sbd")` is the one built-in synthesised drum, but its pitch envelope is
  * fixed in ways that make it hard to push, so the kick here is built by hand
  * from a sine with a steep downward pitch envelope, which is what a kick is.
+ *
+ * ---------------------------------------------------------------------------
+ * AND NOW A SAMPLED KIT ON TOP OF IT (2026-09-05)
+ * ---------------------------------------------------------------------------
+ *
+ * Everything above is still true and is now the FALLBACK. The owner's word
+ * was "music still needs to be a lot better, sounds cheapy", and all four
+ * references they pasted play their drums from sampled drum machines
+ * (TR909, TR808, LinnDrum — `scratchpad/refs/references.md`). The capture of
+ * this score was `white×991` haps against 28 sampled ones, and every one of
+ * those white haps was this file. So each drum function below has two
+ * bodies: when `kitReady()` is true (`src/audio/samples.ts` — all nine
+ * one-shots decoded and resident) it emits `s('mw_bd909')` and friends; when
+ * it is not, it emits exactly the oscillator it emitted before this note was
+ * written. Offline, and for the first ~0.2-3 s after START, the second body
+ * is what plays; `tools/kitcheck.mjs` queries both.
+ *
+ * WHAT THE SAMPLED BODIES DO NOT CARRY, and why: no `.ds()`, no `penv`, no
+ * band-pass. On a sample, `decay` with `sustain 0` is a gain envelope that
+ * CUTS the file after `decay` seconds (`sampler.mjs:288`, `:318`), so the 46
+ * ms hat decay that shaped a noise burst would truncate a 909 hat to its
+ * first 46 ms; and the 7-10 kHz band that turned white noise into a hat
+ * would remove most of a hat sample. A sample plays its whole slice unless
+ * `clip` is set (`sampler.mjs:314-316`); the open hat is the one drum that
+ * sets it. The sidechain, the room sends and the orbits are the same on
+ * both bodies, because they are properties of the PART, not of the sound.
  */
 
-import { s, note, stack, type Pattern, type Patternable } from '@strudel/core';
+import { s, note, silence, stack, type Pattern, type Patternable } from '@strudel/core';
 import { articulate } from './articulation';
+import { kitReady } from './samples';
 
 export const ORBIT_DRUMS = 1;
 export const ORBIT_LOW = 2;
@@ -65,29 +92,60 @@ export const ORBIT_SUB = 5;
  * declaring a different room SIZE, including three lanes that disagreed with
  * themselves across sections.
  *
- * THE FOUR SIZES, and why each:
+ * THE FOUR SIZES, and why each (two of them halved on 2026-09-05 — see the
+ * paragraph after the table):
  *
- *   DRUMS   5   The half-time snare is the one drum in this score written for
- *               a room ("one enormous hit, and space either side of it") and
- *               it already asked for 5. The timpani roll moves here from the
- *               low orbit, which is where a drum belonged anyway.
+ *   DRUMS   2.5 Was 5: the half-time snare is the one drum in this score
+ *               written for a room ("one enormous hit, and space either side
+ *               of it") and it asked for 5 when it was a noise burst alone on
+ *               this orbit. It is a 909 snare-and-clap stack now (`clap()`
+ *               below), the backbeat on EVERY feel sends 0.2 into this IR and
+ *               the rim ghosts send it too — and a 5 s tail under two hits a
+ *               bar at 135 bpm is a wash that never clears before the next
+ *               hit (a bar is 1.78 s). The references put their claps in a
+ *               `room(.1)` to `room(.3)` at superdough's DEFAULT size, which
+ *               is 2 (`reverb.mjs:28`, `generate(d = 2, ...)`), and reference B's
+ *               `rsize(2)` is the only size any of them names. 2.5 keeps the
+ *               half-time hit's tail longer than a bar and lets the ordinary
+ *               backbeat read as a hit in a room rather than a hit in a hall.
+ *               The half-time send stays 0.44 (`buildClap`): a send is a
+ *               ratio, and halving the IR halves the tail's ENERGY on its
+ *               own. The timpani roll lives here from the low orbit, which
+ *               is where a drum belonged anyway.
  *   LOW     2   Small, and it is the tightest in the table on purpose. A long
  *               tail on a wobble fills the gaps the LFO cuts, and the gaps ARE
  *               the part; a big room on a bass is the classic way to lose a low
  *               end. `wobble.ts` and `buildBass` both already argued for this.
- *   HARMONY 6   The pad's own "one room, one building" figure, which the whole
- *               harmony group was already gathered around. The lanes that
- *               declared 3, 4, 5, 7 and 8 sit in it at their existing sends.
+ *   HARMONY 3   Was 6, "the pad's own 'one room, one building' figure". The
+ *               pad is deleted (the owner: "the synth sound is really bad i
+ *               hate it remove that"), and what is left on this orbit is the
+ *               stab, the arp, the lead, the motor and the motifs — short
+ *               notes with a tempo-synced delay on most of them. Reference B
+ *               puts its arp and its lead in `room(.8).rsize(2)` and
+ *               `room(.4).rsize(2)`; 3 is halfway to that from 6, kept above
+ *               2 so the harmony's space is audibly a different, larger one
+ *               than the bass's on ORBIT_LOW. The sends are unchanged: they
+ *               were written as depths in a shared room, and they still are.
  *   AIR     8   Cymbals and risers, the one place a long tail is the gesture.
+ *
+ * WHY HALVING IS FREE AND SHOULD STILL BE DONE ONCE. A SIZE is the one
+ * reverb control that costs a rebuild when it changes, so a size is changed
+ * here, in this table, and nowhere else; `tools/reverbchurn.mjs` reads 0
+ * rebuilds per bar and `tools/spacecheck.mjs` reads one `roomsize` per orbit
+ * off the haps. What halving buys is not measured by ear (nothing in this pass
+ * has been heard); it is measured as the references' practice against the
+ * audit's reading of this score — "5/6/8-second washes at low sends" against
+ * "2-second rooms at high sends" (`scratchpad/cheap/spec-v1.md`) — and by the
+ * capture's octave bands before and after (`scratchpad/cheap/after2/`).
  *
  * A FIFTH ORBIT IS THE RIGHT ANSWER IF A LANE EVER GENUINELY NEEDS A FIFTH
  * SPACE. Adding one costs one IR built once; changing a lane's size inside a
  * shared orbit costs one IR rebuild per note.
  */
 export const ORBIT_ROOM: Readonly<Record<number, number>> = {
-  [ORBIT_DRUMS]: 5,
+  [ORBIT_DRUMS]: 2.5,
   [ORBIT_LOW]: 2,
-  [ORBIT_HARMONY]: 6,
+  [ORBIT_HARMONY]: 3,
   [ORBIT_AIR]: 8,
   // The sub is dry and sets no room; the entry exists so the table stays a
   // total map over the orbits and reverbchurn's one-shape rule has a value to
@@ -95,11 +153,148 @@ export const ORBIT_ROOM: Readonly<Record<number, number>> = {
   [ORBIT_SUB]: 2,
 };
 
+/* ===========================================================================
+ * THE DELAY IS A PROPERTY OF THE ORBIT TOO — ITS TIME AND ITS FEEDBACK.
+ * ===========================================================================
+ *
+ * THE MECHANISM, read out of `superdoughoutput.mjs:53-67` (`Orbit.getDelay`)
+ * rather than guessed. superdough keeps ONE feedback-delay node per orbit.
+ * Every hap that sends `delay > 0` calls `getDelay(delaytime, feedback, t)`,
+ * which creates the node on first use and otherwise RETARGETS it: when the
+ * hap's `delaytime` or `feedback` differs from the node's current value it is
+ * `setValueAtTime`d at the hap's onset. There is no per-hap delay line on the
+ * orbit path (`superdough.mjs:930-935`); the line is shared state, and two
+ * lanes on one orbit asking for two times make the node jump between them
+ * hap by hap. That is what the lead and the arp were doing on ORBIT_HARMONY:
+ * the lead's open-section `1/4 · .52` against the arp's `3/16 · .30`, and the
+ * arp's own pods on `1/8`, `1/16` and `1/12` — the audit read it off the haps
+ * ("the delay time jumps between them hap by hap. Nothing measures that
+ * today", `scratchpad/cheap/reports/audit.md` §2b). Now something does:
+ * `tools/spacecheck.mjs` asserts one (sync, feedback) pair per orbit.
+ *
+ * `delaytime` is derived: superdough computes it as `delaysync` cycles at the
+ * current cps (`superdough.mjs:503`), so a hap that sets `delay` and NOT
+ * `delaysync`/`delayfeedback` falls to the defaults `3/16` and `0.5`
+ * (`superdough.mjs:190-194`) — which on the drums orbit is a silent retarget
+ * to a different time. Every `.delay()` in the score therefore chains
+ * `.delaysync(ORBIT_DELAY[o].sync).delayfeedback(ORBIT_DELAY[o].feedback)`,
+ * and `spacecheck` fails a delayed hap that carries neither.
+ *
+ * THE FOUR PAIRS, and why each:
+ *
+ *   DRUMS   1/8 · 0.30   Reference B's arp/lead delay is `.225 s` at 135 bpm,
+ *                        which is exactly an eighth (60/135/2 = 0.222). One
+ *                        repeat a beat behind the backbeat is the dub-clap
+ *                        figure (screenshot 1: `clap ... .delay(.2)`); 0.30
+ *                        feedback is two audible repeats and a third under
+ *                        the next hit. The nova clap layer already used 1/8
+ *                        here (at 0.28), so the drums orbit's time is the
+ *                        one it had.
+ *   LOW     3/16 · 0.40  A dotted eighth on the sampled pluck alone (the
+ *                        one-note-a-bar `gm_electric_bass_finger`): the
+ *                        classic dub echo, off the grid the wub's LFO is
+ *                        on, so the repeats fall in the wub's gaps. 0.40
+ *                        because the pluck is one note a bar and has room to
+ *                        ring; the wub/reese/mid never send, because a
+ *                        delayed LFO smears the part (`spec-v2.md` STAGE 2).
+ *   HARMONY 3/16 · 0.40  The arp's and the motifs' existing time; the lead's
+ *                        closed-section time. The lead's open `1/4 · .52`
+ *                        variant is GONE (tombstone in `buildLead`): a lead
+ *                        that lengthens its echo in the breakdown while the
+ *                        arp keeps the dotted eighth on the same node was
+ *                        the retarget above. 0.40 sits between the arp's
+ *                        0.30 and the echo motif's 0.45, and under reference
+ *                        B's 0.45 (which has no other lane on its node).
+ *   AIR     1/8 · 0.42   The graze shimmer's own numbers, unchanged; it is
+ *                        the only delayed lane on this orbit and stays so
+ *                        (hats and shaker NONE: the reference's hat delays
+ *                        are on isolated lines, and on a 24-hap-a-bar grid a
+ *                        delay is smear, not space).
+ *
+ * The per-hap LEVEL (`.delay(x)`) stays free, exactly as `.room()` does for
+ * the reverb: it is the send, not the line. A lane wanting a different TIME
+ * wants a different orbit, and that costs one delay node, not one IR.
+ *
+ * MEASURED: nothing by ear. The pairs are the references' figures and the
+ * score's existing ones reconciled; `spacecheck` reads them off the haps.
+ */
+export interface OrbitDelay {
+  /** Delay time in CYCLES (`.delaysync()`); superdough turns it into seconds at the current cps. */
+  readonly sync: number;
+  /** Feedback ratio (`.delayfeedback()`), clamped by superdough to 0.98. */
+  readonly feedback: number;
+}
+
+export const ORBIT_DELAY: Readonly<Record<number, OrbitDelay>> = {
+  [ORBIT_DRUMS]: { sync: 1 / 8, feedback: 0.3 },
+  [ORBIT_LOW]: { sync: 3 / 16, feedback: 0.4 },
+  [ORBIT_HARMONY]: { sync: 3 / 16, feedback: 0.4 },
+  [ORBIT_AIR]: { sync: 1 / 8, feedback: 0.42 },
+  // The sub never sends a delay (`sub()` below argues it must stay dry, and
+  // `spacecheck` asserts it); the entry keeps the table total over the orbits
+  // for the same reason ORBIT_ROOM carries one, mirroring the low orbit.
+  [ORBIT_SUB]: { sync: 3 / 16, feedback: 0.4 },
+};
+
+/**
+ * A note rhythm (`g1 ~ [~ g1] ~`) as a struct (`x ~ [~ x] ~`).
+ *
+ * The sampled kick must NOT carry a note. `superdough` repitches any sample
+ * that has one from MIDI 36 (`util.mjs:89-90`, `sampler.mjs:36`): `g1` is
+ * MIDI 31, so `note('g1').s('mw_bd909')` would play the 909 five semitones
+ * flat at 0.75x speed — a longer, duller kick nobody chose. The fallback kick
+ * keeps its note because its sine IS the note. Only the pitch tokens are
+ * replaced, so `@2` holds and `[ ]` groupings are untouched.
+ */
+function asStruct(rhythm: Patternable): Patternable {
+  return typeof rhythm === 'string' ? rhythm.replace(/[a-gA-G][#b]?-?\d+/g, 'x') : rhythm;
+}
+
 /**
  * Kick. `weight` 0..1 moves it from a soft house thump to a distorted
  * hard-dance kick: longer pitch drop, more saturation, tighter body.
+ *
+ * SAMPLED: the TR909 kick at native pitch under a 3.5 kHz lowpass, written
+ * 0.5 — NOT the sine body's 0.8, and the difference was measured twice, not
+ * guessed. Rendered soloed through the real chain (`tools/capture.mjs`, 4
+ * drop bars, world seed 0x51ed, unity fader): at written 0.8 the sample
+ * read -4.1 dBFS peak / -21.2 dBFS RMS against the oscillator kick's -19.7 /
+ * -33.8 at the same number — +12.6 dB of RMS, because the sine body's
+ * `distort(x:0.34)` is squared to x0.12 by this project's gain curve (AGENTS
+ * §4) and a wav has no such stage. The full mix hit 1.0000 (0.0 dBFS; the
+ * old drop peaked at -3.0) and 63-250 Hz rose 4-5 dB. At 0.6 the soloed
+ * kick read -26.2 RMS (parity with the sub's -26.8) and a 4-bar window
+ * peaked at -1.2 dBFS — but the 32-bar drop, where the kick fader reaches
+ * 1.00, clipped again and its 250 Hz band sat 7 dB above the old render's.
+ * 0.5 is -8 dB on the sample from the spec's number (amplitude 0.64 ->
+ * 0.25), about 3 dB under the sub soloed and level with it in the mix after
+ * the two faders: the kick marking time over a continuous floor, which is
+ * the balance `buildSub`'s own comment describes. Still 5 dB above the
+ * oscillator kick it replaces, which was measured "audible only as the click
+ * of its own pitch envelope". The rejected alternatives: the spec's 0.8
+ * (clips), and 0.6 (clips over 32 bars).
+ * `weight` does nothing to the sample —
+ * intensity moves the PATTERN (`kickRhythm`), and the reference kick is one
+ * sound at one level for the whole track. The lowpass is the one thing kept
+ * from screenshot 1's `s("bd:4").lp(300)`, an octave and a half higher
+ * because that reference is a half-time sketch at 50 bpm; the 909's click
+ * lives at 2-4 kHz and 3.5 kHz keeps the top of it. The synth click layer is
+ * gone on this body: the sample has its own transient, and stacking a second
+ * one is the "click on a click" that reads as a typewriter. The sidechain
+ * rides the sample exactly as it rode the sine (`.duckorbit` below on both).
  */
 export function kick(rhythm: Patternable, weight = 0.5): Pattern {
+  if (kitReady()) {
+    return s('mw_bd909')
+      .struct(asStruct(rhythm))
+      .lpf(3500)
+      .gain(0.5)
+      .orbit(ORBIT_DRUMS)
+      .duckorbit(ORBIT_LOW)
+      .duckonset(0.004)
+      .duckattack(0.17)
+      .duckdepth(0.45);
+  }
   // Softened deliberately. The previous settings (penv up to 48, distort up to
   // 14, gain 0.92) were a hard-dance kick, and stacked with the sub they put
   // ~45% of the mix's entire energy below 250Hz — which is what "DUN DUN DUUN"
@@ -160,6 +355,29 @@ export function kick(rhythm: Patternable, weight = 0.5): Pattern {
 }
 
 /**
+ * The TR808 kick, layered UNDER the 909 on half-time bars.
+ *
+ * Half-time puts one kick where a straight feel puts two or four, and that
+ * one hit has to carry the weight of the bar. The 808's is a long sine boom
+ * with almost no click — the sub-kick the genre stacks under a punchier one
+ * (`docs/research-dubstep.md` R1 is about exactly this low end). Written 0.4,
+ * squared to 0.16, under the 909's 0.5: the 909 is the transient, the 808 is
+ * the tail. Scaled with the 909 each time that was re-levelled from
+ * measurement (see `kick`); the two were 0.7 under 0.8 and keep the ratio.
+ *
+ * No fallback body, and that is a decision rather than an omission. The
+ * oscillator kick above IS a sine with a pitch drop — the thing an 808 is —
+ * so a second sine at the same time and pitch would only double the same
+ * oscillator, +6 dB on the downbeat. When the kit is not ready this layer is
+ * `silence` and the half-time kick is the kick it always was. Not `.duck`ed
+ * either: it sounds only where a 909 hap already triggered the sidechain.
+ */
+export function kick808(rhythm: Patternable): Pattern {
+  if (!kitReady()) return silence;
+  return s('mw_bd808').struct(asStruct(rhythm)).gain(0.4).orbit(ORBIT_DRUMS);
+}
+
+/**
  * The backbeat. Named `clap` because the stem is, but it is a SNARE now.
  *
  * The rhythm this plays — `~ x ~ x`, beats two and four — is right and always
@@ -181,8 +399,41 @@ export function kick(rhythm: Patternable, weight = 0.5): Pattern {
  * before the gain stage saw it, so the band stays open.
  *
  * `bright` still opens the top, which is what the intensity dial was moving.
+ *
+ * ---------------------------------------------------------------------------
+ * TOMBSTONE for the paragraph above about `ply(3)` and the drum-machine
+ * object. It was right about the canon it named and the canon has changed:
+ * the owner's own references (`scratchpad/refs/references.md`) put
+ * `<- cp:3>*4` on a TR909 next to `<- sd>*4`, and screenshot 1 is `clap`
+ * with room, delay and random pan. A handclap on the backbeat is not a
+ * tell any more; it is the brief. So when the kit is ready this function
+ * IS the 909 clap (`cp02.wav`) and `snare()` is the 909 snare, and
+ * `buildClap` stacks the two on the backbeat exactly as reference B does.
+ * The oscillator body below is unchanged and plays when the kit is not
+ * ready: one hit, band-limited, tuned body — the argument stands for the
+ * sound it describes, it just no longer decides the part.
+ * ---------------------------------------------------------------------------
  */
 export function clap(rhythm: Patternable, bright = 0.5): Pattern {
+  if (kitReady()) {
+    /*
+     * Written 0.6, not the crack's 0.8, and the number is from the render.
+     * The first version inherited 0.8 on the argument that the comment below
+     * had measured that level against the bass; then the whole clap stem was
+     * rendered soloed (`tools/capture.mjs`, 4 drop bars, 0x51ed): the sampled
+     * stem — this clap, the 909 snare, the hats, the rim, the shaker — read
+     * -6.0 dBFS peak / -32.3 RMS against the oscillator stem's -13.8 / -39.1,
+     * with 19% of its energy in 125-250 Hz where the noise stem had 2%. That
+     * is the 909 bodies, and it is +6.8 dB the mix did not have room for (it
+     * peaked at 0.0 dBFS). 0.6 is -5 dB on the snare, the clap and the rim —
+     * the BODIES. The hats and the shaker stay at the spec's numbers, because
+     * the first re-level trimmed them too and the 32-bar render lost its top:
+     * 8 kHz fell from -37.9 dBFS (the old noise kit) to -49.9, while at the
+     * spec's hat levels the same band had read -38.0. The air was never the
+     * problem; the 125-250 Hz bodies were. What it SOUNDS like is unheard.
+     */
+    return s('mw_cp909').struct(rhythm).gain(0.6).room(0.2).roomsize(ORBIT_ROOM[ORBIT_DRUMS]).orbit(ORBIT_DRUMS);
+  }
   return stack(
     /*
      * The crack. 1.6-7kHz is where a snare's information is; above that is
@@ -250,11 +501,25 @@ export function clap(rhythm: Patternable, bright = 0.5): Pattern {
       .gain(0.22),
   )
     .room(0.2)
+    .roomsize(ORBIT_ROOM[ORBIT_DRUMS])
     .orbit(ORBIT_DRUMS);
 }
 
-/** Snare: noise for the crack plus a tuned triangle for the body. */
+/**
+ * Snare: noise for the crack plus a tuned triangle for the body.
+ *
+ * SAMPLED: the TR909 snare (`sd02.wav`), written 0.6 (see `clap` for the
+ * measurement that set it), room 0.2 on the drums orbit — the same send the
+ * oscillator body has. `weight` moved the
+ * waveshaper on the noise body and does nothing here: the reference snare is
+ * one hit at one level. No `distort`: the 909 snare's noise is already the
+ * sound, and the waveshaper below exists to make a triangle-plus-white sound
+ * like one.
+ */
 export function snare(rhythm: Patternable, weight = 0.5): Pattern {
+  if (kitReady()) {
+    return s('mw_sd909').struct(rhythm).gain(0.6).room(0.2).roomsize(ORBIT_ROOM[ORBIT_DRUMS]).orbit(ORBIT_DRUMS);
+  }
   return stack(
     // 8.5kHz rather than 11: the crack is defined by the 2-5kHz band, and the
     // octave above it is spray that costs nothing to lose.
@@ -265,7 +530,51 @@ export function snare(rhythm: Patternable, weight = 0.5): Pattern {
     // waveshaper curve from this value, and it collapses to silence at 0.
     .distort(`${(1.1 + weight * 1.4).toFixed(2)}:0.4`)
     .room(0.2)
+    .roomsize(ORBIT_ROOM[ORBIT_DRUMS])
     .orbit(ORBIT_DRUMS);
+}
+
+/**
+ * The ghost note: a TR909 rimshot.
+ *
+ * A ghost snare is felt between the hits you hear, 12-20 dB under the
+ * backbeat (`percLayers` derives the velocity range). On the sampled kit it
+ * is a different DRUM rather than the same snare quieter — the rim is what a
+ * drummer plays for a ghost on a drum machine, a click with a tuned ring and
+ * no noise crack, so it reads as articulation instead of as a second, weaker
+ * backbeat. Velocity is the caller's, as before.
+ *
+ * Fallback: the softest snare in the score, `snare(struct, 0.2)` — exactly
+ * the construction the ghosts had before this function existed, so the
+ * oscillator kit is unchanged by the rename.
+ */
+export function rim(struct: Patternable): Pattern {
+  // 0.6 like the snare and the clap (the measurement is on `clap`); the
+  // caller's velocity takes it 12-20 dB under that.
+  if (kitReady()) return s('mw_rim909').struct(struct).gain(0.6).room(0.2).roomsize(ORBIT_ROOM[ORBIT_DRUMS]).orbit(ORBIT_DRUMS);
+  return snare(struct, 0.2);
+}
+
+/**
+ * The shaker: a TR808 cabasa on every eighth.
+ *
+ * Reference B is `<sh>*8` on the TR808 at one fixed level, and the audit's
+ * finding was that nothing in this score played every eighth at one level —
+ * `percLayers` even named that shape as the thing to avoid. The tombstone
+ * for that sentence is in `percLayers`; the short version is that the
+ * references have BOTH: a hat line with articulation AND a shaker with none,
+ * and the shaker is the one hat line allowed to be every hit the same.
+ * Level is the caller's (written 0.5, squared to 0.25).
+ *
+ * Fallback: a 12 ms white tick above 8 kHz — a new oscillator body, since
+ * no shaker existed to fall back to. It is a tick and not a shaker, and it
+ * is the honest fallback: the alternative of `silence` would make the
+ * offline kit lose a part rather than a timbre, which is the one thing the
+ * fallback rule (`samples.ts`) forbids.
+ */
+export function shaker(struct: Patternable, level: Patternable): Pattern {
+  if (kitReady()) return s('mw_sh808').struct(struct).gain(level).orbit(ORBIT_AIR);
+  return s('white').struct(struct).ds('0.012:0').hpf(8000).lpf(12000).hpq(1.2).gain(level).orbit(ORBIT_AIR);
 }
 
 /**
@@ -303,16 +612,58 @@ export function snare(rhythm: Patternable, weight = 0.5): Pattern {
  * grid's accents ring, its bed ticks, and its ratchets tick shorter still. See
  * `percGrid` in `layers.ts`.
  */
+/**
+ * Which hat, when the kit is sampled. The oscillator body ignores it except
+ * for `open`, which lengthens the noise burst.
+ *
+ *   closed     TR909 closed hat (`hh01.wav`) — the accents and the bed.
+ *   sixteenth  LinnDrum closed hat (`Hat Closed-03.wav`) — the fill-bar
+ *              sixteenths, and reference B's `<- hh>*8` machine.
+ *   open       TR909 open hat (`oh01.wav`) — the last accent of the bar.
+ */
+export type HatKind = 'closed' | 'sixteenth' | 'open';
+
+/**
+ * How long the open hat holds, in HAP LENGTHS, and why it is not the 0.35
+ * the design spec wrote.
+ *
+ * `clip` scales the hap's duration (`@strudel/core/hap.mjs:43-44`,
+ * `duration.mul(clip)`), and the sampler then holds the sample for exactly
+ * that long before its release (`sampler.mjs:314-318`). The open hat sits on
+ * ONE sixteenth step, 111 ms at 135 bpm, so `.clip(0.35)` is 39 ms — shorter
+ * than the closed hat's own 46 ms noise burst, i.e. a closed hat. Two hap
+ * lengths is 222 ms, plus an 80 ms linear release so the cut is a fade and
+ * not a click: about 300 ms, which reaches the next accent when the last
+ * accent is on step 14 and stops short of the bar line otherwise. That is
+ * what an open hat on the "and" before the downbeat does.
+ */
+export const OPEN_HAT_CLIP = 2;
+export const OPEN_HAT_RELEASE = 0.08;
+
 export function hatLayer(
   struct: string,
   brightness: number,
   level: Patternable,
   velocity = 1,
   decay = 0.018,
+  kind: HatKind = 'closed',
 ): Pattern {
+  if (kitReady()) {
+    const name = kind === 'open' ? 'mw_oh909' : kind === 'sixteenth' ? 'mw_hhlinn' : 'mw_hh909';
+    let p = s(name).struct(struct).velocity(velocity).gain(level).pan(0.56).orbit(ORBIT_AIR);
+    // The closed hats play their whole slice (20-30 ms of hat; nothing to
+    // cut). The open one is held and released; see `OPEN_HAT_CLIP`.
+    if (kind === 'open') p = p.clip(OPEN_HAT_CLIP).release(OPEN_HAT_RELEASE);
+    return p;
+  }
+  // The oscillator open hat: the same noise burst, ringing for 90 ms rather
+  // than the accents' 46. A new fallback number, because no open hat existed
+  // before; it is the shortest decay that reads as open against a 46 ms
+  // closed hat, and it stays under one step so the fallback kit cannot smear.
+  const dec = kind === 'open' ? Math.max(decay, 0.09) : decay;
   return s('white')
     .struct(struct)
-    .ds(`${decay.toFixed(3)}:0`)
+    .ds(`${dec.toFixed(3)}:0`)
     /*
      * The top comes down to 10.5kHz.
      *

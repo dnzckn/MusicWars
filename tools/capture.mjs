@@ -156,9 +156,69 @@
  *                     stereo sine through the same analyser, so the octave-band
  *                     table can be checked against an answer that is known in
  *                     advance
+ *   --fonts / --no-fonts  (default ON) register the General MIDI soundfonts
+ *                     and the sampled drum kit in the page and WARM every
+ *                     buffer the score can ask for — the enabled roles' warm
+ *                     ranges through `fontloader.getFontBufferSource`, the
+ *                     nine drum wavs through `loadBuffer` — BEFORE the offline
+ *                     render begins. See THE SAMPLED SOURCES below. `--no-fonts`
+ *                     is the tool as it was: every `gm_*`/`mw_*` hap throws
+ *                     "sound not found" and is counted in `superdough errors`.
+ *                     The flag cannot change the hap stream: the sha is
+ *                     printed and is the same either way.
+ *   --fallback        render the OSCILLATOR score — `MUSICWARS_SOUNDFONTS=
+ *                     fallback` and `MUSICWARS_KIT=fallback` in this process
+ *                     before the score is imported, so every lane emits what
+ *                     an offline player hears. A DIFFERENT hap stream, by
+ *                     definition, and the sha says so.
  *
  * Env equivalents: CAPTURE_BARS, CAPTURE_LEAD_IN, CAPTURE_STEM, CAPTURE_SEED,
- * CAPTURE_AUDIO_SEED, CAPTURE_OUT, CAPTURE_TAIL, CAPTURE_KEEP_RELEASES.
+ * CAPTURE_AUDIO_SEED, CAPTURE_OUT, CAPTURE_TAIL, CAPTURE_KEEP_RELEASES,
+ * CAPTURE_FONTS=0.
+ *
+ * THE SAMPLED SOURCES, and why the page has to be taught them (2026-09-05).
+ *
+ * Every earlier capture printed `superdough errors: sound
+ * gm_electric_bass_finger not found! Is it loaded?` and rendered the bass's
+ * sampled layer as NOTHING — not as its sawtooth fallback, as silence — because
+ * this page booted superdough's synths and never called `registerSoundfonts()`.
+ * With the drum kit sampled too (`src/audio/samples.ts`) that would have been
+ * the whole kit missing from the listening artefact, which is the one tool
+ * that can hear it. So the page now does what `engine.ts` does at START:
+ *
+ *   - imports `@strudel/soundfonts/fontloader.mjs` through an import map that
+ *     points `@strudel/core` at `core/util.mjs` (the three functions it needs
+ *     — `noteToMidi`, `freqToMidi`, `getSoundIndex` — live there and it
+ *     imports only `logger.mjs`) and `@strudel/webaudio` at the same superdough
+ *     bundle the render uses, so `registerSound` lands in the ONE sound map;
+ *   - registers the 125 `gm_*` names and decodes every pitch in each enabled
+ *     role's warm range, exactly the call `soundfonts.ts loadRole` makes;
+ *   - registers the nine-name drum map with `samples()` and `loadBuffer`s each
+ *     wav, then checks `getLoadedBuffer` — the same residency test
+ *     `samples.ts` gates on.
+ *
+ * WHY WARM AT ALL when the render is offline: `ac.currentTime` is 0 until
+ * `startRendering()`, so a sample fetched on demand during scheduling would
+ * never trip the "took too long" drop — the render would be correct either
+ * way. Warming first is so the WIRE TIME is a printed number separate from
+ * scheduling, and so a font that fails is named before the render rather than
+ * inferred from an error count. Bytes are metered at the socket by Playwright
+ * (`request.sizes()`), never by Resource Timing, which reports 0 for these
+ * hosts (no `Timing-Allow-Origin`); `fontcheck.mjs` learned that first.
+ *
+ * DETERMINISM IS UNTOUCHED: the fetches happen before the first `superdough()`
+ * call and the hap stream is built in Node before the browser exists. The
+ * sha1 is printed; it does not move with `--fonts`.
+ *
+ * ONE FIX TO THE HAPS THEMSELVES, same date: `d` was `(whole.end -
+ * whole.begin) * spb`, which IGNORES `clip`. `@strudel/core/hap.mjs:43-44`
+ * multiplies a hap's `duration` by its `clip`, and `webaudio.mjs:72` hands
+ * THAT to superdough — so every lane `articulate()` shapes (clip 0.46-0.91 on
+ * the sub, bass, stab, arp, lead, motor) rendered up to twice as long here as
+ * the game plays it, and the sampled open hat's hold would have been ignored
+ * outright. `d` now reads `hap.duration`. It changes the sha for every capture
+ * made after it — the old ones were of a longer-noted score — and the count of
+ * haps it shortened is printed so the difference is visible, not silent.
  */
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -218,6 +278,20 @@ const KEEP_OPEN = flag('keep-open');
  * a thing that CAN cut a sounding tail should not be left able to.
  */
 const SUPPRESS_RELEASE = !(flag('keep-releases') || process.env.CAPTURE_KEEP_RELEASES === '1');
+/* Register and warm the sampled sources in the page before rendering. See the header. */
+const FONTS = !(flag('no-fonts') || process.env.CAPTURE_FONTS === '0');
+/*
+ * The oscillator score. Both modules read their env switch ONCE, at import,
+ * and the score is imported below (`STEM_IDS`, then `buildScore`), so this
+ * has to be set here and nowhere later. It is the same mechanism every node
+ * gate has for running against the fallback (`soundfonts.ts:591`,
+ * `samples.ts`), applied to the one tool that can hear it.
+ */
+const FALLBACK = flag('fallback');
+if (FALLBACK) {
+  process.env.MUSICWARS_SOUNDFONTS = 'fallback';
+  process.env.MUSICWARS_KIT = 'fallback';
+}
 
 /*
  * 44100, stated once and used everywhere.
@@ -354,6 +428,11 @@ async function buildScore() {
   const timeline = [];
   let sec = 0;
   let guardTotal = 0;
+  // How many haps `clip` shortened, and by how much in total — printed, so
+  // the header's fix is a visible number in every log rather than a silent
+  // change of sha.
+  let clipped = 0;
+  let clipLost = 0;
   for (let i = 0; i < BARS; i++) {
     const target = startBar + i;
     let guard = 0;
@@ -382,11 +461,21 @@ async function buildScore() {
       const b = Number(h.whole?.begin ?? h.part.begin);
       const e = Number(h.whole?.end ?? h.part.end);
       if (!Number.isFinite(b) || !Number.isFinite(e)) continue;
+      /*
+       * `hap.duration`, not `whole.end - whole.begin`: the getter multiplies
+       * by `clip` (`@strudel/core/hap.mjs:43-44`) and is what the game's
+       * scheduler hands superdough (`webaudio.mjs:72`). See the header.
+       */
+      const dur = Number(h.duration ?? e - b);
+      if (Number.isFinite(dur) && dur < e - b - 1e-9) {
+        clipped++;
+        clipLost += (e - b - dur) * spb;
+      }
       events.push({
         v: h.value ?? {},
         // Absolute seconds into the render.
         t: sec + (b - target) * spb,
-        d: Math.max(1 / SR, (e - b) * spb),
+        d: Math.max(1 / SR, (Number.isFinite(dur) ? dur : e - b) * spb),
         cps,
         // superdough's fifth argument is a CYCLE number, not seconds
         // (`superdough.mjs:807` divides it by cps). Rebased onto the render.
@@ -397,7 +486,31 @@ async function buildScore() {
   }
   events.sort((a, b) => a.t - b.t);
 
-  return { events, span: sec, timeline, startReadout, endReadout: snap(director.readout(transport)) };
+  return { events, span: sec, timeline, startReadout, endReadout: snap(director.readout(transport)), clipped, clipLost };
+}
+
+/**
+ * What the page must register and warm before it renders: the enabled
+ * soundfont roles with their warm ranges (the same table `soundfonts.ts
+ * loadRole` walks) and the drum-sample map. Read from the score's own
+ * modules, never restated — `AGENTS.md` §3 on copied constants.
+ *
+ * Node has no `fontloader` URL to hand over: `soundfonts.ts` keeps its
+ * `BASE_URLS` private, and its first entry is the string `fontloader.mjs`
+ * ships as its default, so the page leaves the default in place and prints
+ * it. If those two ever diverge, the font simply fails to warm and the log
+ * names it.
+ */
+async function warmSpec() {
+  if (!FONTS) return null;
+  const SF = await import('../src/audio/soundfonts.ts');
+  const SM = await import('../src/audio/samples.ts');
+  const gm = (await import('@strudel/soundfonts/gm.mjs')).default;
+  const fonts = SF.ENABLED_ROLES.map((role) => {
+    const inst = SF.INSTRUMENTS[role];
+    return { role, font: inst.font, n: inst.n, file: gm[inst.font]?.[inst.n] ?? '', lo: inst.warm[0], hi: inst.warm[1] };
+  });
+  return { fonts, samples: { map: { ...SM.KIT_MAP }, base: SM.KIT_BASE_URLS[0], names: [...SM.KIT_NAMES] } };
 }
 
 /* --------------------------------------------------------------- the page */
@@ -413,10 +526,20 @@ async function buildScore() {
  * gains no dependency on a dev server being up.
  */
 const MIME = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.json': 'application/json' };
+/*
+ * Two more import-map entries, for `fontloader.mjs` (see THE SAMPLED SOURCES
+ * in the header). `@strudel/webaudio` maps to the SAME bundle as `superdough`
+ * so there is one module instance and one sound map; `@strudel/core` maps to
+ * `util.mjs` alone because the package index would pull `repl.mjs` and
+ * `@kabelsalat/web`, which is browser-only in a way this bare page cannot
+ * satisfy — `headless-audio.mjs` stubs the same import for Node.
+ */
 const PAGE_HTML = `<!doctype html><meta charset="utf-8"><title>capture</title>
 <script type="importmap">{"imports":{
   "nanostores":"/node_modules/nanostores/index.js",
-  "superdough":"/node_modules/superdough/dist/index.mjs"
+  "superdough":"/node_modules/superdough/dist/index.mjs",
+  "@strudel/webaudio":"/node_modules/superdough/dist/index.mjs",
+  "@strudel/core":"/node_modules/@strudel/core/util.mjs"
 }}</script><body></body>`;
 
 function startServer() {
@@ -444,9 +567,9 @@ function startServer() {
  * Returns interleaved 16-bit PCM plus the float peak, measured before
  * quantisation so a clipped render is visible rather than clamped away.
  */
-async function renderInBrowser(page, events, seconds) {
+async function renderInBrowser(page, events, seconds, warm) {
   return page.evaluate(
-    async ({ events, seconds, sr, maxPoly, audioSeed, suppressRelease }) => {
+    async ({ events, seconds, sr, maxPoly, audioSeed, suppressRelease, warm }) => {
       /*
        * Optionally stop superdough tearing its own graph down mid-render.
        *
@@ -607,6 +730,51 @@ async function renderInBrowser(page, events, seconds) {
       sd.setGainCurve((x) => x * x);
       sd.setMaxPolyphony(maxPoly);
 
+      /*
+       * THE SAMPLED SOURCES — registered and warmed before the first
+       * `superdough()` call, exactly as `engine.ts` does at START. The header
+       * says why. Twenty seconds for the lot, then whatever did not land is
+       * printed as fallen back and the render proceeds without it.
+       */
+      const warmed = { ms: 0, fonts: [], samples: [], skipped: !warm };
+      if (warm) {
+        const tw = performance.now();
+        const timeout = (p, ms, what) =>
+          Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms))]);
+        const DEADLINE = 20000;
+        const fl = await import('/node_modules/@strudel/soundfonts/fontloader.mjs');
+        fl.registerSoundfonts();
+        await Promise.all([
+          ...warm.fonts.map(async (f) => {
+            const t = performance.now();
+            try {
+              if (!f.file) throw new Error(`no variant ${f.n} of ${f.font}`);
+              for (let n = f.lo; n <= f.hi; n++) await timeout(fl.getFontBufferSource(f.file, { note: n }, ctx), DEADLINE, f.font);
+              warmed.fonts.push({ ...f, ok: true, ms: performance.now() - t, pitches: f.hi - f.lo + 1 });
+            } catch (err) {
+              warmed.fonts.push({ ...f, ok: false, ms: performance.now() - t, error: String(err?.message ?? err).slice(0, 120) });
+            }
+          }),
+          (async () => {
+            await sd.samples({ ...warm.samples.map }, warm.samples.base);
+            await Promise.all(
+              Object.entries(warm.samples.map).map(async ([name, path]) => {
+                const url = warm.samples.base + path;
+                const t = performance.now();
+                try {
+                  await timeout(sd.loadBuffer(url, ctx, name, 0), DEADLINE, name);
+                  if (!sd.getLoadedBuffer(url)) throw new Error('resolved but not resident');
+                  warmed.samples.push({ name, ok: true, ms: performance.now() - t });
+                } catch (err) {
+                  warmed.samples.push({ name, ok: false, ms: performance.now() - t, error: String(err?.message ?? err).slice(0, 120) });
+                }
+              }),
+            );
+          })(),
+        ]);
+        warmed.ms = performance.now() - tw;
+      }
+
       const kinds = {};
       let scheduled = 0;
       const errors = [];
@@ -628,12 +796,21 @@ async function renderInBrowser(page, events, seconds) {
       const buf = await ctx.startRendering();
       const L = buf.getChannelData(0);
       const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+      /*
+       * The FLOAT peak and the count of samples at or over full scale, taken
+       * BEFORE the int16 clamp below. The band table's `peak` is read back
+       * off the clamped PCM, so it saturates at 1.0000 and cannot say whether
+       * the render went over by one sample or by three decibels. These two
+       * numbers can.
+       */
       let peak = 0;
+      let overs = 0;
       for (let i = 0; i < L.length; i++) {
         const a = Math.abs(L[i]);
         const b = Math.abs(R[i]);
         if (a > peak) peak = a;
         if (b > peak) peak = b;
+        if (a >= 1 || b >= 1) overs++;
       }
       // Interleaved 16-bit, built in the page so only the bytes cross the wire.
       const pcm = new Int16Array(L.length * 2);
@@ -649,9 +826,9 @@ async function renderInBrowser(page, events, seconds) {
         bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
       }
       window.__capture = btoa(bin);
-      return { frames: L.length, peak, scheduled, kinds, errors, leftover, sideRenders, convolvers: convolvers.length, randomCalls, chars: window.__capture.length };
+      return { frames: L.length, peak, overs, scheduled, kinds, errors, leftover, sideRenders, convolvers: convolvers.length, randomCalls, chars: window.__capture.length, warmed };
     },
-    { events, seconds, sr: SR, maxPoly: 96, audioSeed: AUDIO_SEED, suppressRelease: SUPPRESS_RELEASE },
+    { events, seconds, sr: SR, maxPoly: 96, audioSeed: AUDIO_SEED, suppressRelease: SUPPRESS_RELEASE, warm },
   );
 }
 
@@ -952,7 +1129,8 @@ if (SELFTEST) {
 }
 
 const t0 = Date.now();
-const { events, span, timeline, startReadout, endReadout } = await buildScore();
+const { events, span, timeline, startReadout, endReadout, clipped, clipLost } = await buildScore();
+const warm = await warmSpec();
 const hapHash = createHash('sha1').update(JSON.stringify(events)).digest('hex').slice(0, 12);
 
 const stateLine = (label, r) =>
@@ -965,11 +1143,17 @@ const stateLine = (label, r) =>
 console.log('');
 console.log(
   `capture — ${BARS} bars, stem=${STEM}, world seed 0x${SEED.toString(16)}, audio seed ${AUDIO_SEED}, ` +
-    `node release ${SUPPRESS_RELEASE ? 'BLOCKED (default)' : 'live (--keep-releases)'}`,
+    `node release ${SUPPRESS_RELEASE ? 'BLOCKED (default)' : 'live (--keep-releases)'}, ` +
+    `score ${FALLBACK ? 'FALLBACK (oscillators, --fallback)' : 'written (sampled)'}, ` +
+    `sampled sources ${FONTS ? 'warmed (--fonts)' : 'NOT registered (--no-fonts)'}`,
 );
 console.log(stateLine(`bar 0`, startReadout));
 console.log(stateLine(`bar ${BARS}`, endReadout));
 console.log(`  ${events.length} haps over ${span.toFixed(2)}s  (hap-stream sha1 ${hapHash})`);
+console.log(
+  `  clip honoured on ${clipped} of ${events.length} haps (${clipLost.toFixed(1)}s of note length removed in total; ` +
+    `captures before 2026-09-05 rendered those haps at their unclipped length)`,
+);
 
 /*
  * Zero is a FAILURE, not a quiet pass. AGENTS §3: "print every denominator;
@@ -987,6 +1171,27 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
+/*
+ * Bytes at the socket, per host, for everything the warm-up fetched. Not in
+ * the page: Resource Timing zeroes cross-origin sizes without
+ * `Timing-Allow-Origin`, which neither the font host nor the sample CDN
+ * sends (`fontcheck.mjs` found this first; `samples.md` §1 confirmed it).
+ */
+const wire = new Map();
+page.on('requestfinished', async (req) => {
+  const u = req.url();
+  if (u.startsWith(`http://127.0.0.1:${port}/`)) return;
+  try {
+    const sizes = await req.sizes();
+    const host = new URL(u).host;
+    const w = wire.get(host) ?? { requests: 0, bytes: 0 };
+    w.requests++;
+    w.bytes += sizes.responseBodySize;
+    wire.set(host, w);
+  } catch {
+    /* a request that finished after the page closed cannot be sized */
+  }
+});
 // nanostores' unbundled entry reads process.env.NODE_ENV; Vite would define it
 // away, and a bare import map does not.
 await page.addInitScript(() => {
@@ -995,7 +1200,7 @@ await page.addInitScript(() => {
 await page.goto(`http://127.0.0.1:${port}/`);
 
 const seconds = span + TAIL;
-const first = await renderInBrowser(page, events, seconds);
+const first = await renderInBrowser(page, events, seconds, warm);
 const pcm = await drain(page, first.chars);
 
 let secondHash = null;
@@ -1036,12 +1241,51 @@ console.log(
     `${first.sideRenders} impulse-response render(s) and ${first.convolvers} reverb bus(es) waited for; ` +
     `${first.randomCalls} seeded Math.random draws`,
 );
+/*
+ * Full scale, said in a number. There is no limiter anywhere in superdough, so
+ * a float peak over 1.0 here is a peak over 1.0 in the game, and the int16
+ * WAV below is clamped at exactly the samples counted.
+ */
+console.log(
+  `  float peak ${first.peak.toFixed(4)} (${(20 * Math.log10(Math.max(first.peak, 1e-9))).toFixed(1)} dBFS) before quantisation; ` +
+    `${first.overs} sample(s) at or over full scale${first.overs > 0 ? ' — CLIPPED in the WAV and in the game' : ''}`,
+);
 console.log(
   `  sources: ${Object.entries(first.kinds)
     .sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k}×${n}`)
     .join(' ')}`,
 );
+/*
+ * Which sampled sources were RESIDENT when the render started. A `gm_*` or
+ * `mw_*` name in the sources line above is what the score asked for; this is
+ * what the page could answer with. The two differ exactly when a fetch fell
+ * back, and "fell back" here means SILENT for those haps, not the oscillator —
+ * the oscillator swap is the game's decision (`kitReady`, `usingSoundfont`),
+ * made in Node before the browser existed.
+ */
+const w = first.warmed;
+if (w.skipped) {
+  console.log('  sampled sources: NOT registered (--no-fonts) — every gm_*/mw_* hap above threw and is silent');
+} else {
+  const fontsOk = w.fonts.filter((f) => f.ok);
+  const samplesOk = w.samples.filter((s) => s.ok);
+  console.log(
+    `  sampled sources warmed in ${w.ms.toFixed(0)} ms: fonts ${fontsOk.length}/${w.fonts.length} ` +
+      `(${w.fonts.map((f) => `${f.font} n=${f.n} ${f.ok ? `${f.pitches} pitches ${f.ms.toFixed(0)} ms` : `FELL BACK: ${f.error}`}`).join('; ') || 'none enabled'}), ` +
+      `drum samples ${samplesOk.length}/${w.samples.length} ` +
+      `(${samplesOk.length ? `${Math.min(...samplesOk.map((s) => s.ms)).toFixed(0)}-${Math.max(...samplesOk.map((s) => s.ms)).toFixed(0)} ms each` : 'none'}` +
+      `${w.samples.filter((s) => !s.ok).map((s) => `; ${s.name} FELL BACK: ${s.error}`).join('')})`,
+  );
+  const wireLine = [...wire.entries()].map(([h, v]) => `${h} ${v.bytes} B/${v.requests} req`).join(', ');
+  console.log(`  wire: ${wireLine || 'nothing fetched'}`);
+  // Names the score asked for that the page did not hold: those haps are the
+  // `superdough errors` below, and the render is missing them.
+  const asked = Object.keys(first.kinds).filter((k) => k.startsWith('gm_') || k.startsWith('mw_'));
+  const held = new Set([...fontsOk.map((f) => f.font), ...samplesOk.map((s) => s.name)]);
+  const missing = asked.filter((k) => !held.has(k));
+  if (missing.length) console.log(`  MISSING from the render (asked for, not resident): ${missing.join(' ')}`);
+}
 if (first.errors.length) console.log(`  superdough errors: ${first.errors.join(' | ')}`);
 /*
  * Zero is the expected value and it is printed anyway. A silent "we waited"

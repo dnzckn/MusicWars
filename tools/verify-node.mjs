@@ -48,7 +48,7 @@ const GROUPS = [
   ]],
   ['score', 300, [
     'tune', 'clash', 'contour', 'motif', 'rhythm', 'basscheck', 'leadcheck',
-    'motorcheck', 'perccheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
+    'motorcheck', 'perccheck', 'spacecheck', 'masking', 'interlock', 'barvariety', 'leadfreeze', 'instruments', 'sfxcheck',
   ]],
   /*
    * `gridview` is in `rules` next to `gridcost` because it costs about the

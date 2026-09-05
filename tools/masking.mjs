@@ -177,12 +177,22 @@ function soundingNotes(m) {
 const overlaps = (a, b) => a.begin < b.end - EPS && b.begin < a.end - EPS;
 
 const TENSIONS = [0.35, 0.6, 0.85];
+/*
+ * `--section=breakdown` (or intro, build, drop, fill; default sustain, which
+ * is what every figure in this file's history was measured in). Added
+ * 2026-09-05 with the chords bed, which sounds ONLY in intro/build/breakdown
+ * and under hush: a sustain-only sweep is structurally blind to it, and the
+ * spec for that pass asks for the bass+chords pair in the breakdown AND in the
+ * drop, where the bed is absent and the pair must therefore read exactly as
+ * before. The default is unchanged so the numbers above stay comparable.
+ */
+const SECTION = (process.argv.find((a) => a.startsWith('--section=')) ?? '--section=sustain').slice('--section='.length);
 const cases = [];
 for (const feel of FEELS) {
   for (const mode of Object.keys(PROGRESSIONS)) {
     const prog = PROGRESSIONS[mode];
     for (let i = 0; i < prog.length; i++) {
-      for (const tension of TENSIONS) cases.push({ feel, mode, degree: prog[i][0], tension });
+      for (const tension of TENSIONS) cases.push({ feel, mode, degree: prog[i][0], tension, section: SECTION });
     }
   }
 }
@@ -227,7 +237,7 @@ for (const c of cases) {
 const totalWeight = rough.reduce((s, r) => s + r.weight, 0);
 
 const rate = pairsChecked ? (rough.length / pairsChecked) * 100 : 0;
-console.log(`masking — ${cases.length} states, ${pairsChecked} overlapping cross-lane pairs\n`);
+console.log(`masking — ${cases.length} states (section ${SECTION}), ${pairsChecked} overlapping cross-lane pairs\n`);
 console.log(`  rough pairs (1-${ROUGH} semitones apart, sounding together): ${rough.length}  (${rate.toFixed(1)}%)`);
 /*
  * PER BAR, because the raw total now covers eight bars instead of one.

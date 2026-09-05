@@ -73,9 +73,24 @@ const p = await b.newPage();
 const __reloads = await freezePage(p);
 await p.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
 await p.click('#start-button');
-const { rows, floor: AUDIBLE_FLOOR } = await p.evaluate(async () => {
+const { rows, floor: AUDIBLE_FLOOR, tags: TAGS } = await p.evaluate(async () => {
   // The director's own constant, from the module the game is running.
   const { AUDIBLE_FLOOR: floor } = await import('/src/audio/director.ts');
+  /*
+   * THE STAB IS SELECTED BY TIMBRE, not by stem — the third time this file has
+   * had to move from a proxy to the thing. The chords stem carries TWO voices
+   * since 2026-09-05: the stab and the sine BED (`buildChords`), and the bed
+   * at written 0.22 clears the floor two bars before the stab does. Counted by
+   * stem, the bed's two whole notes a bar read as "the stab is audible" and
+   * this gate could never see the bed stealing the stab's audibility, which
+   * is the one thing the pass that added the bed was told to watch for. The
+   * tags come from `layers.VOICE_TAGS`, imported in the page from the module
+   * the game is running, so the selector is the builders' own definition and
+   * not a copy (AGENTS.md §3; `harmony.mjs` had a copy and it lied).
+   */
+  const { VOICE_TAGS } = await import('/src/audio/layers.ts');
+  const isTag = (v, tag) =>
+    v.s === tag.s && (tag.pw === undefined || v.pw === tag.pw) && (tag.unison === undefined || v.unison === tag.unison);
   const mw = window.__musicwars;
   const out = [];
   let lastBar = -1;
@@ -83,16 +98,18 @@ const { rows, floor: AUDIBLE_FLOOR } = await p.evaluate(async () => {
   /*
    * The director's own audibility test, per hap: `gain^2 * fader^2` against
    * the imported floor. `cache` is the per-stem pattern the scheduler queries;
-   * `sampleBar` reads the same object but throws the gain away.
+   * `sampleBar` reads the same object but throws the gain away. `pick` narrows
+   * a stem to one voice; the denominators are of the picked haps.
    */
-  const audible = (id, bar, fader) => {
+  const audible = (id, bar, fader, pick = () => true) => {
     let n = 0;
     let total = 0;
     try {
       for (const hap of mw.director.cache[id].queryArc(bar, bar + 1)) {
         if (!hap.hasOnset || !hap.hasOnset()) continue;
-        total++;
         const v = hap.value ?? {};
+        if (!pick(v)) continue;
+        total++;
         const g = typeof v.gain === 'number' ? v.gain : 1;
         if (g * g * fader * fader > floor) n++;
       }
@@ -108,19 +125,21 @@ const { rows, floor: AUDIBLE_FLOOR } = await p.evaluate(async () => {
       const s = mw.director.sampleBar(mw.world.transport);
       const rd = mw.readout();
       const bass = audible('bass', bar, rd.levels.bass);
-      const stab = audible('chords', bar, rd.levels.chords);
+      const stab = audible('chords', bar, rd.levels.chords, (v) => isTag(v, VOICE_TAGS.stab));
+      const bed = VOICE_TAGS.bed ? audible('chords', bar, rd.levels.chords, (v) => isTag(v, VOICE_TAGS.bed)) : { n: 0, total: 0 };
       out.push({ bar, section: rd.section,
         lead: s.lead.length, arp: s.arp.length, chords: s.chords.length,
         kick: s.kick.length, hats: s.hats.length, bass: s.bass.length,
-        bassAud: bass.n, stabAud: stab.n,
+        bassAud: bass.n, stabAud: stab.n, stabSched: stab.total, bedAud: bed.n, bedSched: bed.total,
         bassLvl: +rd.levels.bass.toFixed(2), chordsLvl: +rd.levels.chords.toFixed(2),
         leadLvl: +rd.levels.lead.toFixed(2) });
     }
     await new Promise((r) => setTimeout(r, 120));
   }
-  return { rows: out, floor };
+  return { rows: out, floor, tags: { stab: VOICE_TAGS.stab, bed: VOICE_TAGS.bed ?? null } };
 });
 if (typeof AUDIBLE_FLOOR !== 'number') throw new Error(`AUDIBLE_FLOOR did not import in the page: ${AUDIBLE_FLOOR}`);
+if (!TAGS?.stab?.s) throw new Error(`VOICE_TAGS.stab did not import in the page: ${JSON.stringify(TAGS)}`);
 if (__reloads() > 0) console.log(`WARNING: page reloaded ${__reloads()}x mid-run — these numbers span more than one build`);
 await b.close();
 console.table(rows.slice(0, 12));
@@ -132,7 +151,7 @@ console.log(`intro bars: ${intro.length}, mean lead notes/bar: ${mean(intro, 'le
 const firstWith = (k) => rows.find((r) => r[k] > 0)?.bar ?? -1;
 const order = { bass: firstWith('bass'), chords: firstWith('chords'), lead: firstWith('lead'), kick: firstWith('kick'), hats: firstWith('hats') };
 console.log('first bar each stem sounds (onsets):', JSON.stringify(order));
-const firstAudible = { bass: firstWith('bassAud'), stab: firstWith('stabAud') };
+const firstAudible = { bass: firstWith('bassAud'), stab: firstWith('stabAud'), bed: firstWith('bedAud') };
 console.log(`first bar each is AUDIBLE (gain^2 * fader^2 > ${AUDIBLE_FLOOR}):`, JSON.stringify(firstAudible));
 
 // The audibility denominators, printed before any verdict.
@@ -140,9 +159,20 @@ const firstDrop = rows.find((r) => r.section === 'drop')?.bar ?? rows.length;
 const preDrop = rows.filter((r) => r.bar < firstDrop);
 const bassBars = intro.filter((r) => r.bassAud > 0).length;
 const stabHaps = preDrop.reduce((n, r) => n + r.stabAud, 0);
-const stabScheduled = preDrop.reduce((n, r) => n + r.chords, 0);
+const stabScheduled = preDrop.reduce((n, r) => n + r.stabSched, 0);
+const bedHaps = preDrop.reduce((n, r) => n + r.bedAud, 0);
+const bedScheduled = preDrop.reduce((n, r) => n + r.bedSched, 0);
 console.log(`bass audible in ${bassBars} of ${intro.length} intro bars (min ${BASS_BARS_MIN})`);
-console.log(`stab audible ${stabHaps} time(s) of ${stabScheduled} scheduled before the first drop bar (bar ${firstDrop}; min ${STAB_HAPS_MIN})`);
+console.log(
+  `stab (${TAGS.stab.s}) audible ${stabHaps} time(s) of ${stabScheduled} scheduled before the first drop bar (bar ${firstDrop}; min ${STAB_HAPS_MIN})`,
+);
+// A readout, not an assertion: the bed is meant to be under the stab, and
+// the number to watch is the stab's, above, not this one.
+console.log(
+  TAGS.bed
+    ? `bed (${TAGS.bed.s}) audible ${bedHaps} time(s) of ${bedScheduled} scheduled before the drop — a readout; if the stab count above ever falls under its minimum, the bed's intro level is what moves`
+    : 'no bed voice in VOICE_TAGS',
+);
 
 const fail = [];
 if (intro.length < 6) fail.push(`intro lasted only ${intro.length} bars; it is meant to be 8`);

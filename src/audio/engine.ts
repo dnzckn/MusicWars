@@ -9,11 +9,13 @@
  *    `currentTime` never advances, the scheduler clock never ticks, and you get
  *    total silence with no error at all.
  *  - No samples are loaded by default and none ship with the packages, so
- *    `s("bd")` throws. Every drum in this game is synthesised from oscillators
- *    and noise (see `kit.ts`), which also means the drums work offline. The
- *    PITCHED lanes now fetch General MIDI soundfonts at runtime and fall back
- *    to their oscillators when that fails — see `soundfonts.ts` and the call
- *    to `beginSoundfontLoad` below.
+ *    `s("bd")` throws. Every drum in this game HAS an oscillator body (see
+ *    `kit.ts`), which is what plays offline and for the first ~0.25 s after
+ *    START; since 2026-09-05 the kit also fetches nine drum-machine one-shots
+ *    at runtime (`samples.ts`) and swaps to them once all nine are resident.
+ *    The PITCHED lanes fetch General MIDI soundfonts the same way and fall
+ *    back to their oscillators when that fails — see `soundfonts.ts` and the
+ *    two calls below.
  *  - `sync: true` would select a SharedWorker-based clock whose worker file
  *    Vite inlines as a `data:` URL, which Chrome rejects. Never pass it.
  *  - Mini-notation in plain TypeScript requires `miniAllStrings()`; without it
@@ -35,6 +37,7 @@ import {
 import { setStringParser } from '@strudel/core';
 import { BEATS_PER_BAR, type Transport } from '../core/transport';
 import { beginSoundfontLoad } from './soundfonts';
+import { beginKitLoad } from './samples';
 
 // Safe at module load: pure string-parser wiring, no AudioContext, no DOM.
 miniAllStrings();
@@ -177,6 +180,24 @@ export function bootAudio(bpm: number): Promise<Repl> {
      */
     void beginSoundfontLoad(ctx).catch((err: unknown) => {
       console.warn('[audio] soundfonts unavailable; every lane keeps its oscillator', err);
+    });
+
+    /*
+     * THE DRUM KIT, FETCHED THE SAME WAY, and SECOND on purpose.
+     *
+     * `src/audio/samples.ts` is `soundfonts.ts`'s mechanism applied to nine
+     * drum-machine one-shots (267 KB; the owner's references are all sampled
+     * drum machines and the score's kit was one noise generator). It starts
+     * after the soundfont load has been kicked off, not before, because the
+     * bass font is 9.7 KB and one lane's whole timbre, and the nine wavs
+     * share its sockets: measured, the wavs take 67-127 ms as a batch on a
+     * warm connection and the font 51-131 ms, so ordering them costs the kit
+     * at most a frame or two and guarantees the bass never queues behind the
+     * clap. Not awaited, cannot reject, and every drum plays its oscillator
+     * until all nine buffers are resident — `kit.ts` reads `kitReady()`.
+     */
+    void beginKitLoad(ctx).catch((err: unknown) => {
+      console.warn('[audio] drum samples unavailable; the kit keeps its oscillators', err);
     });
 
     // Quadratic faders. Linear gain sounds wrong when the director rides a

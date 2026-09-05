@@ -67,7 +67,7 @@ const strudel = await import('@strudel/core');
 // place in the repo that holds the package to its word.
 const tonal = await import('@strudel/tonal');
 const { buildChords, VOICE_TAGS } = await import('../src/audio/layers.ts');
-const { buildChord, voiceLead, PROGRESSIONS, degreeToSemitone, extensionSemitone, LANE_RANGE } = await import(
+const { buildChord, voiceLead, pivotChord, PROGRESSIONS, degreeToSemitone, extensionSemitone, LANE_RANGE } = await import(
   '../src/audio/theory.ts'
 );
 
@@ -134,11 +134,27 @@ function symbolFor(mode, degree) {
 
 /** A `MusicalState` good enough to build one bar of `chords` with. */
 function state(over = {}) {
+  /*
+   * `pivot` is not a field of `MusicalState`; it is the one flag on `Chord`
+   * the bed and the stab both read (`Chord.pivot` in theory.ts). Stripped
+   * here and written onto the chord, so the sweep can build the bar before a
+   * modulation without holding a copy of `pivotChord`.
+   */
+  const { pivot, ...rest } = over;
+  over = rest;
   const mode = over.mode ?? 'aeolian';
   const tonic = over.tonic ?? 57;
   const degree = over.degree ?? 0;
   const extend = over.extend ?? 'seventh';
-  const chord = voiceLead([], buildChord(tonic, mode, degree, 0, extend));
+  /*
+   * A pivot bar is `pivotChord`'s dominant seventh on the way to the next key
+   * up the cycle of fourths (`onWaveStart`: the new tonic is five semitones
+   * above), never an ordinary chord with the flag set. The first version of
+   * this sweep flagged the mode's tonic chord and reported 225 bed dyads a
+   * major sixth wide — a fact about the sweep, not about the bed.
+   */
+  const chord = voiceLead([], pivot ? pivotChord(tonic, tonic + 5) : buildChord(tonic, mode, degree, 0, extend));
+  if (pivot) chord.pivot = true;
   return {
     tension: 0.5,
     immediate: 0.5,
@@ -389,65 +405,112 @@ if (seventhMax === 0 || ninthMax === 0) {
   console.log('  ok   onsets — unlocking the ninth replaces a tone rather than adding one');
 }
 
-/* ------------------- 4. the chords lane does not sustain, and is not a supersaw */
+/* ------ 4. the chords lane sustains ONLY in the open sections, as a sine bed */
 
 /*
- * WHAT STOOD HERE, AND WHY IT WAS REPLACED RATHER THAN RELAXED.
+ * WHAT STOOD HERE, TWICE, AND WHY EACH VERSION WAS REPLACED RATHER THAN RELAXED.
  *
- * Section 4 was CLUSTER: the pad — a sustained dyad folded into
+ * First there was CLUSTER: the pad — a sustained dyad folded into
  * `LANE_RANGE.pad` — must never hold two tones within two semitones. It caught
  * a real defect on the day the chord grew a seventh (`[49,50,54,57]` in 38 of
  * 88 bars, every register gate green) and it stayed green for 176 pad bars on
  * the last tree that had a pad.
  *
- * The pad is deleted. So is the colour pair. The owner's words, verbatim:
- * "also the synth sound is really bad i hate it remove that and clean up the
- * music", after "the synth high pitch sound is not good" and "too much high
- * pitch synth always playing, its taxing on the ears". Two capping commits
- * (`2524fcb`, `6e6bdc4`) lowered filters and levels and did not answer it.
- * Measured on that tree: the colour pair was the top sustained voice above
- * 500 Hz from bar 11 of a run once the lead rests (expo 0.037-0.041 vs the
- * lead's 0.031), and bass+chords was 47% of all masking weight, 2620 of its
- * 3265 inside the pad's own window. A gate whose SUBJECT is deleted by design
- * is not a gate being relaxed (AGENTS.md §3, `leadcheck`'s own header records
- * the same shape); keeping CLUSTER would mean asserting spacing on a lane that
- * holds nothing.
+ * Then the pad was deleted on the owner's word ("also the synth sound is
+ * really bad i hate it remove that and clean up the music", after "the synth
+ * high pitch sound is not good" and "too much high pitch synth always
+ * playing, its taxing on the ears") and CLUSTER lost its subject. Its
+ * replacements were NO SUPERSAW and NO SUSTAIN: no chords hap is a supersaw,
+ * and no chords hap sounds longer than half a bar — anywhere. Measured on the
+ * tree the deletion answered: the colour pair was the top sustained voice above
+ * 500 Hz from bar 11 of a run once the lead rests, and bass+chords was 47% of
+ * all masking weight, 2620 of its 3265 inside the pad's own window.
  *
- * The two assertions that replace it are STRONGER in the sense that matters:
- * they are the ones that would go red the day somebody puts the pad back.
+ * NO SUSTAIN encoded a STRONGER claim than the complaint did (the audit,
+ * `scratchpad/cheap/reports/audit.md` §5: "the deletion answered the pad's
+ * SOUND ... the reference shows a held chord is acceptable to the owner when it
+ * is a sine under 200 Hz"). The owner's own reference — screenshot 2 of
+ * `refs/references.md` — is `chord("<Bm Asus G [D A]>").voicing().s('sine')
+ * .lpf(200)`: a held chord, dark, under everything. What was rejected was three
+ * detuned saws opening to 1.9 kHz at gain 0.30 in every section. So the line
+ * moves from "never sustain" to "sustain only THIS, only THERE", and every
+ * clause of that sentence is an assertion below, because each is a way the old
+ * pad could come back wearing the bed's name:
  *
- *   NO SUPERSAW   No hap the chords lane emits carries `s === 'supersaw'` —
- *                 in any section, any feel, and under the three flags that
- *                 used to floor the colour pair open (`shuffle` is a feel, NOVA
- *                 a powerup, HUSHED a movement). `harmony` used to build one
- *                 state — sustain/boomchick — and a pad voice re-added only in
- *                 the breakdown, or only under NOVA, would have passed. The hap
- *                 count is printed per section and per flag, so a state that
- *                 emits nothing (the breakdown, by design) is visible rather
- *                 than counted as clean by default. Seen red by restoring one
- *                 pad voice.
+ *   OPEN        A chords hap may sound longer than `SUSTAIN_MAX` (0.5 bar) only
+ *               in an OPEN state: section intro, build or breakdown, or the
+ *               HUSHED movement in any section (a hushed wave is "that moment
+ *               stretched over a whole stage", `MOVEMENT_MIX.hush`; the lead
+ *               treats it as open for the same reason). In a plain or NOVA
+ *               drop, sustain or fill NOTHING in this lane sustains — that is
+ *               the wub's window, where bass+chords was 47% of masking with
+ *               the old pad in it.
  *
- *   NO SUSTAIN    No chords hap sounds for more than half a bar. `hold` is
- *                 `clip`, a FRACTION OF THE SLOT (`articulation.ts`), so the
- *                 sounding length is `whole.duration × clip` — a stab on the
- *                 eighth grid at hold 0.62 is 0.08 of a bar, a whole-note pad
- *                 at 0.86 is 0.86. The longest sounding length seen is
- *                 printed. Giving the stab the `bowed` touch does NOT cross
- *                 this line (0.86 × 1/8 = 0.11), which is the point: the
- *                 assertion is about the lane's RHYTHM, not its envelope. Seen
- *                 red by giving the stab a whole-note struct.
+ *   SOURCE      Every sustained hap is the bed — `VOICE_TAGS.bed`, imported,
+ *               applied to the haps by the same `tagVoice` the builder calls
+ *               — AND that tag's oscillator is a sine. Both, because the
+ *               imported tag alone can be satisfied by editing the tag: a
+ *               `bed: { s: 'sawtooth' }` would match its own haps. The sine is
+ *               the design (the reference's `.s('sine')`), so it is asserted
+ *               as a literal here, on purpose, against the table.
  *
- * How either could be gamed: by emptying the lane. The total hap count over
- * the sweep is printed and zero is a failure.
+ *   DARK        Every sustained hap carries `cutoff <= BED_CUTOFF_MAX` (400 Hz;
+ *               the bed writes 300, the reference 200) and written `gain <=
+ *               BED_GAIN_MAX` (0.35; the bed writes 0.32, the old pad 0.30 of three saws).
+ *               A sine under 300 Hz in 116-233 Hz is a fundamental and
+ *               nothing else — it cannot be "high pitch synth" however it is
+ *               played.
  *
- * SEEN RED, each on its own, 2026-09-04, on the tree that deleted the pad:
- * one short supersaw voice (`struct('x ~ ~ ~ ~ ~ ~ ~')`, unison 3) added to
- * the lane -> "NO SUPERSAW — 2700 of 10800 chords haps are a supersaw" with
- * NO SUSTAIN still green; the stab's struct replaced by a whole note ->
- * "NO SUSTAIN — 4860 of 4860 chords haps sound longer than 0.5 of a bar" with
- * NO SUPERSAW still green. Both edits reverted and byte-verified. Green on
- * that tree: 8100 haps over 1620 states, breakdown 0 (by design — the lane is
- * `silence` there), longest hap 0.140 of a bar.
+ *   DYAD        Per bar, at most TWO distinct sustained tones. A third tone is
+ *               the fold trap (AGENTS.md §4: "folding three or more tones into
+ *               thirteen semitones puts a low SECOND in a sustained lane").
+ *
+ *   INTERVAL    The pair is a fourth or a fifth apart (or the tritone that
+ *               locrian's diminished fifth folds to), or on a PIVOT bar a
+ *               major third or a minor sixth — root + leading tone, the
+ *               voicing `tools/arc.mjs` ARRIVAL counts (12/12 with it).
+ *
+ *   CLUSTER     Back, for the bed: two sustained tones at least
+ *               `CLUSTER_MIN` (3) semitones apart. INTERVAL implies it, but the
+ *               spacing check is the one that caught the real defect once, so
+ *               it stays a named assertion with its own message and its own
+ *               denominator rather than being a corollary nobody can see fail.
+ *
+ *   PRESENT     The bed BARS are printed per section and per flag, and an open
+ *               section under the plain flag with ZERO bed bars is red — a bed
+ *               that never sounds satisfies every other clause.
+ *
+ *   NO SUPERSAW Unchanged: no chords hap carries `s === 'supersaw'`, in any
+ *               section, feel or flag.
+ *
+ * How the set could be gamed: by emptying the lane (total haps printed, zero
+ * fails) or by emptying the bed (PRESENT). The PIVOT flag exists because a
+ * pivot bar is the one bar the bed voices differently, and a sweep without
+ * one would never exercise the major-third branch.
+ *
+ * SEEN RED, each on its own, 2026-09-05, on the tree that added the bed. Each
+ * edit was made in `layers.ts` by a script that counted its substitutions
+ * (the CRLF trap from Stage 2), ran this tool, restored the file and `cmp`'d
+ * it against a copy. Every other clause stayed green on every break:
+ *   OPEN      `bedSounds` widened to the drop
+ *             -> "OPEN — 540 sustained chords haps outside the open sections"
+ *   SOURCE    `VOICE_TAGS.bed.s` set to 'sawtooth'
+ *             -> "SOURCE — VOICE_TAGS.bed is sawtooth, not a sine" and
+ *                "SOURCE — 2700 of 2700 sustained haps are not the sine bed"
+ *   DARK      `.lpf(300)` -> `.lpf(1200)`
+ *             -> "DARK — 2700 of 2700 sustained haps carry cutoff > 400"
+ *   DYAD      the chord's third admitted as a third bed tone
+ *             -> "DYAD — 540 of 1350 bed bars hold more than two tones"
+ *                (the seventh acts; the ninth acts have no third to admit)
+ *   CLUSTER   the dyad replaced by root + a semitone
+ *             -> "CLUSTER — 1080 of 1350 bed bars hold two tones under 3
+ *                semitones apart" and INTERVAL red on the same 1080 (the 270
+ *                pivot bars are built by construction and stayed clean)
+ *   PRESENT   the bed removed from the intro
+ *             -> "PRESENT — an open section has no bed bars: intro/plain: 0
+ *                bed bars over 90 states"
+ * Green on this tree: 14040 haps over 2160 states, 1350 bed bars, 2700
+ * sustained haps, longest closed-section hap 0.140 of a bar.
  */
 const SWEEP_SECTIONS = ['intro', 'build', 'drop', 'breakdown', 'sustain', 'fill'];
 const SWEEP_FEELS = ['boomchick', 'chase', 'gallop', 'shuffle', 'halftime'];
@@ -455,17 +518,52 @@ const SWEEP_FLAGS = [
   { name: 'plain', over: {} },
   { name: 'nova', over: { powerups: { nova: 3 } } },
   { name: 'hush', over: { movement: 'hush' } },
+  // The bar before a modulation: the bed keeps root + major third there.
+  { name: 'pivot', over: { pivot: true } },
 ];
+/** The sections in which a chords hap may sustain (plus the hush movement). */
+const OPEN_SECTIONS = new Set(['intro', 'build', 'breakdown']);
+const isOpen = (section, flag) => OPEN_SECTIONS.has(section) || flag.over.movement === 'hush';
 const SUSTAIN_MAX = 0.5;
+const BED_CUTOFF_MAX = 400;
+/*
+ * 0.35, NOT 0.25: the bed rendered at the spec's 0.22 did not register in any
+ * full-mix band (Stage 3's captures, < 0.2 dB), so it went to 0.32 — still ~6 dB
+ * under the deleted pad's 0.30-of-three-saws. The cap moves with it and stays
+ * a cap: a bed written above 0.35 is the pad's loudness coming back.
+ */
+const BED_GAIN_MAX = 0.35;
+const CLUSTER_MIN = 3;
+/** Interval classes a bed dyad may span, after the fold. */
+const DYAD_IVS = new Set([5, 6, 7]);
+const PIVOT_IVS = new Set([4, 8]);
+const isBed = (e) => VOICE_TAGS.bed !== undefined && isTag(e, VOICE_TAGS.bed);
+
 const supersawHaps = [];
-const sustained = [];
+const closedSustain = [];
+const wrongSource = [];
+const notDark = [];
+const tooMany = [];
+const clusters = [];
+const wrongInterval = [];
 const perSection = {};
 const perFlag = {};
 const perFeel = {};
+/** bed bars (states with >= 1 bed hap) and states, per section/flag. */
+const bedBars = {};
+const bedStates = {};
 let sweepHaps = 0;
 let sweepStates = 0;
+let sustainedHaps = 0;
+let bedBarsTotal = 0;
 let longest = 0;
 let longestWhere = '';
+let longestClosed = 0;
+let longestClosedWhere = '';
+const stabDecays = new Set();
+const stabPans = new Set();
+let stabHaps = 0;
+
 for (const section of SWEEP_SECTIONS) {
   for (const feel of SWEEP_FEELS) {
     for (const flag of SWEEP_FLAGS) {
@@ -478,9 +576,20 @@ for (const section of SWEEP_SECTIONS) {
           perSection[section] = (perSection[section] ?? 0) + evs.length;
           perFlag[flag.name] = (perFlag[flag.name] ?? 0) + evs.length;
           perFeel[feel] = (perFeel[feel] ?? 0) + evs.length;
+          const cell = `${section}/${flag.name}`;
+          bedStates[cell] = (bedStates[cell] ?? 0) + 1;
           const where = `${section}/${feel}/${flag.name}/${mode}/${extend}`;
+          const open = isOpen(section, flag);
+          const sustainedTones = new Set();
+          let bedHere = 0;
           for (const e of evs) {
             if (e.s === 'supersaw') supersawHaps.push(`${where}  note ${e.note} s=${e.s} unison=${e.unison}`);
+            if (isStab(e)) {
+              stabHaps++;
+              if (typeof e.decay === 'number') stabDecays.add(e.decay.toFixed(4));
+              if (typeof e.pan === 'number') stabPans.add(e.pan.toFixed(3));
+            }
+            if (isBed(e)) bedHere++;
             // A hap with no `clip` sounds for its whole slot.
             const clip = typeof e.clip === 'number' ? e.clip : 1;
             const sounding = (e.end - e.begin) * clip;
@@ -488,30 +597,139 @@ for (const section of SWEEP_SECTIONS) {
               longest = sounding;
               longestWhere = where;
             }
-            if (sounding > SUSTAIN_MAX) sustained.push(`${where}  note ${e.note} sounds ${sounding.toFixed(2)} of a bar`);
+            if (!open && sounding > longestClosed) {
+              longestClosed = sounding;
+              longestClosedWhere = where;
+            }
+            if (sounding <= SUSTAIN_MAX) continue;
+            sustainedHaps++;
+            const n = typeof e.note === 'number' ? e.note : Number(e.note);
+            if (!open) {
+              closedSustain.push(`${where}  note ${e.note} sounds ${sounding.toFixed(2)} of a bar`);
+              continue;
+            }
+            if (!isBed(e) || e.s !== 'sine') wrongSource.push(`${where}  note ${e.note} s=${e.s} sounds ${sounding.toFixed(2)}`);
+            const cutoff = typeof e.cutoff === 'number' ? e.cutoff : Infinity;
+            const gain = typeof e.gain === 'number' ? e.gain : 1;
+            if (!(cutoff <= BED_CUTOFF_MAX) || !(gain <= BED_GAIN_MAX)) {
+              notDark.push(`${where}  note ${e.note} cutoff ${cutoff} gain ${gain}`);
+            }
+            if (Number.isFinite(n)) sustainedTones.add(n);
+          }
+          if (bedHere > 0) {
+            bedBars[cell] = (bedBars[cell] ?? 0) + 1;
+            bedBarsTotal++;
+          }
+          if (sustainedTones.size === 0) continue;
+          const tones = [...sustainedTones].sort((a, b) => a - b);
+          if (tones.length > 2) tooMany.push(`${where}  bed=[${tones}]`);
+          for (let i = 1; i < tones.length; i++) {
+            if (tones[i] - tones[i - 1] < CLUSTER_MIN) {
+              clusters.push(`${where}  bed=[${tones}]`);
+              break;
+            }
+          }
+          if (tones.length === 2) {
+            const ivc = (tones[1] - tones[0]) % 12;
+            const want = m.chord.pivot ? PIVOT_IVS : DYAD_IVS;
+            if (!want.has(ivc)) {
+              wrongInterval.push(`${where}  bed=[${tones}] spans ${ivc} semitones${m.chord.pivot ? ' on a pivot bar' : ''}`);
+            }
           }
         }
       }
     }
   }
 }
+
 console.log('');
-console.log(`  chords haps over ${sweepStates} states (${SWEEP_SECTIONS.length} sections x ${SWEEP_FEELS.length} feels x ${SWEEP_FLAGS.length} flags x ${MODES_TO_TEST.length} modes x 2 extensions): ${sweepHaps}`);
+console.log(
+  `  chords haps over ${sweepStates} states (${SWEEP_SECTIONS.length} sections x ${SWEEP_FEELS.length} feels x ` +
+    `${SWEEP_FLAGS.length} flags x ${MODES_TO_TEST.length} modes x 2 extensions): ${sweepHaps}`,
+);
 console.log(`    per section  ${SWEEP_SECTIONS.map((s) => `${s} ${perSection[s] ?? 0}`).join('  ')}`);
 console.log(`    per flag     ${SWEEP_FLAGS.map((f) => `${f.name} ${perFlag[f.name] ?? 0}`).join('  ')}`);
 console.log(`    per feel     ${SWEEP_FEELS.map((f) => `${f} ${perFeel[f] ?? 0}`).join('  ')}`);
+console.log(`  bed bars (states with a bed hap) per section x flag, as bars/states — ${bedBarsTotal} in all:`);
+for (const section of SWEEP_SECTIONS) {
+  const cells = SWEEP_FLAGS.map((f) => {
+    const cell = `${section}/${f.name}`;
+    return `${f.name} ${bedBars[cell] ?? 0}/${bedStates[cell] ?? 0}`;
+  });
+  console.log(`    ${section.padEnd(10)} ${cells.join('  ')}`);
+}
+console.log(`  sustained chords haps (> ${SUSTAIN_MAX} of a bar): ${sustainedHaps} of ${sweepHaps}; longest ${longest.toFixed(3)} (${longestWhere})`);
+console.log(
+  `  stab per-hit randomness, a readout: ${stabDecays.size} distinct decay values and ${stabPans.size} distinct pans over ` +
+    `${stabHaps} stab haps (every state is queried at cycle 0, where the legacy rand reads exactly 0 at t = 0 — a valid draw, not a dropped hap)`,
+);
+
 if (sweepHaps === 0) {
-  fail('NO SUPERSAW / NO SUSTAIN — the chords lane emitted nothing over the whole sweep. A zero denominator is a failure, not a pass.', []);
+  fail('CHORDS — the lane emitted nothing over the whole sweep. A zero denominator is a failure, not a pass.', []);
 } else {
   if (supersawHaps.length) {
     fail(`NO SUPERSAW — ${supersawHaps.length} of ${sweepHaps} chords haps are a supersaw. The pad or the colour pair is back:`, supersawHaps);
   } else {
     console.log(`  ok   no supersaw — 0 of ${sweepHaps} chords haps carry s=supersaw, in every section, feel and flag`);
   }
-  if (sustained.length) {
-    fail(`NO SUSTAIN — ${sustained.length} of ${sweepHaps} chords haps sound longer than ${SUSTAIN_MAX} of a bar. The lane sustains again:`, sustained);
+
+  if (closedSustain.length) {
+    fail(
+      `OPEN — ${closedSustain.length} sustained chords haps outside the open sections (intro/build/breakdown, or hush). The lane sustains in the drop again:`,
+      closedSustain,
+    );
   } else {
-    console.log(`  ok   no sustain — the longest chords hap sounds ${longest.toFixed(3)} of a bar (${longestWhere}); the line is ${SUSTAIN_MAX}`);
+    console.log(
+      `  ok   open — outside intro/build/breakdown/hush the longest chords hap sounds ${longestClosed.toFixed(3)} of a bar ` +
+        `(${longestClosedWhere}); the line is ${SUSTAIN_MAX}`,
+    );
+  }
+
+  if (VOICE_TAGS.bed?.s !== 'sine') {
+    fail(`SOURCE — VOICE_TAGS.bed is ${VOICE_TAGS.bed?.s ?? '(missing)'}, not a sine. The reference bed is s('sine').`, []);
+  }
+  if (wrongSource.length) {
+    fail(`SOURCE — ${wrongSource.length} of ${sustainedHaps} sustained haps are not the sine bed (VOICE_TAGS.bed):`, wrongSource);
+  } else if (sustainedHaps > 0 && VOICE_TAGS.bed?.s === 'sine') {
+    console.log(`  ok   source — all ${sustainedHaps} sustained haps are the bed, and the bed is a sine`);
+  }
+
+  if (notDark.length) {
+    fail(`DARK — ${notDark.length} of ${sustainedHaps} sustained haps carry cutoff > ${BED_CUTOFF_MAX} or written gain > ${BED_GAIN_MAX}:`, notDark);
+  } else if (sustainedHaps > 0) {
+    console.log(`  ok   dark — every sustained hap is under ${BED_CUTOFF_MAX} Hz at written gain <= ${BED_GAIN_MAX}`);
+  }
+
+  if (tooMany.length) {
+    fail(`DYAD — ${tooMany.length} of ${bedBarsTotal} bed bars hold more than two tones (the fold trap):`, tooMany);
+  } else if (bedBarsTotal > 0) {
+    console.log(`  ok   dyad — none of ${bedBarsTotal} bed bars holds more than two sustained tones`);
+  }
+
+  if (wrongInterval.length) {
+    fail(`INTERVAL — ${wrongInterval.length} of ${bedBarsTotal} bed bars are not a fourth/fifth/tritone (pivot: major third/minor sixth):`, wrongInterval);
+  } else if (bedBarsTotal > 0) {
+    console.log('  ok   interval — every bed dyad is a fourth, a fifth or a tritone; every pivot dyad a major third or a minor sixth');
+  }
+
+  if (clusters.length) {
+    fail(`CLUSTER — ${clusters.length} of ${bedBarsTotal} bed bars hold two tones under ${CLUSTER_MIN} semitones apart:`, clusters);
+  } else if (bedBarsTotal > 0) {
+    console.log(`  ok   spacing — none of ${bedBarsTotal} bed bars holds two tones within ${CLUSTER_MIN - 1} semitones`);
+  }
+
+  // PRESENT: every open section under the plain flag, and hush in the drop,
+  // must actually carry the bed.
+  const missing = [];
+  for (const section of OPEN_SECTIONS) {
+    const cell = `${section}/plain`;
+    if (!(bedBars[cell] > 0)) missing.push(`${cell}: ${bedBars[cell] ?? 0} bed bars over ${bedStates[cell] ?? 0} states`);
+  }
+  if (!(bedBars['drop/hush'] > 0)) missing.push(`drop/hush: ${bedBars['drop/hush'] ?? 0} bed bars over ${bedStates['drop/hush'] ?? 0} states`);
+  if (missing.length) {
+    fail('PRESENT — an open section has no bed bars; a bed that never sounds satisfies every other clause:', missing);
+  } else {
+    console.log('  ok   present — the bed sounds in intro, build and breakdown (plain) and under hush in the drop');
   }
 }
 

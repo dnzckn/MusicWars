@@ -181,6 +181,8 @@
     "runmap": "node --experimental-transform-types tools/runmap.mjs",
     "beatlock": "node --experimental-transform-types tools/beatlock.mjs",
     "fontlanes": "node --experimental-transform-types tools/fontlanes.mjs",
+    "kitcheck": "node --experimental-transform-types tools/kitcheck.mjs",
+    "spacecheck": "node --experimental-transform-types tools/spacecheck.mjs",
     "fontcheck": "node tools/fontcheck.mjs",
     "roster8": "node --experimental-transform-types tools/roster8.mjs",
     "stages": "node --experimental-transform-types tools/stages.mjs",

@@ -438,7 +438,34 @@ function collect(map, stem, haps, level, secPerCycle) {
    * lead's skeleton, filigree and ornament are one oscillator at three places
    * in the field, and they are three lines, not one line playing triplets.
    */
-  const lineOf = (v) => `${v.s ?? '?'}:${v.pw ?? ''}:${v.unison ?? ''}:${v.pan ?? ''}`;
+  /*
+   * ...UNLESS THE PAN IS DRAWN PER HIT. The stab's pan is `rand.range(+-0.12)`
+   * since 2026-09-05 (screenshot 1's `.pan(rand.range(.1, 1))`), and Stage 1
+   * gave the ghosts and the sixteenth hats the same. Keyed on the raw pan,
+   * every such hap is its own one-hap "line", `onsets.length < 2` skips all
+   * of them, and the stem's overhang denominator falls to whatever OTHER line
+   * the stem has — the bed, at a fixed 0.5 — so the stab's overhang would go
+   * unmeasured while the stem read green on the bed alone. That is the
+   * one-assertion-carrying-the-rest shape AGENTS.md §3 names.
+   *
+   * So the pan joins the key only when a timbre sits at a FEW places: more
+   * distinct pans than `PAN_LINES_MAX` in one (s, pw, unison) family is one
+   * part moving in the field, not many parts, and it is grouped as one line.
+   * The lead's three lines are three pans; the stab's are dozens.
+   */
+  const PAN_LINES_MAX = 8;
+  const timbreOf = (v) => `${v.s ?? '?'}:${v.pw ?? ''}:${v.unison ?? ''}`;
+  const pansOf = new Map();
+  for (const h of live) {
+    const v = h.value ?? {};
+    const t = timbreOf(v);
+    if (!pansOf.has(t)) pansOf.set(t, new Set());
+    pansOf.get(t).add(v.pan ?? '');
+  }
+  const lineOf = (v) => {
+    const t = timbreOf(v);
+    return pansOf.get(t).size > PAN_LINES_MAX ? `${t}:*` : `${t}:${v.pan ?? ''}`;
+  };
   const lines = new Map();
   for (const h of live) {
     const k = lineOf(h.value ?? {});
