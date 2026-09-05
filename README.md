@@ -5,8 +5,14 @@ this repository — not one loop, not one bar. Every note is decided in the
 browser by [Strudel](https://strudel.cc) and arranged in real time from what is
 happening on screen.
 
-Almost all of it is synthesis — oscillators and noise, no recordings. The one
-exception is the **bass**, which plays a sampled fingered electric bass
+Almost all of it is synthesis — oscillators and noise. Two things are sampled,
+and both are fetched at runtime with a synthesised fallback underneath. The
+**drum kit** is nine one-shots from Strudel's drum-machine set — a Roland TR-909
+kick, snare, clap, closed and open hat and rim, an 808 kick and cabasa, a
+LinnDrum hat — 267 KB in all, landing about a quarter of a second after START
+on a warm connection and about three seconds cold; until then, and offline for
+good, the oscillator kit plays (`src/audio/samples.ts`). The other is the
+**bass**, which plays a sampled fingered electric bass
 (`gm_electric_bass_finger`) fetched at runtime from
 [webaudiofontdata](https://felixroos.github.io/webaudiofontdata/): one file,
 9.7 KB gzipped. Nothing waits for it — the game starts on the sawtooth that lane

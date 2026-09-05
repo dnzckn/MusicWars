@@ -279,15 +279,22 @@ export const LANE_RANGE: Record<LaneId, LaneWindow> = {
   // 87-220 Hz. `buildBass` writes `root - 12` and reaches an octave above it.
   bass: { anchor: 45, lo: 38, hi: 57 },
   /*
-   * THE VOICE-LEADING WINDOW. No lane sounds it.
+   * THE VOICE-LEADING WINDOW — and, since 2026-09-05, the BED's window again.
    *
    * 116-233 Hz, and it is DOWN from a measured 51-62. This was the chords pad's
    * register — a sustained root-and-fifth dyad under everything — and the pad
-   * is deleted (`buildChords`). The window stays because it was never only
+   * is deleted (`buildChords`). The window stayed because it was never only
    * the pad's: it is `voiceLead`'s default `low`/`high`, the ceiling its
    * scoring charges a stack for climbing above, and the register `chord.notes`
    * arrive in before the stab folds them into `LANE_RANGE.stab` and the motor
    * into its own. Move it and every lane's fold starts from a different place.
+   *
+   * One lane sounds it now: the chords BED (`layers.bedTones`,
+   * `VOICE_TAGS.bed`) — a sine dyad under a 300 Hz lowpass at written 0.22,
+   * root and fifth folded here, in the intro, the build, the breakdown and
+   * under hush only. Same dyad rule, same window, a different instrument;
+   * `buildChords` carries the side-by-side against the deleted pad and
+   * `tools/harmony.mjs` asserts every clause of the difference.
    *
    * The pad's own history, kept because it is the only register in this table
    * measured twice with opposite verdicts: capping it as a full triad made
@@ -955,7 +962,9 @@ export function pivotChord(fromTonic: number, toTonic: number): Chord {
     degree: 4,
     // The last bar of a phrase, where the tune falls into its cadence.
     contour: contourForBar(BARS_PER_PHRASE - 1),
-    // The pad kept its third here, and only here. See `Chord.pivot`.
+    // The pad kept its third here, and only here; the bed (`layers.bedTones`)
+    // keeps it the same way, and the stab spells it as root + leading tone.
+    // See `Chord.pivot`.
     pivot: true,
   };
 }
@@ -1134,9 +1143,12 @@ export interface Chord {
    * READ BY THE STAB since the pad was deleted: `stabGuideTones` spells the
    * dominant's root and the leading tone on a pivot instead of the guide
    * tones, and `buildChords` lets the stab play a pivot bar inside a breakdown
-   * — the one bar that lane otherwise rests. Measured by `tools/arc.mjs`
-   * ARRIVAL: 12/12 modulations announced with the pad, 10/12 with guide tones
-   * alone, 12/12 owed back by this. The flag existed
+   * — the one bar that lane otherwise only holds the bed. Measured by
+   * `tools/arc.mjs` ARRIVAL: 12/12 modulations announced with the pad, 10/12
+   * with guide tones alone, 12/12 owed back by this. AND BY THE BED again
+   * (2026-09-05): `bedTones` keeps root and major third on a pivot bar exactly
+   * as the pad did, held, so the announcement no longer rides on the stab's
+   * fader alone. The flag existed
    * because of a collision between two good rules. The pad dropped the THIRD
    * whenever the melody was sounding — the
    * third is the tone that grinds against a tune held for a whole bar, and the

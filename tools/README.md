@@ -3366,3 +3366,287 @@ The order that is safe, every time:
 If `node_modules/.bin` is ever empty, `npm install` restores it without
 touching anything else; verify with `ls node_modules/.bin | wc -l` and a real
 `npx tsc --noEmit` before trusting any result produced after the damage.
+
+## The sampled drum kit: `kitcheck` (node), and what `capture` had to learn to hear it
+
+The owner's word on 2026-09-04 was "music still needs to be a lot better,
+sounds cheapy", with four references pasted; every one plays its drums from a
+sampled drum machine, and the score's kit was one white-noise generator at
+30-34 haps a bar (`white×991` of 2,653 haps in the 32-bar capture). Stage 1 of
+that brief (`src/audio/samples.ts`, `kit.ts`, the drum builders in `layers.ts`)
+puts nine TR909/TR808/LinnDrum one-shots — 266,688 bytes, fetched at START —
+under the kit, with the oscillator kit as the fallback and one switch,
+`kitReady()`, choosing the body. It is `soundfonts.ts`'s mechanism applied to
+drums, and it needed the same two things that file needed: a gate that
+exercises BOTH bodies, and a listening tool that can render the sampled one.
+
+### `kitcheck` (`node --experimental-transform-types tools/kitcheck.mjs`)
+
+Six assertions, each with its denominator printed, each seen red once (the
+break and the printed line are in the file header):
+
+| assertion | what it holds | seen red by |
+|---|---|---|
+| BYTES | every URL HEADs 200 on the CDN with the byte count the table declares; sum ≤ 300 KB; `access-control-allow-origin: *` | one table byte off by one |
+| FALLBACK | with the kit forced off, no drum hap carries an `mw_` name and every one is `sine`/`triangle`/`white` | the kick ignoring `kitReady()` |
+| SAMPLED | with it forced on, every `mw_` name exists in the table; kick, snare AND clap, closed and open hat, rim, shaker all appear per feel; the 808 only on half-time; the LinnDrum hat only on the fill bar; exactly one open hat a bar | the shaker returning `silence` |
+| TRAPS | no sampled hap carries `note` (superdough repitches from MIDI 36), `attack`/`decay`/`sustain` (a decay with sustain 0 cuts the file), or `clip` outside the open hat; the kick carries its sidechain | `.ds()` on the sampled snare |
+| SAME | the onset SET per builder per bar is identical in both modes | the 808 on a beat the 909 does not play |
+| BUDGET | ordinary drop bars: mean ≤ 28 haps, max ≤ 30, printed per feel × intensity; the fill bar printed and unbounded | the per-bar ratchets restored (mean 30.0, max 33) |
+
+`--no-net` skips the HEADs and is red by construction; `--landing` opens the
+game on the dev server, clicks START, and prints how long after that the kit
+and the fonts landed, cold and warm, with bytes metered at the socket.
+
+**BUDGET is the assertion to read with the spec beside it.** The spec's aim
+was 24-28 against reference B's 20-24; the design lands at a mean of 26.0 and a
+max of 29 (boomchick at intensity 0.9, where the ladder's last rung adds a push).
+The old kit measured 30-34. An oscillator drum is two haps (crack + body), so
+the fallback count printed in brackets is not a hit count and is not bounded.
+
+### Two `perccheck` assertions were REPLACED, not relaxed
+
+`perccheck` builds in `sustain`, where the off-beat bed is now floored at
+written 0.30 so `<- hh>*8` is always a part. Its "audible hats at 0.85 > 2 ×
+audible hats at 0.10" measured a design that is gone on purpose (the ratio is
+now ~1.1), and became three stronger claims: the bed is heard in every calm
+bar, its written gain rises with intensity (0.300 → 0.400), and the whole
+kit's audible count still rises by at least two. "More than 40% of bars carry a
+ratchet" became `ratchetBars === fillBars`: the per-bar ratchets are gone
+(the references carry none outside a fill) and the new claim is exact in both
+directions. Its `isHat` also learned the three sampled hat names, checked
+against `samples.ts` — the day the kit landed it reported "3772 of 3772 bars
+have no hat at all" while every bar had eight.
+
+### What `capture` could not hear, and now can
+
+Every earlier capture printed `superdough errors: sound gm_electric_bass_finger
+not found` and rendered the bass's sampled layer as silence, because its page
+booted superdough's synths and never registered the soundfonts. `--fonts`
+(default on) now imports `fontloader.mjs` through an import map (`@strudel/core`
+→ `core/util.mjs`, `@strudel/webaudio` → the same superdough bundle), registers
+the 125 names, decodes every pitch in each enabled role's warm range, registers
+the nine-name drum map and `loadBuffer`s each wav — all before the first
+`superdough()` call. The hap-stream sha is unchanged by the flag (measured:
+`f343fc21d0c0` both ways); `--no-fonts` is the old behaviour; `--fallback`
+sets both env switches before the score is imported and renders the oscillator
+score, which is a different sha by definition. Bytes are metered by Playwright's
+`request.sizes()`; Resource Timing reports 0 for both hosts.
+
+**One fix to the haps themselves.** `d` was `whole.end - whole.begin`, which
+ignores `clip`; `@strudel/core/hap.mjs:43` multiplies the duration by it and
+that is what the game's scheduler hands superdough. Every `articulate()` lane
+(clip 0.46-0.91) had rendered longer than the game plays it. `d` now reads
+`hap.duration`, the count of haps it shortened is printed (115 of 277 in the
+4-bar test, 14.7 s of note length), and captures made before 2026-09-05 are of
+a longer-noted score than the ones after.
+
+### The levels were set from the render, not from the spec
+
+The spec's written levels (kick 0.8, snare/clap 0.8, hat accents 0.8, bed
+0.35, shaker 0.5) were carried over from noise bursts. Soloed over 4 drop bars
+at those numbers the sampled kick read -4.1 dBFS peak / -21.2 RMS against the
+oscillator kick's -19.7 / -33.8 (the sine kick's `distort(x:0.34)` is squared
+to x0.12 by the gain curve; a wav has no such stage), the sampled clap stem
+-32.3 RMS against -39.1, and the full mix peaked at 0.0 dBFS where the old
+drop peaked at -3.0.
+
+The first answer trimmed everything -5 dB, and the 32-bar render showed it was
+the wrong cut: the peak still hit full scale in the loudest window (kick and
+bass faders at 1.00), the 250 Hz band still sat 7 dB above the old render, and
+the top was gone — 8 kHz -49.9 dBFS against the old kit's -37.9, above-2 kHz
+0.6% of the energy against 3.8%. At the spec's hat levels the 4-bar window had
+read 8 kHz -38.0, equal to the old kit, so the hats were never the excess; the
+125-250 Hz bodies were. The trim now sits on the bodies only: kick 0.5 (-8 dB
+from the spec), 808 0.4, snare/clap/rim 0.6 (-5 dB); hat accents 0.8, bed
+0.35-0.48, sixteenths ≤ 0.3 and shaker 0.5 are the spec's. `capture` prints
+the float peak and the count of samples at or over full scale so the next
+person can read whether a render clipped by one sample or by three decibels.
+Nothing here has been heard; the numbers are where a person should start
+listening, not where they should stop.
+
+## Space: `spacecheck` (node) — one delay line and one room per orbit, and delay where the references put it
+
+Stage 2 of the "sounds cheapy" brief (`scratchpad/cheap/spec-v2.md`), 2026-09-05.
+The audit read the score's space off its haps: rooms of 5, 6 and 8 seconds at
+low sends; no delay on any drum or bass hap; and the lead and the arp sending
+into ONE delay node with two different times. The last item is the mechanism
+worth writing down. superdough keeps one feedback delay per orbit
+(`superdoughoutput.mjs:53-67`, `Orbit.getDelay`) and retargets its `delayTime`
+and `feedback` with `setValueAtTime` whenever a hap's values differ from the
+node's; there is no per-hap line on the orbit path. So the lead's open-section
+`1/4 · .52` against the arp's `3/16 · .30` — and the arp's own four pods on
+`3/16`, `1/8`, `1/16`, `1/12` — were not several echoes. They were one line
+whose time was reset hap by hap, on the node the motifs also use. And a hap
+that sets `delay` without `delaysync`/`delayfeedback` falls to superdough's
+defaults `3/16` and `0.5` (`superdough.mjs:190-194`), which is the same fault
+with no line in the source to grep for.
+
+What changed: `kit.ts` `ORBIT_ROOM` drums 5 → 2.5 and harmony 6 → 3 (the pad
+the 6 was written for is deleted; the references' only named size is 2), and a
+new `ORBIT_DELAY` table beside it — drums `1/8 · 0.30`, low `3/16 · 0.40`,
+harmony `3/16 · 0.40`, air `1/8 · 0.42` — that every `.delay()` in `layers.ts`
+reads its sync and feedback from. The lead's open variant and the arp's per-pod
+divisions are tombstoned in place. New sends: the backbeat stack `.delay(0.2)`,
+the rim ghosts `.delay(0.15)`, the sampled bass pluck `.delay(0.35)`, the stab
+`.delay(0.25)`; hats, shaker, kick, sub, motor and the wub/reese/mid stay dry,
+with the reason on each chain. Per-hap LEVEL is still the lane's, as `.room()`
+is for the reverb.
+
+### `spacecheck` (`node --experimental-transform-types tools/spacecheck.mjs`)
+
+Three assertions, read off 122,035 haps over 1,750 states (7 sections × 5
+feels × 7 variants × 2 intensities × 3 bars) plus 280 motif states, one
+archetype at a time because `buildMotifs` plays only the top `MAX_MOTIFS` by
+priority and the two delayed motifs are not among them:
+
+- **PAIRS** — per orbit, the set of `(delaysync, delayfeedback)` on haps with
+  `delay > 0` is exactly one pair and it is `ORBIT_DELAY[o]` (imported, not
+  copied). A delayed hap with no sync or no feedback is red on its own.
+- **COVERAGE** — per lane, delay present or absent against a table that is
+  total on purpose: a lane the table does not name is red, a lane that emitted
+  nothing is red (a check with no denominator is not a pass), and the bed that
+  Stage 3 adds is pre-registered as `absent` so it is gated the moment it lands.
+- **ROOMS** — per orbit, one `roomsize` and it is `ORBIT_ROOM[o]`. Haps that
+  send `room` with no `roomsize` are printed per orbit and not gated.
+
+| assertion | break | printed |
+|---|---|---|
+| PAIRS | lead `.delaysync(1 / 4)` | `orbit 3 carries 2 (sync, feedback) pairs: 0.1875\|0.4 [arp motif:echo motif:glissando stab]  0.25\|0.4 [lead]` |
+| PAIRS (bare) | backbeat's sync/feedback removed | `orbit 1: 7644 delayed haps carry no delaysync/delayfeedback (superdough would default them to 3/16 · 0.5) [backbeat]` |
+| COVERAGE (wet) | `.delay(0.2)` on `sub()` | `sub: expected NO delay, 3732 of 3732 haps carry one` |
+| COVERAGE (dry) | pluck's `.delay(0.35)` removed | `pluck: expected delay, 1470 of 1470 haps carry none` |
+| ROOMS | `.roomsize(2)` on the stab | `orbit 3 carries 2 roomsize values: 3 [arp lead motor power]  2 [stab]` |
+
+Each break was reverted from a copy and the restored file checked with `cmp`.
+
+**Two things the first run taught, both about reading haps rather than
+source.** `.fm()` reaches the hap as `fmi`, so a classifier testing `h.fm`
+found neither the graze shimmer nor the bell. And `s('sawtooth,sine')` is
+mini-notation: it reaches the hap stream as TWO haps, one per source, so the
+wub is a `sawtooth` hap and a `sine` hap that share `lpsync` — the first
+draft named one half "thumb" and the other "unlisted". The variants beyond the
+brief's three (`graze`, `hurt`, `boss`, `bomb`) are there because a lane that
+never sounds in the sweep is a lane the check cannot see: without `grazeRate
+> 1.2` the air orbit carries no delayed hap at all and PAIRS on it examines
+nothing and passes.
+
+**A fail-test that reports green has to be doubted first.** Two of the five
+breaks were applied with a multi-line `perl -0` pattern written with `\n`; the
+sources are CRLF, the pattern matched nothing, and the tool ran green against
+an unbroken file. Print the substitution count before believing "still green".
+
+**A reading, not a fix.** 11,802 drum haps a sweep send `room` with no
+`roomsize` — the `clap()`/`snare()`/`rim()` bodies in `kit.ts` — so the drums
+orbit's IR is first built at superdough's default 2 s by the first backbeat and
+rebuilt once, to 2.5 s, by the first timpani roll or half-time bar. One rebuild
+per page life, not per bar; `reverbchurn` cannot see it because it counts only
+haps that carry an IR key. The stab and three motifs do the same on the harmony
+orbit. Left as it was (those chains belong to Stages 1 and 3); the count is
+printed so the next person sees it.
+
+Nothing here has been heard. The renders are in `scratchpad/cheap/after2/`
+against Stage 1's in `after1/`; the octave bands are the measurement.
+
+## The bed and the stab: `harmony` learns where a chord may be held (Stage 3 of "sounds cheapy")
+
+The owner's own reference (`scratchpad/refs/references.md`, screenshot 2) is a
+held chord — `chord().voicing().s('sine').lpf(200)` — and the gate written the
+day the supersaw pad was deleted forbade any chords hap sounding longer than
+half a bar, anywhere. The audit (`cheap/reports/audit.md` §5) called that a
+stronger claim than the complaint: the deletion answered a SOUND (three detuned
+saws opening to 1.9 kHz at 0.30 in every section), not a held harmony. So
+`buildChords` grew a BED — `VOICE_TAGS.bed`, a plain sine dyad (root + fifth;
+root + major third on a pivot bar) folded into `LANE_RANGE.pad`, one whole
+note a bar, `bowed`, written 0.22, `.lpf(300)`, `.room(0.5)` into the 3 s
+harmony IR, no delay — in the intro, the build, the breakdown and under HUSHED,
+and nowhere else; and the stab came down (velocity 1.41 → 1.0, drive 0.65 →
+0.3, lowpass 1100-3600 → 800-2200 with the register unchanged, decay ±25% and
+pan ±0.12 drawn per hit from `rand`, Stage 2's `.delay(0.25)` kept).
+
+**NO SUSTAIN became NO SUSTAIN OUTSIDE THE OPEN SECTIONS — replaced, not
+relaxed — and every clause of "only THIS, only THERE" is its own assertion**,
+because each is a way the deleted pad could return wearing the bed's name:
+
+| assertion | what it reads off the haps |
+|---|---|
+| OPEN | a chords hap sounding > 0.5 bar exists only in intro/build/breakdown, or under the hush movement; in a plain or NOVA drop/sustain/fill nothing sustains |
+| SOURCE | every sustained hap matches `VOICE_TAGS.bed` (imported, applied by the builder's own `tagVoice`) AND that tag's `s` is the literal `'sine'` — the second half because a tag edited to `sawtooth` would still match its own haps |
+| DARK | every sustained hap has `cutoff ≤ 400` and written `gain ≤ 0.25` |
+| DYAD | at most two sustained tones a bar |
+| INTERVAL | the pair spans a fourth, a fifth or the tritone locrian folds to; on a pivot bar a major third or a minor sixth |
+| CLUSTER | back from the pad days: the two tones are ≥ 3 semitones apart — a fold preserves pitch class and destroys spacing, and this is the check that caught `[49,50,54,57]` in 38 of 88 bars once |
+| PRESENT | bed bars are printed per section × flag over their state count, and an open section under the plain flag (or hush in the drop) with zero bed bars is red |
+
+The sweep is 6 sections × 5 feels × 4 flags (plain, NOVA, HUSHED, and PIVOT —
+a real `pivotChord`, because the first version flagged the tonic chord of
+minor modes as a pivot and reported 225 dyads a major sixth wide, a fact about
+the sweep) × 9 modes × 2 extensions = 2160 states, 14,040 haps, 1350 bed bars.
+NO SUPERSAW stays. The stab's per-hit draws are printed as a readout (9 decay
+values, 8 pans at cycle 0, where the legacy `rand` reads exactly 0 at t = 0 — a
+valid draw on `rand.range`, not the deleted hap `sometimesBy` would produce;
+`docs/research-dubstep.md` §0.3).
+
+**Seen red six ways**, each by one scripted edit to `layers.ts` (substitutions
+counted — the CRLF trap from the section above), the tool run, the file
+restored and `cmp`'d; every other clause stayed green on every break
+(`scratchpad/cheap/gates3/redtest-harmony.log`):
+
+| break | printed |
+|---|---|
+| `bedSounds` widened to the drop | `OPEN — 540 sustained chords haps outside the open sections` |
+| `VOICE_TAGS.bed.s = 'sawtooth'` | `SOURCE — VOICE_TAGS.bed is sawtooth, not a sine` and `SOURCE — 2700 of 2700 sustained haps are not the sine bed` |
+| `.lpf(300)` → `.lpf(1200)` | `DARK — 2700 of 2700 sustained haps carry cutoff > 400` |
+| the chord's third admitted as a third tone | `DYAD — 540 of 1350 bed bars hold more than two tones` (the seventh acts; the ninth acts have no third) |
+| the dyad replaced by root + a semitone | `CLUSTER — 1080 of 1350 bed bars hold two tones under 3 semitones apart`, INTERVAL red on the same 1080; the 270 pivot bars, built by construction, stayed clean |
+| the bed removed from the intro | `PRESENT — intro/plain: 0 bed bars over 90 states` |
+
+**Three other tools had to learn the bed exists, and one of them was lying
+about the stab.** `opening` counted "the stab is audible" over the whole
+chords STEM, so the bed — which clears `AUDIBLE_FLOOR` at the same bar the stab
+does — would have satisfied the stab's minimum with the stab silent, the one
+thing that pass was told to watch for; it now selects the stab and the bed by
+`VOICE_TAGS` imported in the page and prints both (stab 10 of 20 and 12 of 28
+audible before the drop, by timbre; bed 10/10 and 12/14). `registermap` sweeps
+`sustain` only and could not see a voice that sounds in the open sections — its
+derived group count rose 3 → 4 with the tag and the gate would have read "a
+lane is silent" — so it builds one `breakdown` state per progression entry and
+maps `pad → chords`. `attackfloor` keyed a "line" on the raw pan, so a per-hit
+random pan made every stab hap its own line and the stem's overhang
+denominator would have been the bed alone; a timbre with more than eight
+distinct pans is one line now. `masking` takes `--section=`.
+
+**What the other gates read on the tree that landed it** (`scratchpad/cheap/
+gates3/after/`, baselines in `gates3/before/` from the same day's Stage 2 tree):
+`registermap` maps `chords/sine` at MIDI 47-57, lowpass 300, harm@lpf 1.8×
+(a sine has no harmonics for a cutoff to lose — the column is a ratio of a
+cutoff to a note with one partial), pan 0.50, gain 0.22, inside 46-58; the
+stab's harm@lpf went 4.2× → 2.7× with the register unchanged; heavy lane pairs
+0 → 2 of 56 (`bass|chords`, the bass line crossing the bed, back as it was
+with the pad, and `chords|lead` from the breakdown states' open lead) — both
+named, ceiling 3. `attackfloor`: the bed's `bowed` attack 134/160/197 ms, tail
+157/184/224 ms, clip 100%; the chords stem's overhang 0%/0% of 11,830.
+`masking --section=sustain` and `--section=drop` read bass+chords 504.8 (13%)
+of 493.9 per bar — identical to the baseline, because the bed is absent there;
+`--section=breakdown` reads 1921.7 (31%) of 770.8, a MODEL figure in which the
+bass lane is built at its tension level although the director zeroes it in a
+real breakdown. `arc` ARRIVAL 12/12 (chords carrying 11; CEILING and REPRISE
+red exactly as at baseline). `fontlanes` derives `pad/sine` beside
+`arp/triangle`; `spacecheck` moves the bed from pre-registered-absent to
+`1500 haps, no delay, ok`; kitcheck, perccheck, leadcheck, basscheck, vite
+green; `session` red on headroom as before.
+
+**And what the render says, which is the part that matters.** `capture
+--fonts` of the first 11 bars: 459 haps against Stage 2's 447 — the twelve are
+the bed's two whole notes in the six bars the intro gate admits — and the
+full-mix octave bands did not move by more than 0.1 dB in any band or window
+(the floor is 1.3 dB); the 32-bar drop render, 2182 haps against 2156, is
+within 0.2 dB in every band including the two windows that contain the
+breakdown. The soloed chords stem does move: the bed owns its 125 and 250 Hz
+bands (41.5% and 47.4%) at −50.9 / −50.3 dBFS, and the stab's 500 Hz band fell
+from −50.8 to −57.4 dBFS against the audit's pre-Stage-2 solo (−6 dB is the
+velocity; the darker lowpass is the rest above 1 kHz). Read together: at
+written 0.22 the bed is in the hap stream, passes every gate, and sits about
+22 dB under the mix's own 125 Hz band — the level the spec set is not a level
+the octave bands can see. Whether that is the bed the owner wanted is a
+listening question, and nothing here has been heard.

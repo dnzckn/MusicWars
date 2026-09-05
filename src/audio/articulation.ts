@@ -174,7 +174,8 @@ export const TOUCH: Record<TouchName, Touch> = {
     hold: [0.94, 0.88],
   },
   /*
-   * BOWED — written for the pad; the CONDUCTOR motif's tritone pedal is its
+   * BOWED — written for the pad; the sine BED in `buildChords` (intro, build,
+   * breakdown, hush) uses it now, and the CONDUCTOR motif's tritone pedal is its
    * one user now (the pad is deleted, `buildChords`). A bed that speaks
    * slowly and STOPS.
    *

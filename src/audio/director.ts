@@ -28,10 +28,13 @@ import { BARS_PER_PHRASE, type Transport } from '../core/transport';
 import { ACT_SHAPE, Arranger, actForPhrase, type Act } from './arrangement';
 import { setTempo } from './engine';
 import { soundfontGeneration } from './soundfonts';
+import { kitGeneration } from './samples';
 import { ensureMasterCeiling, masterVolume, musicTrim } from './volume';
 import {
   MOVEMENT_MIX,
   stabGuideTones,
+  bedSounds,
+  bedTones,
   buildArp,
   buildBass,
   buildChords,
@@ -2567,6 +2570,17 @@ export class MusicDirector {
        * happen inside the first second or two of the first wave.
        */
       ['voices', soundfontGeneration()],
+      /*
+       * The sampled drum kit's generation, beside the soundfonts' and for the
+       * identical reason: `kit.ts` chooses `s('mw_bd909')` or `s('sine')` by
+       * `kitReady()`, so the built pattern depends on it, and a cache key has
+       * to name everything the built pattern depends on. IMMEDIATE, and it
+       * moves three times in a run — load started, load finished, and the
+       * promotion (which is the finish, when it succeeds). Without it the
+       * kit would swap in whenever some unrelated field next moved, which in
+       * a quiet intro can be the whole intro.
+       */
+      ['kit', kitGeneration()],
       ['intensity', this.intensityBucket.update(this.intensity)],
       ['brightness', this.brightnessBucket.update(this.brightness)],
       ['mode', this.mode],
@@ -3460,6 +3474,20 @@ export class MusicDirector {
        * chord as the stab would state it.
        */
       { label: 'chord', code: `note("[${stabGuideTones(chord).join(',')}]")` },
+      /*
+       * THE BED'S DYAD, beside the stab's guide tones, from the two functions
+       * the lane itself calls (`bedTones`, `bedSounds`) — the seventh time
+       * this mirror could have drifted and the first time it was built from
+       * the shared functions on the day the voice landed. The line is printed
+       * only when the bed SOUNDS (intro, build, breakdown, hush): the panel
+       * shows the code that is playing, and a held dyad the lane is not
+       * holding is exactly the sixth drift, wearing a new name. The section
+       * and the movement are the arranger's and this director's own fields,
+       * the same values `buildSlots` hands the builder.
+       */
+      ...(bedSounds(this.arranger.section, this.movement)
+        ? [{ label: 'bed', code: `note("[${bedTones(chord).join(',')}]").s("sine").lpf(300)` }]
+        : []),
       { label: 'bass', code: `note("${root} ~ ${root} ~")` },
       { label: 'scale', code: `"${keyLabel(this.tonic, this.mode)}" · ${FEEL_LABELS[this.feel]}` },
     ];

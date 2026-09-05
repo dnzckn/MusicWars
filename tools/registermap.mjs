@@ -225,6 +225,21 @@ for (const feel of FEELS) {
       for (const tension of TENSIONS) {
         for (const leadRegister of [0, 12]) cases.push({ feel, mode, degree: prog[i][0], tension, leadRegister });
       }
+      /*
+       * ONE BREAKDOWN STATE PER PROGRESSION ENTRY, because a sweep of
+       * `sustain` alone cannot see a lane that sounds only in the open
+       * sections — the same blind spot the capture window has under the intro
+       * gate ("an unchanged render there is not evidence of no change"). The
+       * chords bed (`VOICE_TAGS.bed`, a sine in `LANE_RANGE.pad`, 2026-09-05)
+       * is emitted in intro/build/breakdown and under hush and nowhere else;
+       * without this state its mapped window is never checked and the derived
+       * group count (assertion 2 below) fails as "a lane is silent". One
+       * extra state in six, at the calmest tension and the natural register,
+       * so the sustain rows move as little as possible — the breakdown's own
+       * builders (the lead's open treatment, the fx roll) add their haps to
+       * the rows all the same, and that is a measurement, not an artefact.
+       */
+      cases.push({ feel, mode, degree: prog[i][0], tension: TENSIONS[0], leadRegister: 0, section: 'breakdown' });
     }
   }
 }
@@ -761,7 +776,16 @@ if (!spanFail) {
  * with the table rather than with a hand edit here, which is the whole point
  * of deriving it. `STEM_OF_LANE` lost its two dead keys at the same time.
  */
-const STEM_OF_LANE = { stab: 'chords', motor: 'motor', arp: 'arp' };
+/*
+ * `pad` is back as a KEY, and it maps to the chords stem: the bed
+ * (`VOICE_TAGS.bed`, `{ lane: 'pad', s: 'sine' }`) is the chords lane's second
+ * voice and folds into `LANE_RANGE.pad` (46-58) — the same window the deleted
+ * supersaw pad used, which is why the window survived the deletion ("it is
+ * `voiceLead`'s window", theory.ts). The count below is derived from the table,
+ * so it rose 3 -> 4 with the row rather than with an edit here; the breakdown
+ * states in `cases` are what make the group visible to the sweep at all.
+ */
+const STEM_OF_LANE = { stab: 'chords', motor: 'motor', arp: 'arp', pad: 'chords' };
 const GROUP_WINDOW = {};
 for (const t of Object.values(VOICE_TAGS)) {
   GROUP_WINDOW[keyForTag(STEM_OF_LANE[t.lane], t)] = t.lane;

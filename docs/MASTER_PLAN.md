@@ -1630,3 +1630,94 @@ announced, `chords` 11, `harmony` green (no supersaw, no sustain, the seventh
 still stated in all 88 non-pivot bars). CEILING and REPRISE are red before
 and after, identically, and are left alone.
 
+## 2026-09-05 — "Sounds cheapy": a drum machine, space, and a bed that is a sine
+
+The owner, after the pad went: "music still needs to be a lot better, sounds
+cheapy — here's some good stuff in here", with four Strudel references
+(transcribed in the session scratchpad and summarised in `tools/README.md`).
+What they have in common was measured against the score before anything
+moved: the score was 98.9% oscillators and noise (capture sources: white 991,
+triangle 578, sine 331, sawtooth 285, pulse 283, supersaw 157, sampled bass
+28); its loud continuous lanes were DRY (no delay on sub, kick, hats, bass,
+stab or motor) under 5/6/8-second rooms at low sends; it had no held harmony;
+its kit was one noise generator at 30-34 haps a bar. The references are
+sampled drum machines, piano and GM synth fonts, feedback delay and 2-second
+rooms on nearly every line, a held dark chord bed, snare AND clap on the
+backbeat, off-beat hats, a shaker, four-on-the-floor where the tempo is
+straight — and the only raw oscillators in them are a saw bass under 300 Hz
+and sine chords under 200 Hz. The owner's rejections on record were of
+ORCHESTRAL fonts ("carnival"), struck metal, a clavinet and a bright
+supersaw; not of samples, not of held harmony, not of space. Nothing below
+was heard; every figure is off haps or an offline render through the real
+chain, which can now load fonts and samples (`capture --fonts`).
+
+### The kit is a drum machine (`src/audio/samples.ts`, `kit.ts`, the drum builders)
+
+Nine one-shots from Strudel's drum-machine set — TR-909 kick, snare, clap,
+closed and open hat, rim; TR-808 kick and cabasa; a LinnDrum hat — 266,688 B,
+fetched from `strudel.b-cdn.net` (CORS `*`, 47 ms a file) with the raw GitHub
+mirror second, warmed un-awaited under a 6 s timeout, and NEVER emitted until
+every buffer is resident (`kitReady`, a generation the director's
+`structureKey` names, exactly the soundfont pattern): a late sample is
+dropped twice in superdough and a failed URL is failed forever. Until then,
+and offline for good, the oscillator kit plays. Measured in the real page:
+all nine resident 238 ms after START warm, ~2.9 s on a cold TLS connection.
+Voicing from the references: sd AND cp stacked on every backbeat, rim ghosts,
+909 hats on the accents and the off-beat bed (floored at written 0.45 =
+reference B's `.gain(.2)` after this project's squared gain curve), the open
+hat on the last accent of a bar only, a Linn sixteenth layer and the ratchets
+on the fill bar only, an 808 cabasa on every eighth in build/drop/sustain,
+random pan on ghosts and sixteenths, and four-on-the-floor back on the
+straight feels from intensity 0.5 (the chiptune-canon argument that removed
+it is superseded twice on record and by reference B; tombstoned). Drum haps
+in the drop: mean 26, max 29 (was 30-34); reference B is 24 at three levels.
+`kitcheck` (new): bytes by HEAD, fallback-emits-no-sample-name,
+sampled-emits-every-name, fallback and sampled onsets identical, budget ≤ 28
+mean; six breaks seen red. `perccheck` re-pointed (three assertions replaced,
+stronger). Polyphony peak 49 of 96.
+
+### Space (`kit.ts` ORBIT_ROOM / ORBIT_DELAY, every `.delay` site)
+
+One IR per orbit stays the law; sizes moved once: drums 5 → 2.5 s, harmony
+6 → 3 s (low 2, air 8). One feedback-delay node per orbit is the second law
+(`superdoughoutput.mjs:53-67` retargets it per hap), so ONE (sync, feedback)
+pair per orbit now — drums 1/8·0.30 (reference B's 0.225 s at 135 bpm is an
+eighth), low 3/16·0.40, harmony 3/16·0.40 — and the lead's open-section
+1/4·0.52 variant and the arp's four per-pod syncs went (they fought on the
+harmony node). New sends: the backbeat 0.2, rim ghosts 0.15, the sampled
+bass pluck 0.35 (the wub, reese, mid, sub and motor deliberately none: a
+delayed LFO smears the part; the clock must not echo), the stab 0.25.
+`spacecheck` (new): one pair per orbit, a per-lane delay-coverage table,
+one room per orbit; five breaks seen red. `reverbchurn` 0 rebuilds/bar. The
+band tables do not move (space is temporal); the WAVs are the evidence.
+
+### The bed (`buildChords`) and the stab
+
+A held harmony is back and it is NOT the pad that was deleted: a SINE dyad
+(root + fifth; root + leading tone on a pivot bar, so `arc` ARRIVAL stays
+12/12) folded into `LANE_RANGE.pad`, one whole note a bar, `bowed`, lpf 300
+static, written 0.32, room 0.5 into the 3 s harmony IR, no delay — only in
+intro, build, breakdown and HUSHED, never in the drop or sustain where the
+wub owns that window (bass+chords was 47% of masking when the pad sat
+there). The owner's own reference is `chord().voicing().s('sine').lpf(200)`.
+At the spec's 0.22 it passed every gate and registered in no band; 0.32 is
++3.3 dB and still ~6 dB under the pad's 0.30-of-three-saws. `harmony`'s NO
+SUSTAIN became NO SUSTAIN OUTSIDE THE OPEN SECTIONS with OPEN / SOURCE /
+DARK (cutoff ≤ 400, gain ≤ 0.35) / DYAD / INTERVAL+CLUSTER / PRESENT
+clauses, each seen red. The stab: velocity 1.41 → 1.0, drive 0.65 → 0.3,
+lpf 1100-3600 → 800-2200 (register unchanged: `harm@lpf` 4.2× → 2.7×),
+per-hit `rand` on decay ±25% and pan ±0.12 (screenshot 1's saw stabs), the
+delay above; soloed, its 500 Hz band fell -50.8 → -57.4 dBFS. Rejected:
+`gm_epiano1` for the stab (a keyboard stab was the "clavichord" complaint)
+and `gm_pad_halo` for the bed (a sine needs no download and IS the reference).
+
+### Read plainly, and what is owed
+
+Above 2 kHz the mix is DARKER than before (0.9% of energy vs 3.8% over 32
+bars): the old white-noise grid was 90% of everything above 2 kHz, and the
+sampled hats at the reference's level are not. That is the reference's
+balance, not a defect, but it is unheard. Red at HEAD and left alone:
+`session` (headroom), `faders` (the arp), `opening`'s order assertions (bar
+quantisation of `INTRO_ENTRY`), `arc` CEILING/REPRISE. Next, by name: the
+lead (untouched; the research's recorded step is "a STAB, not a line").
+
