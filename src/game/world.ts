@@ -48,7 +48,7 @@ import {
   type EnemyContext,
 } from './enemies';
 import { ParticlePool, ParticleShape } from './particles';
-import { angleDelta, CRUISE_SPEED, PLAYER_CONTACT, Player, RAIL_FLOOR } from './player';
+import { angleDelta, BOSS_HIT_DAMAGE, CRUISE_SPEED, HIT_DAMAGE, PLAYER_CONTACT, Player, RAIL_FLOOR } from './player';
 import {
   pickPowerup,
   powerupDef,
@@ -366,20 +366,33 @@ export const WARP_BLEED = 4;
 /**
  * How many times faster the wave's clock runs while warp is engaged.
  *
- * The owner asked for "10x or more". Twelve, and it is measured at the output
- * rather than asserted from the constant: `tools/warp.mjs` times a wave's own
- * spawn schedule from `wave:start` to the last group, paired wave index against
- * wave index, and reads 9.1x — 7.7x to 11.6x across the individual waves. It is
- * short of twelve because a wave's clock cannot advance past the bar boundary
- * the bias moves in, and because the cruise arm it is measured against is
- * already sliding its own schedule forward when the stage empties.
+ * 1.5 — FIFTY PER CENT FASTER, and the mode's whole purpose changed with the
+ * number. "warp is basically a way for the player to tune the difficulty mid
+ * game, as entering warp should speed up progression by 50% so you spawn
+ * monsters 50% faster; pulling back exits this, and pulling back further does
+ * nothing other than help you maneuver around since you can move your ship
+ * south."
  *
- * TWELVE AND NOT TEN because the bias is committed in WHOLE BARS (see
- * `warpBeatDebt`): twelve is three whole bars for every beat of a four-four
- * bar, so the accumulator lands on the grid the wave schedule is quantised to
- * instead of carrying a permanent fractional remainder.
+ * IT WAS TWELVE, and that answered a different brief — "10x or more", a mode
+ * you entered to end a run you had already won. `tools/warp.mjs` measured the
+ * output at 9.1x (7.7x to 11.6x per wave), and the same tool measured what it
+ * cost: hp delivered per second 17.2x, on-screen p90 11.3x, and arriving at a
+ * boss 24% under-levelled. That is not a difficulty dial, it is a switch
+ * between two games, and a switch is not something a player tunes with.
+ *
+ * At 1.5 the stage offers half again as many bodies in the same minute and the
+ * player can hold it there, drop it, and take it again as the fight asks —
+ * which is what a dial is. The bar-quantisation argument for twelve dies with
+ * it: `warpBeatDebt` commits whole bars, and 1.5 leaves half a bar of
+ * remainder per bar rather than none, so the schedule advances in a
+ * one-bar-then-two-bars pattern instead of a flat three. Over a wave that is
+ * the same 50%; within a bar it is the accumulator doing its job.
+ *
+ * Nothing else about the mode moves: the arm is still a hold at the forward
+ * stop, pulling back still drops it, and the aft stop still trims the ship
+ * south, which is the manoeuvre the owner is describing.
  */
-export const WARP_RATE = 12;
+export const WARP_RATE = 1.5;
 
 /*
  * THERE IS NO WARP POPULATION FLOOR, AND THAT IS A MEASURED DELETION.
@@ -4486,10 +4499,14 @@ export class World {
        * lives, twenty-four hits — which turned a long run into a formality no
        * matter what the stage was doing.
        */
-      this.player.lives = Math.min(this.player.maxLives + 2, this.player.lives + 1);
-      // The +1 bomb that rode along with the extra life is gone with the bomb
-      // drop: a reward the player cannot spend is not a reward. The LIFE is
-      // untouched — lives are the one stock this game is actually about.
+      /*
+       * AN EXTEND IS A UNIT OF HEALTH NOW, not a second life: there is one
+       * health mechanism and `lives` is pinned at one, so `lives + 1` would
+       * have quietly rebuilt the two-stock system this pass removed. A full
+       * unit is two ordinary hits, which is what an extend was worth before.
+       * (The +1 bomb that also rode along went with the bomb drop.)
+       */
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
 
       this.popups.push({ x: this.player.x, y: this.player.y - 40, text: 'EXTEND', age: 0, hue: 150, big: true });
       // Steeper than the score curve, so extends stay rare as scores inflate.
@@ -6770,7 +6787,10 @@ export class World {
       if (this.rng.next() < p.leech) {
         this.propFires.leech++;
         if (this.player.hp < this.player.maxHp) {
-          this.player.hp = Math.min(this.player.maxHp, this.player.hp + 1);
+          // Half a unit — one ordinary hit's worth. It was a whole point when a
+          // point was one of nine; on a three-unit bar a whole one would be two
+          // hits back per tick and SIPHON would outheal the field.
+          this.player.hp = Math.min(this.player.maxHp, this.player.hp + HIT_DAMAGE);
           this.propDamage.leech += 1;
           this.particles.emit(this.player.x, this.player.y, 0, -40, 0.3, 4, 340, ParticleShape.Ring, 1);
         }
@@ -7471,7 +7491,14 @@ export class World {
       if (this.player.guard > 0 && this.player.invuln <= 0 && !this.player.dead) {
         this.deliveryChances.guard++;
       }
-      if (!this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK)) break;
+      /*
+       * A CONDUCTOR COSTS A WHOLE UNIT, everything else costs half. "hits
+       * should do 0.5 of a health bar, unless boss which does 1." This is the
+       * only place that knows what touched the ship, so it is the only place
+       * that can tell the two apart.
+       */
+      const cost = e.archetype === 'conductor' ? BOSS_HIT_DAMAGE : HIT_DAMAGE;
+      if (!this.player.takeHit(this.snapshot.campPressure >= World.CAMP_MERCY_BLOCK, cost)) break;
       if (this.player.lastHitAutoBombed) {
         this.autoBombRescue();
         break;

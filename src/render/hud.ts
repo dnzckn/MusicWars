@@ -550,28 +550,41 @@ export class Hud {
     if (this.last['pips'] === key) return;
     this.last['pips'] = key;
 
+    /*
+     * ONE ROW, AND EACH PIP CAN BE HALF.
+     *
+     * The health bar is three units and a body costs half of one, so a pip is
+     * full, half or empty — six states of a three-pip row. The old row could
+     * only be full or empty because a hit was always a whole point, and half a
+     * unit of damage with no way to show it would be a hit the player felt and
+     * could not see.
+     *
+     * The cyan LIFE circles below are gone with the second stock, so this row
+     * is the only health readout on the panel and it keeps the shape the pips
+     * were designed around: colour and fill, no glyphs, readable mid-dodge.
+     */
     const severity = snap.playerHp <= 1 ? 'crit' : snap.playerHp <= 2 ? 'warn' : '';
     this.els.hp.replaceChildren();
     for (let i = 0; i < snap.playerMaxHp; i++) {
       const pip = document.createElement('i');
-      if (i < snap.playerHp) pip.className = `on ${severity}`.trim();
+      const fill = snap.playerHp - i;
+      if (fill >= 1 - 1e-6) pip.className = `on ${severity}`.trim();
+      else if (fill > 1e-6) pip.className = `on half ${severity}`.trim();
       this.els.hp.appendChild(pip);
     }
 
-    this.els.lives.replaceChildren();
     /*
-     * Sized to the EXTEND ceiling, not to `maxLives`.
+     * THE LIVES ROW IS EMPTY, like the consumables row above it.
      *
-     * Score extends push lives to `maxLives + 2` (see the extend block in
-     * world.ts), so a row of `maxLives` pips could never show the fourth or
-     * fifth — a player earned an extra life and the panel did not move. A
-     * reward with no feedback reads as a bug in the reward.
+     * It drew up to `maxLives + 2` cyan circles for the second health stock.
+     * There is one now — "figuring out balance will be easier with only 1
+     * health mechanism" — and `lives` is pinned at one, so this row could only
+     * ever have shown a single pip that never changed until the run ended.
+     * `#ui-lives` stays in the markup and empty for the reason `#ui-stock`
+     * does: `domwiring` asserts the ids the code reaches for exist, and an
+     * element with no children takes no space.
      */
-    for (let i = 0; i < snap.maxLives + 2; i++) {
-      const pip = document.createElement('i');
-      pip.className = i < snap.lives - 1 ? 'life on' : 'life';
-      this.els.lives.appendChild(pip);
-    }
+    this.els.lives.replaceChildren();
 
     /*
      * THE CONSUMABLE ROW IS EMPTY, and that is the whole of it.

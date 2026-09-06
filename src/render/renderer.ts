@@ -1406,8 +1406,11 @@ export class Renderer {
     g.globalCompositeOperation = 'source-over';
     g.globalAlpha = 1;
 
-    // Shield arc: health drawn on the thing the player is already looking at.
+    // HEALTH ARC — health drawn on the thing the player is already looking at.
     // A side-panel readout is useless when your eyes are locked to your hitbox.
+    // It was "the shield arc" when health was shields over lives; there is one
+    // bar now and it is fractional, so this arc is the finest readout of it the
+    // game has: a body costs half a unit and the arc shortens by a sixth.
     const hpFrac = p.maxHp > 0 ? clamp01(p.hp / p.maxHp) : 0;
     if (hpFrac < 1 || p.invuln > 0) {
       const hue = hpFrac > 0.66 ? 150 : hpFrac > 0.33 ? 45 : 350;

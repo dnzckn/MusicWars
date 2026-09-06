@@ -187,6 +187,19 @@ export const TRIM_SPEED = 430;
  */
 export const RAIL_FLOOR = 0.70;
 
+/*
+ * WHAT A HIT COSTS, in units of the three-unit health bar.
+ *
+ * "hits should do 0.5 of a health bar, unless boss which does 1." So a body is
+ * six hits and a conductor is three, against the nine-hit total the old
+ * shields-and-lives pair added up to. The two are exported because `World`
+ * chooses between them per contact — it is the only place that knows what ran
+ * into the ship — and because a gate that wants to count hits should read the
+ * number rather than keep its own copy.
+ */
+export const HIT_DAMAGE = 0.5;
+export const BOSS_HIT_DAMAGE = 1;
+
 
 /*
  * TOMBSTONE — `RECENTRE_SPEED` (160 px/s) and `RECENTRE_SPAN` (220 px): the
@@ -407,8 +420,22 @@ export class Player {
    * changed nothing a player could feel, and the bug was invisible because
    * every number still looked right in the source.
    */
-  lives = 3;
-  readonly maxLives = 3;
+  /*
+   * ONE HEALTH MECHANISM. "remove shields and shield drops" / "figuring out
+   * balance will be easier with only 1 health mechanism, hits should do 0.5 of
+   * a health bar, unless boss which does 1".
+   *
+   * There were two stacked stocks: three SHIELDS (`hp`, the green squares) and
+   * three LIVES (the cyan circles), so a run was nine hits and a player had to
+   * read two rows to know how close they were to either boundary. `hp` is the
+   * only one now — a bar of three, spent 0.5 at a time by a body and 1.0 by a
+   * boss, so six ordinary hits or three from a conductor. `lives` stays as a
+   * field pinned at one because roughly forty places read it (the snapshot,
+   * the game-over line, `hitsLeft`, half the tools) and a run that ends is
+   * still "no lives left"; it is no longer a second layer to spend.
+   */
+  lives = 1;
+  readonly maxLives = 1;
   hp = 3;
   maxHp = 3;
   /** Extra hit points granted by rig items, folded in by the world. */
@@ -836,7 +863,7 @@ export class Player {
    * camping — never for a ship that is actually moving — is what keeps it a
    * save rather than removing it.
    */
-  takeHit(blockAutoBomb = false): boolean {
+  takeHit(blockAutoBomb = false, damage: number = HIT_DAMAGE): boolean {
     if (this.invuln > 0 || this.dead) return false;
     this.lastHitAutoBombed = false;
     this.lastHitGuarded = false;
@@ -881,7 +908,10 @@ export class Player {
       this.invuln = INVULN_ON_HIT;
       return true;
     }
-    if (!blockAutoBomb && this.hp <= 1 && this.bombs > 0 && this.lives <= 1) {
+    // "Would this hit end the run?" — it used to be `hp <= 1 && lives <= 1`,
+    // one shield left on the last life. With a single bar the same question is
+    // whether the damage about to land takes it to nothing.
+    if (!blockAutoBomb && this.hp <= damage && this.bombs > 0) {
       this.bombs--;
       this.hp = this.maxHp;
       this.invuln = INVULN_ON_HIT;
@@ -889,17 +919,19 @@ export class Player {
       this.lastHitAutoBombed = true;
       return true;
     }
-    this.hp -= 1;
+    /*
+     * `EPS` because the bar is fractional now: three units spent in halves is
+     * exact in binary, but a rig bonus and a leech tick can leave 1e-16 behind,
+     * and a player standing on a sliver of health they cannot see is worse than
+     * one who died a frame early.
+     */
+    this.hp -= damage;
     this.timeSinceHit = 0;
     this.invuln = INVULN_ON_HIT;
-    if (this.hp <= 0) {
-      this.lives -= 1;
-      if (this.lives <= 0) {
-        this.dead = true;
-      } else {
-        this.hp = this.maxHp;
-        this.invuln = INVULN_ON_HIT * 1.5;
-      }
+    if (this.hp <= 1e-6) {
+      this.hp = 0;
+      this.lives = 0;
+      this.dead = true;
     }
     return true;
   }

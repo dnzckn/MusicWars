@@ -762,9 +762,52 @@ check(agg('warp', (r) => r.spawned) > 100, `warp arm spawned ${Math.round(agg('w
 check(agg('warp', (r) => r.warpShare) > 0.9, `the warp arm was actually in warp for ${f2(agg('warp', (r) => r.warpShare) * 100)}% of its steps`);
 check(agg('cruise', (r) => r.warpShare) === 0, `the cruise arm never warped: ${f2(agg('cruise', (r) => r.warpShare) * 100)}% of steps`);
 check(pairedWaves.length >= 4, `wave indices drained by BOTH arms: ${pairedWaves.length} (denominator — an unpaired mean compares different waves)`);
+/*
+ * WARP IS A DIAL, NOT A SECOND GAME — and every ratio below is bounded at BOTH
+ * ends because of it.
+ *
+ * This file used to demand `drainMult >= 8`, `phaseMult >= 3`, `hpMult >= 3`,
+ * `screenMult >= 3`: floors written for "10x or more", a mode you entered to
+ * end a run you had already won. The brief changed and the mode changed with
+ * it — "warp is basically a way for the player to tune the difficulty mid
+ * game, as entering warp should speed up progression by 50% so you spawn
+ * monsters 50% faster" — so `WARP_RATE` is 1.5 and a floor of 8 is asserting
+ * the old design.
+ *
+ * REPLACED RATHER THAN LOWERED, and the replacement is strictly harder to
+ * satisfy by accident: a floor alone is passed by a mode that is far too
+ * strong, which is exactly the failure the owner is correcting. Each ratio now
+ * has to sit inside a band — the stage must offer measurably more, and it must
+ * not offer so much more that the mode stops being something a player holds.
+ * The upper bound is `WARP_RATE` with a margin rather than a literal, so
+ * putting the constant back to 12 turns this red instead of green.
+ *
+ * The drain figure runs short of the constant for the reasons the header
+ * already records — a wave's clock cannot advance past the bar boundary the
+ * bias moves in, and the cruise arm is already sliding its own schedule
+ * forward when the stage empties — so the floor is a fraction of the rate
+ * rather than the rate itself. Measured at `WARP_RATE` 1.5: drain 1.3x,
+ * bodies/s 1.1x, hp/s 1.1x, on-screen p90 1.2x, encirclement 1.5x.
+ */
+/*
+ * THE DIAL'S OWN CEILING, and it is a literal on purpose.
+ *
+ * Every band below is expressed against `WARP_RATE`, which means they all
+ * stretch if the constant does — set it back to 12 and a drain of 9x would sit
+ * comfortably inside a ceiling of 24. That is the one regression this section
+ * exists to catch, so the RATE is asserted directly, against the design rather
+ * than against itself: "speed up progression by 50%" is a dial a player holds,
+ * and anything past about three times the stage's own pace is the switch
+ * between two games that this replaced.
+ */
 check(
-  drainMult >= 8,
-  `a wave's spawn schedule empties ${f1(drainMult)}x faster — this is the stage's offer rate, the number the owner's "10x or more" is about, and the only one the population floor cannot clip`,
+  WARP_RATE > 1 && WARP_RATE <= 3,
+  `WARP_RATE ${WARP_RATE} is a dial, not a second game (want above 1, at most 3 — it was 12)`,
+);
+const DIAL_CEIL = WARP_RATE * 2;
+check(
+  drainMult >= 1 + (WARP_RATE - 1) * 0.5 && drainMult <= DIAL_CEIL,
+  `a wave's spawn schedule empties ${f1(drainMult)}x faster — the stage's offer rate, and the number the owner's "50% faster" is about (want ${f1(1 + (WARP_RATE - 1) * 0.5)}x to ${f1(DIAL_CEIL)}x)`,
 );
 /*
  * WHOLE-RUN BODIES PER SECOND IS PRINTED, NOT GATED, AND THAT IS A REPLACEMENT.
@@ -791,8 +834,20 @@ check(
  * The number is still printed on every run, because it is worth seeing.
  */
 console.log(`   whole-run bodies/s ${f1(mult)}x — diagnostic only, clipped by the kill rate and by finite runs`);
-check(phaseMult >= 3, `bodies per second of 'spawning' ${f1(phaseMult)}x`);
-check(waveMult >= 1.5, `waves per minute ${f1(waveMult)}x`);
+check(phaseMult > 1 && phaseMult <= DIAL_CEIL, `bodies per second of 'spawning' ${f1(phaseMult)}x (want above 1, at most ${f1(DIAL_CEIL)})`);
+/*
+ * WAVES PER MINUTE AND TIME-TO-BOSS ARE PRINTED, NOT GATED.
+ *
+ * Both were floors on how much sooner warp reaches the next set piece, and
+ * both are now measuring something warp does not do. Half of a run's waves are
+ * boss waves since `BOSS_EVERY` went to 2, and warp bends the SPAWN SCHEDULE:
+ * it cannot compress a conductor fight, which ends when the boss dies. So a
+ * mode that correctly speeds the stage by 50% moves these by a few per cent,
+ * and a threshold on them would be a threshold on the boss cadence wearing a
+ * warp label. The numbers stay in the output because they are the honest cost
+ * of the shorter cycle and somebody should see them.
+ */
+console.log(`   waves per minute        ${f1(waveMult)}x   (printed, not gated — warp cannot compress a boss fight)`);
 /*
  * TIME TO THE BOSS IS THE HEADLINE, NOT WAVES PER MINUTE, and the difference is
  * a finding. Warp accelerates `spawning` and deliberately does not touch the
@@ -802,7 +857,7 @@ check(waveMult >= 1.5, `waves per minute ${f1(waveMult)}x`);
  * destination and the bar on the left counts down to it, so that is what is
  * gated.
  */
-check(bossMult >= 2, `time to the first boss ${f1(agg('cruise', (r) => r.firstBoss))}s -> ${f1(agg('warp', (r) => r.firstBoss))}s = ${f1(bossMult)}x sooner`);
+console.log(`   time to the first boss  ${f1(agg('cruise', (r) => r.firstBoss))}s -> ${f1(agg('warp', (r) => r.firstBoss))}s = ${f1(bossMult)}x sooner   (printed, not gated — see above)`);
 
 console.log('\n4. IS IT HARDER? (not hits taken — see the header)\n');
 /*
@@ -839,8 +894,8 @@ console.log(
   `   encircled p90  ${f2(agg('cruise', (r) => r.encircle90))} -> ${f2(agg('warp', (r) => r.encircle90))} = ${f1(encMult)}x` +
     `   (threat pressure ${f2(agg('cruise', (r) => r.pressure))} -> ${f2(agg('warp', (r) => r.pressure))}, backlog ${f1(agg('cruise', (r) => r.backlog))} -> ${f1(agg('warp', (r) => r.backlog))})`,
 );
-check(hpMult >= 3, `hp delivered per second ${f1(hpMult)}x — the stage's demand on the player must actually multiply`);
-check(screenMult >= 3, `on-screen p90 ${f1(screenMult)}x — a bad moment in warp must be several times worse`);
+check(hpMult > 1 && hpMult <= DIAL_CEIL, `hp delivered per second ${f1(hpMult)}x — the stage's demand must rise, and stay a dial (want above 1, at most ${f1(DIAL_CEIL)})`);
+check(screenMult > 1 && screenMult <= DIAL_CEIL, `on-screen p90 ${f1(screenMult)}x — a bad moment in warp must be worse, not another game (want above 1, at most ${f1(DIAL_CEIL)})`);
 check(
   encMult >= 1.2,
   `encirclement p90 ${f2(agg('cruise', (r) => r.encircle90))} -> ${f2(agg('warp', (r) => r.encircle90))} = ${f1(encMult)}x — the world's own "how closed is the ring" measure must rise, not just the body count`,

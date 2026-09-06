@@ -1101,6 +1101,16 @@ kbd {
 .pips i.on { background: var(--green); border-color: var(--green); box-shadow: 0 0 8px rgba(92,255,157,.55); }
 .pips i.on.warn { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 8px rgba(255,209,102,.55); }
 .pips i.on.crit { background: var(--hot); border-color: var(--hot); box-shadow: 0 0 10px rgba(255,46,110,.7); }
+/*
+ * HALF A UNIT. An ordinary hit costs 0.5 of the three-unit bar, so a pip has
+ * to be able to say "half" — without it, the first body to touch the ship took
+ * something the panel could not show. A hard-edged gradient rather than an
+ * opacity change: half-lit and dimmed are different states, and a dimmed pip
+ * already means "spent" in the row above.
+ */
+.pips i.on.half { background: linear-gradient(90deg, var(--green) 50%, #131829 50%); }
+.pips i.on.half.warn { background: linear-gradient(90deg, var(--gold) 50%, #131829 50%); }
+.pips i.on.half.crit { background: linear-gradient(90deg, var(--hot) 50%, #131829 50%); }
 .pips i.life { border-radius: 50%; width: 10px; height: 10px; }
 .pips i.bomb.on { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 8px rgba(255,209,102,.5); }
 .pips i.well { border-radius: 50%; }

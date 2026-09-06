@@ -1020,7 +1020,12 @@ function weightOf(state: ProgressionState, opt: OfferOption): number {
  * Nothing generates it now.
  */
 const GRACE: readonly { kind: GraceKind; label: string; note: string; character: string }[] = [
-  { kind: 'rest', label: 'REST', note: 'a shield back', character: 'mournful — a bar of rest' },
+  /*
+   * ONE ROW LEFT. `REST — a shield back` went with the shield itself: there is
+   * one health bar now and nothing in the game is called a shield. The kind
+   * survives in `GraceKind` and `world.applyOffer` still honours it, so an old
+   * save is answered; nothing generates it.
+   */
   { kind: 'shards', label: 'RESONATE', note: 'a handful of shards', character: 'shimmering — a ringing tail' },
 ];
 
