@@ -14,6 +14,31 @@
     <meta name="description" content="A bullet hell whose soundtrack is generated live from the fight." />
     <meta name="theme-color" content="#05060c" />
     <!--
+      ADD TO HOME SCREEN. The majority audience plays on the phone, and a
+      browser tab is the one part of that experience the game cannot style:
+      the URL bar takes 56px on Android and about 100 on iOS, and the page
+      never scrolls, so neither ever collapses. Installed, the game gets the
+      whole screen, its own icon and a launch that does not look like a
+      website.
+
+      Every path is RELATIVE, for the reason `vite.config.ts` sets
+      `base: "./"`: Pages serves this under /MusicWars/, and a root-absolute
+      href would ask the domain root and get the 404 page. The manifest's own
+      `start_url` and `scope` are "./" too, and resolve against the manifest's
+      URL, so the installed app opens the same subpath.
+
+      Both spellings of the capable flag: Chrome deprecated the `apple-`
+      prefixed one in 2024 and iOS still reads only that one. iOS also ignores
+      the manifest's icons and reads `apple-touch-icon` instead, which is why
+      that link exists beside a manifest that already lists three.
+    -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="MusicWars" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
       Both sample origins are first contacted only after START (`bootAudio`
       begins the kit and font loads), so on cellular the DNS+TLS to two cold
       hosts — 0.3-1 s each — sits between the tap and the first sample byte;
