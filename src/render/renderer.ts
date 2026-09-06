@@ -15,6 +15,7 @@
  */
 
 import { clamp01, lerp, TAU } from '../core/math';
+import { offerKeyWord } from '../core/platform';
 import { BOSS_EVERY } from '../game/waves';
 import {
   FINAL_R,
@@ -1452,6 +1453,15 @@ export class Renderer {
    * can sit without covering something that can kill you. It is gone the frame
    * the queue empties, so it costs nothing in the ordinary case.
    */
+  /**
+   * The level-up badge's rectangle as last drawn, in view px (camera applied),
+   * or null while no badge is up. A tap inside it opens the offer on touch —
+   * `main.ts` reads this on `pointerdown` before it treats the press as a
+   * boost. Exposed for the same reason `levelUp.rects()` is: a hit test that
+   * re-derives the layout drifts from it silently.
+   */
+  promptRect: { x: number; y: number; w: number; h: number } | null = null;
+
   private drawShipPrompt(g: CanvasRenderingContext2D, alpha: number, dt: number): void {
     const w = this.world;
     const p = w.player;
@@ -1464,7 +1474,10 @@ export class Renderer {
     this.lastLevel = snap.level;
     if (this.levelPop > 0) this.levelPop = Math.max(0, this.levelPop - dt * 1.7);
 
-    if (p.dead) return;
+    if (p.dead) {
+      this.promptRect = null;
+      return;
+    }
     const x = lerp(p.prevX, p.x, alpha);
     const y = lerp(p.prevY, p.y, alpha);
 
@@ -1528,7 +1541,10 @@ export class Renderer {
     }
 
     const n = snap.pendingOffers;
-    if (n <= 0) return;
+    if (n <= 0) {
+      this.promptRect = null;
+      return;
+    }
 
     /*
      * The plate grows with the queue rather than merely repeating itself.
@@ -1540,7 +1556,10 @@ export class Renderer {
      */
     const lift = Math.min(1, (n - 1) / 3);
     const scale = 1 + lift * 0.28;
-    const label = n > 1 ? `SPACE  ×${n}` : 'SPACE';
+    // SPACE on a keyboard, TAP on a phone — the badge is a tap target there,
+    // see `promptRect`. A phone player was being told to press a key.
+    const word = offerKeyWord();
+    const label = n > 1 ? `${word}  ×${n}` : word;
     const beat = this.pulse * (0.35 + lift * 0.4);
 
     g.save();
@@ -1550,6 +1569,20 @@ export class Renderer {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     const tw = Math.max(64, g.measureText(label).width + 22);
+    /*
+     * Where the plate landed, in VIEW px with the camera applied, so a tap on
+     * it can be routed to `openOffers` by `main.ts` — the same seam
+     * `levelUp.hitTest` gives the cards. The plate is 17 view px tall, which
+     * is 9 CSS px on a phone (`cssPerView` ≈ 0.54 measured on both device
+     * profiles); `main.ts` inflates the rect to a thumb-sized target, not
+     * this file, because the CSS-pixel size is the stage's business.
+     */
+    this.promptRect = {
+      x: x + w.camera.x - (tw * scale) / 2,
+      y: y - 44 - lift * 6 + w.camera.y - (17 * scale) / 2,
+      w: tw * scale,
+      h: 17 * scale + 5,
+    };
 
     // Plate: opaque, because a translucent one over a bullet hell is the
     // failure `style.css` records at the top of the HUD block — you half-see

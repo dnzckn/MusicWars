@@ -45,7 +45,9 @@ Then open <http://localhost:5173>. The ship never stops: **W**/**S** are a
 throttle, **A**/**D** or the arrows steer, and the band fires on its own. With a
 mouse or a finger the throttle is binary: hold to boost (hold 1.4 s to warp),
 let go to cruise, and drag backwards while holding to brake; the cursor's side
-of the ship, or the finger's, steers.
+of the ship, or the finger's, steers. On a phone the touch row carries FOCUS,
+BOMB and WELL, a LEVEL UP button whenever a level is banked, and the offer's
+REROLL, BANISH and SKIP; a pause button sits beside the settings gear.
 **Shift** focuses, **X** bombs, **C** opens a black hole, and **Space** spends
 the level-ups you have banked. Hold **W** for 1.4 s to WARP — the wave clock
 runs about 9× faster, the stage floods, and the boss comes sooner.

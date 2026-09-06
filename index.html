@@ -2,10 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!--
+      `maximum-scale=1` is the Android half of "no pinch zoom on the touch
+      buttons"; iOS has ignored it since iOS 10 and is covered by the
+      `touch-action` rules in style.css instead. A zoomed page has no way back
+      on a phone — measured computed styles in the platform audit: every
+      `.screen` and the touch row allowed pinch and double-tap zoom.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>MusicWars</title>
     <meta name="description" content="A bullet hell whose soundtrack is generated live from the fight." />
     <meta name="theme-color" content="#05060c" />
+    <!--
+      Both sample origins are first contacted only after START (`bootAudio`
+      begins the kit and font loads), so on cellular the DNS+TLS to two cold
+      hosts — 0.3-1 s each — sits between the tap and the first sample byte;
+      `samples.ts` records 2.96 s cold. Warming both while the title screen
+      is read costs nothing and needs no gesture.
+    -->
+    <link rel="preconnect" href="https://strudel.b-cdn.net" crossorigin />
+    <link rel="preconnect" href="https://felixroos.github.io" crossorigin />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305060c'/%3E%3Cpath d='M16 4 L26 26 L16 21 L6 26 Z' fill='%2335e6ff'/%3E%3Ccircle cx='16' cy='18' r='3' fill='%23ff2e6e'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -101,7 +117,20 @@
           </div>
 
           <div class="hud-tr">
-            <button id="ui-gear" class="gear" type="button" title="Settings and diagnostics" aria-label="Settings">&#9881;</button>
+            <!--
+              The gear, and now a pause button beside it.
+
+              A phone has no P key. The platform audit's critical row was that
+              a run backgrounded by one notification could never be resumed by
+              touch; the other half of that is that a run could never be
+              PAUSED by touch either — the only deliberate pause was a key.
+              Both are 44 px on a coarse pointer (`.gear` in style.css), the
+              gear having measured 34x34 against Apple's 44 pt minimum.
+            -->
+            <div class="hud-buttons">
+              <button id="ui-pause" class="gear" type="button" title="Pause (P)" aria-label="Pause">&#10074;&#10074;</button>
+              <button id="ui-gear" class="gear" type="button" title="Settings and diagnostics" aria-label="Settings">&#9881;</button>
+            </div>
             <p class="hud-score"><b id="ui-score">0</b></p>
             <p class="hud-mult" id="ui-combo">x1</p>
             <p class="hud-run"><span>WAVE <b id="ui-wave">1</b></span><span id="ui-timer">0:00</span></p>
@@ -441,8 +470,24 @@
           <ul class="shop-grid" id="shop-grid"></ul>
         </div>
 
+        <!--
+          THE PAUSE SCREEN IS TAPPABLE.
+
+          It was keyboard-only: "press P to resume", and `visibilitychange`
+          puts a phone here on every notification, lock and app switch — the
+          platform audit measured the screen staying up through taps on the
+          field and on the heading, with the sim frozen. RESUME is the primary
+          action and the backdrop resumes too (main.ts); SET LIST quits the run
+          through the same `run:over` path a death takes; SETTINGS opens the
+          gear's panel, which the pause overlay otherwise covers.
+        -->
         <div id="pause-screen" class="screen hidden">
           <h2>PAUSED</h2>
+          <div class="pause-actions">
+            <button id="pause-resume" type="button">RESUME</button>
+            <button id="pause-settings" type="button" class="ghost">SETTINGS</button>
+            <button id="pause-setlist" type="button" class="ghost danger">SET LIST</button>
+          </div>
           <dl class="runstats">
             <div><dt>SCORE</dt><dd id="pause-score">0</dd></div>
             <div><dt>WAVE</dt><dd id="pause-wave">1</dd></div>
@@ -478,7 +523,15 @@
             <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
             <div><dt>Level up</dt><dd><kbd>Space</kbd><em>open</em> <kbd>1</kbd>&ndash;<kbd>4</kbd><em>pick</em> <kbd>R</kbd><em>reroll</em> <kbd>Shift</kbd>+<kbd>1</kbd>&ndash;<kbd>4</kbd><em>banish</em> <kbd>Q</kbd><em>skip</em></dd></div>
           </dl>
-          <p class="sub">press <kbd>P</kbd> to resume</p>
+          <p class="sub keys-only">press <kbd>P</kbd> to resume</p>
+          <!--
+            The two-line touch rule, shown INSTEAD of the keycap legend on a
+            coarse pointer: that legend is a two-column grid of eleven rows
+            and on a 390 px screen it ran off both edges — photographed on
+            the iPhone 14 profile with "Fire" and "Bomb" clipped at the right
+            and the left column starting mid-word.
+          -->
+          <p class="touch-rule">hold to boost &middot; drag back to brake &middot; drag left or right to steer<br />LEVEL UP and BOMB are the buttons under the field</p>
         </div>
 
         <!--
@@ -539,10 +592,26 @@
       <!-- No aria-hidden: `.touch.hidden { display: none }` already keeps this out
      of the accessibility tree while it is hidden, and the attribute made three
      LIVE buttons unreachable to a screen reader on the phones that show them. -->
+        <!--
+          THE ROW HAS TWO FACES, and `main.ts` chooses between them each frame.
+
+          In play: FOCUS, BOMB, WELL and — whenever a level-up is banked — a
+          gold LEVEL UP button, the widest and tallest thing here, because
+          spending levels is the only way to get stronger and on touch there
+          was no way to do it at all. While the offer is open the same row
+          shows REROLL, BANISH and SKIP instead: the canvas draws those levers
+          at 14 CSS px tall on a phone, and a thumb cannot hit that. Both
+          faces live in one row so the stage never re-lays out between them;
+          `.touch` reserves the height of its tallest button.
+        -->
         <div id="touch-controls" class="touch hidden">
         <button id="touch-focus" type="button">FOCUS</button>
         <button id="touch-bomb" type="button">BOMB</button>
         <button id="touch-well" type="button">WELL</button>
+        <button id="touch-levelup" type="button" class="hidden">LEVEL UP</button>
+        <button id="touch-reroll" type="button" class="lever hidden">REROLL</button>
+        <button id="touch-banish" type="button" class="lever hidden">BANISH</button>
+        <button id="touch-skip" type="button" class="lever hidden">SKIP</button>
       </div>
 
 

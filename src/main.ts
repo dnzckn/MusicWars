@@ -16,6 +16,7 @@
 import type { MusicalState } from './core/events';
 import { Input } from './core/input';
 import { FIXED_DT, Loop } from './core/loop';
+import { coarsePointer, enterPhoneSession, reholdWake, releaseWake } from './core/platform';
 import { MusicDirector } from './audio/director';
 import { getAudioContext } from '@strudel/webaudio';
 import {
@@ -281,6 +282,18 @@ function layout(): void {
   if (setView(v.w, v.h)) renderer.viewChanged();
 }
 
+/*
+ * THE ROW IS THERE FROM THE FIRST FRAME ON A PHONE.
+ *
+ * It used to appear on the first touch, which is also the first frame the
+ * stage shrinks to make room for it: measured on the iPhone 14 profile, the
+ * START tap moved the stage 14 px and cut it 20 px, so the first thing a
+ * phone player saw the game do was jump. `(pointer: coarse)` is known at load
+ * and is the same gate the stylesheet uses; the pointerdown reveal below
+ * stays for a touchscreen laptop, whose primary pointer is fine.
+ */
+if (coarsePointer()) touchControls.classList.remove('hidden');
+
 addEventListener('resize', layout);
 addEventListener('orientationchange', layout);
 layout();
@@ -359,9 +372,50 @@ function routeOfferPointer(e: PointerEvent): boolean {
   if (card < 0) return false;
   // Banishing needs a target as well as an intent, so it is the modifier on a
   // card rather than a lever of its own: hold shift (or the BANISH control,
-  // which arms the same modifier) and click the card you want gone.
-  if (control === 'banish' || e.shiftKey) input.pointerBanish = card;
-  else input.pointerChoice = card;
+  // which arms the same modifier) and click the card you want gone. On touch
+  // the modifier is the armed BANISH button in the row below the field — the
+  // two-step a thumb can do, since it cannot hold Shift.
+  if (control === 'banish' || e.shiftKey || banishArmed) {
+    input.pointerBanish = card;
+    banishArmed = false;
+    paintTouchRow();
+  } else {
+    input.pointerChoice = card;
+  }
+  return true;
+}
+
+/**
+ * A tap on the ship's LEVEL UP badge.
+ *
+ * The badge is drawn by `renderer.drawShipPrompt` and is the loudest thing on
+ * the field while levels are banked; on a keyboard it names the key, on a
+ * phone it says TAP and this is what makes that true. The rect comes from the
+ * renderer for the same reason the cards' does (`routeOfferPointer`): a hit
+ * test that re-derives the layout drifts from it silently.
+ *
+ * INFLATED TO A THUMB. The plate is 17 view px tall, which is 9 CSS px on a
+ * phone (`cssPerView` ≈ 0.54 on both profiles) — a target no finger hits. The
+ * hit box is the plate plus 6 px, floored at 48x48 CSS px around its centre;
+ * a press just outside it is the boost it always was, so the cost of the
+ * floor is a boost that starts 24 px above the ship rather than on it.
+ *
+ * Touch only: a mouse has Space, and a click on the badge is a boost press on
+ * the desktop scheme, where the cursor is often exactly over the ship.
+ */
+function routePromptPointer(e: PointerEvent): boolean {
+  if (e.pointerType === 'mouse') return false;
+  if (!inRun || paused || world.isOver || world.choosing) return false;
+  const r = renderer.promptRect;
+  if (!r || world.snapshot.pendingOffers <= 0) return false;
+  const pf = playfield.getBoundingClientRect();
+  const k = pf.width / world.viewW;
+  const cx = pf.left + (r.x + r.w / 2) * k;
+  const cy = pf.top + (r.y + r.h / 2) * k;
+  const hw = Math.max(24, (r.w * k) / 2 + 6);
+  const hh = Math.max(24, (r.h * k) / 2 + 6);
+  if (Math.abs(e.clientX - cx) > hw || Math.abs(e.clientY - cy) > hh) return false;
+  input.pointerOpenOffers = true;
   return true;
 }
 
@@ -480,6 +534,12 @@ stage.addEventListener('pointerdown', (e) => {
     mousePointerDown(e);
     return;
   }
+  // The ship's badge, before the press becomes a boost: a thumb on TAP ×2
+  // means "open the offer", not "go faster".
+  if (routePromptPointer(e)) {
+    e.preventDefault();
+    return;
+  }
   if (touchControls.classList.contains('hidden')) {
     touchControls.classList.remove('hidden');
     // The row is a sibling below the stage, so revealing it takes height away
@@ -575,9 +635,101 @@ const bindTouchButton = (id: string, press: () => void, hold?: (down: boolean) =
   el.addEventListener('pointercancel', up);
   el.addEventListener('pointerleave', up);
 };
-bindTouchButton('touch-bomb', () => (input.touchBomb = true));
-bindTouchButton('touch-well', () => (input.touchWell = true));
+// Not while paused: the row sits under the pause screen's reach, and
+// `touchBomb` is consumed by `sample()`, which does not run while paused —
+// a press here would bank a bomb that went off on the first step after
+// RESUME. Photographed: FOCUS / BOMB / WELL live under PAUSED on both phone
+// profiles. The same guard is on LEVEL UP below.
+bindTouchButton('touch-bomb', () => {
+  if (!paused) input.touchBomb = true;
+});
+bindTouchButton('touch-well', () => {
+  if (!paused) input.touchWell = true;
+});
 bindTouchButton('touch-focus', () => {}, (down) => (input.touchFocus = down));
+/*
+ * THE LEVEL-UP BUTTON, AND THE OFFER'S LEVERS, IN THE SAME ROW.
+ *
+ * The platform audit's critical finding, in one sentence: on touch there was
+ * no way to open the offer — Space was the only path (`OPEN_OFFER_KEYS`) and
+ * the HUD told a phone player to press it. LEVEL UP sets the same edge Space
+ * sets; the world's `offerEdge` latch cannot tell them apart.
+ *
+ * REROLL and SKIP set the flags the canvas levers set (`routeOfferPointer`),
+ * so the world sees one path. BANISH is the exception: the canvas lever only
+ * ever ARMED a modifier for the click that followed, and on touch that click
+ * is a second tap on a card — so the button toggles `banishArmed`, reads
+ * "BANISH — TAP A CARD" while it is, and `routeOfferPointer` spends it on the
+ * next card. A second tap on BANISH disarms.
+ *
+ * Guarded on `!paused`: the row sits outside `#stage`, under the pause
+ * screen's reach, and `pointerOpenOffers` is consumed by `sample()`, which
+ * does not run while paused — an unguarded tap here would bank an edge that
+ * fired on the first step after RESUME.
+ */
+bindTouchButton('touch-levelup', () => {
+  if (!paused) input.pointerOpenOffers = true;
+});
+bindTouchButton('touch-reroll', () => (input.pointerReroll = true));
+bindTouchButton('touch-skip', () => (input.pointerSkip = true));
+bindTouchButton('touch-banish', () => {
+  banishArmed = !banishArmed;
+  paintTouchRow();
+});
+
+/** The BANISH button has been tapped and is waiting for a card. Touch only. */
+let banishArmed = false;
+
+const touchRow = {
+  focus: document.getElementById('touch-focus') as HTMLButtonElement,
+  bomb: document.getElementById('touch-bomb') as HTMLButtonElement,
+  well: document.getElementById('touch-well') as HTMLButtonElement,
+  levelup: document.getElementById('touch-levelup') as HTMLButtonElement,
+  reroll: document.getElementById('touch-reroll') as HTMLButtonElement,
+  banish: document.getElementById('touch-banish') as HTMLButtonElement,
+  skip: document.getElementById('touch-skip') as HTMLButtonElement,
+};
+/** The last state painted, so the row is not touched sixty times a second for nothing. */
+let touchRowKey = '';
+
+/**
+ * Which face of the touch row is showing, decided once per frame from the
+ * world: the play buttons plus LEVEL UP while levels are banked, or the three
+ * offer levers while an offer is open on a coarse pointer. Fine pointers keep
+ * the canvas levers (`levelup.ts` still draws them there), so the DOM levers
+ * are gated on `coarsePointer()` and not on the row being visible — a
+ * touchscreen laptop shows the row and keeps its keys. Runs from the render
+ * hook; a string key means the DOM is written only when something moved.
+ */
+function paintTouchRow(): void {
+  const live = inRun && !world.isOver;
+  const choosing = live && world.choosing;
+  const levers = choosing && coarsePointer();
+  const pending = live && !paused && !choosing ? world.snapshot.pendingOffers : 0;
+  const offer = world.progression.offer;
+  const rerolls = choosing ? (offer?.rerollsLeft ?? 0) : 0;
+  const banishes = choosing ? (offer?.banishesLeft ?? 0) : 0;
+  if (!choosing) banishArmed = false;
+  const key = `${live}|${paused}|${levers}|${pending}|${rerolls}|${banishes}|${banishArmed}`;
+  if (key === touchRowKey) return;
+  touchRowKey = key;
+  const r = touchRow;
+  // Dimmed between runs and while paused: the row is reserved on the title
+  // and the set list, and under the pause screen, and its buttons do nothing
+  // in any of those. See `.touch.idle` in style.css.
+  touchControls.classList.toggle('idle', !live || paused);
+  for (const b of [r.focus, r.bomb, r.well]) b.classList.toggle('hidden', levers);
+  r.levelup.classList.toggle('hidden', levers || pending <= 0);
+  r.levelup.textContent = pending > 1 ? `LEVEL UP ×${pending}` : 'LEVEL UP';
+  for (const b of [r.reroll, r.banish, r.skip]) b.classList.toggle('hidden', !levers);
+  r.reroll.textContent = `REROLL ×${rerolls}`;
+  // A spent lever is dimmed rather than removed — the canvas row's rule, for
+  // the same reason: a control that vanishes teaches nothing about why.
+  r.reroll.disabled = rerolls <= 0;
+  r.banish.textContent = banishArmed ? 'BANISH — TAP A CARD' : `BANISH ×${banishes}`;
+  r.banish.disabled = banishes <= 0 && !banishArmed;
+  r.banish.classList.toggle('armed', banishArmed);
+}
 
 // ---------------------------------------------------------------------------
 // volume
@@ -760,6 +912,8 @@ let runOverAt = -Infinity;
 
 world.bus.on('run:over', (e) => {
   runOverAt = performance.now();
+  // The screen may sleep again; the summary is read at leisure.
+  releaseWake();
   finalScore.textContent = e.score.toLocaleString('en-US');
   finalWave.textContent = String(e.wave);
 
@@ -1114,6 +1268,7 @@ const loop = new Loop({
       audioSuspended() ? 'tap to resume' : audioStatus(),
       world.transport.barPhase,
     );
+    paintTouchRow();
     /*
      * Nothing touches the input here any more. `input.endFrame()` used to be
      * this line, and it is the reason one tap of the black-hole key spent four
@@ -1414,6 +1569,15 @@ async function startRun(): Promise<void> {
   // frame during the fade on some machines.
   gameoverScreen.classList.remove('won');
 
+  /*
+   * The phone session, from inside the same gesture and BEFORE the first
+   * await: the audio-session category has to be set before the context
+   * starts, the wake lock and fullscreen both need the gesture token, and
+   * `bootAudio` is where the gesture is spent. Nothing in it is awaited or
+   * can throw — see `core/platform.ts`.
+   */
+  enterPhoneSession();
+
   // Audio must be unlocked from inside the gesture that got us here.
   try {
     await bootAudio(128);
@@ -1428,6 +1592,8 @@ async function startRun(): Promise<void> {
   sfxRunStart(director.currentChordNotes());
   inRun = true;
   paused = false;
+  pauseScreen.classList.add('hidden');
+  settingsFromPause = false;
 }
 
 startButton.addEventListener('click', () => void startRun());
@@ -1494,77 +1660,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'KeyP' || e.code === 'Escape') {
-    if (!inRun || world.isOver) return;
-    paused = !paused;
-    if (paused) {
-      // Snapshot the run into the pause screen: a pause is the one moment a
-      // player can actually read anything, so it should be worth reading.
-      const snap = world.snapshot;
-      const readout = director.readout(world.transport);
-      pauseStats.score.textContent = snap.score.toLocaleString('en-US');
-      pauseStats.wave.textContent = String(snap.wave + 1);
-      /*
-       * Where the run is, in the run's own units. The screen carried WAVE 2
-       * with no denominator, no act and no boss count — the one screen a
-       * player reads at leisure said nothing about the run's shape. Every
-       * number is the snapshot's: `act`/`acts`/`bossesBeaten` are published
-       * exactly so no screen hard-codes four.
-       */
-      const down = snap.bossesBeaten;
-      pauseStats.run.textContent =
-        `ACT ${snap.act} OF ${snap.acts} · WAVE ${snap.wave + 1} OF ${TOTAL_WAVES} · ` +
-        `${down} ${down === 1 ? 'BOSS' : 'BOSSES'} DOWN`;
-      pauseStats.mult.textContent = `x${1 + snap.combo}`;
-      /*
-       * The run's TOTAL, not the shards lying on the floor right now.
-       *
-       * `world.notes` is the live array of uncollected shards, so this read as
-       * a number that fell as the player collected them — pausing after a
-       * clean sweep showed 0 notes for a run that had banked hundreds. The
-       * game-over screen already uses `world.totals.notes`; the pause screen
-       * was reading a different quantity under the same label.
-       */
-      pauseStats.notes.textContent = world.totals.notes.toLocaleString('en-US');
-      pauseStats.music.textContent =
-        `${readout.key.toUpperCase()} · ${readout.feel.toUpperCase()} · ${readout.bpm} BPM · ${readout.section.toUpperCase()}`;
-
-      /*
-       * The build plan. Six rows, because the pause screen also carries the
-       * control list and a plan you have to scroll is not one you read.
-       * `combinationPlan` sorts what is takeable now to the top, so the
-       * truncation only ever hides the most distant aims — and it says how
-       * many it hid rather than pretending the list is complete.
-       */
-      const plan = combinationPlan(snap.abilities, discovered);
-      const SHOWN = 6;
-      pauseStats.combos.replaceChildren();
-      for (const row of plan.slice(0, SHOWN)) {
-        const li = document.createElement('li');
-        if (row.ready) li.classList.add('ready');
-        if (row.kind === 'union') li.classList.add('union');
-        const b = document.createElement('b');
-        // The glyph carries the tier without relying on the colour: filled for
-        // a union, open for anything else ready, hollow for an aim.
-        b.textContent = `${row.ready ? (row.kind === 'union' ? '◆' : '◈') : '◇'} ${row.label}`;
-        const em = document.createElement('em');
-        em.textContent = row.ready ? row.needs : `needs ${row.needs}`;
-        li.append(b, em);
-        pauseStats.combos.append(li);
-      }
-      if (plan.length > SHOWN) {
-        const li = document.createElement('li');
-        const em = document.createElement('em');
-        em.textContent = `+${plan.length - SHOWN} further off`;
-        li.append(em);
-        pauseStats.combos.append(li);
-      }
-      pauseStats.combosNone.classList.toggle('hidden', plan.length > 0);
-    }
-    pauseScreen.classList.toggle('hidden', !paused);
-    // Pause, not stop: stopping resets the scheduler's cycle counters and the
-    // transport comes back four bars in the past.
-    if (paused) pauseAudio();
-    else startAudio();
+    setPaused(!paused);
   }
   /*
    * Enter also starts, so the whole game is playable from the keyboard — but
@@ -1587,6 +1683,152 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+/**
+ * True while the settings panel was opened FROM the pause screen, so closing
+ * it brings the pause screen back rather than dropping the player into a run
+ * that is still frozen with nothing on screen saying so.
+ */
+let settingsFromPause = false;
+
+/**
+ * Pause or resume, from any of the five places that can now ask: P / Escape,
+ * the ⏸ button in the HUD, RESUME on the pause screen, a tap on the pause
+ * screen's backdrop, and `visibilitychange`. One function, because the
+ * platform audit's critical row was exactly two of these disagreeing — the
+ * visibility handler paused and only the key could unpause, so a phone that
+ * received one notification mid-run was paused for good ("press P to
+ * resume", on a device with no P). Idempotent: `visibilitychange` can fire
+ * hidden twice, and a RESUME tap on a screen already resuming must not pause.
+ */
+function setPaused(on: boolean): void {
+  if (!inRun || world.isOver) return;
+  if (on === paused) return;
+  paused = on;
+  if (paused) {
+    // Snapshot the run into the pause screen: a pause is the one moment a
+    // player can actually read anything, so it should be worth reading.
+    const snap = world.snapshot;
+    const readout = director.readout(world.transport);
+    pauseStats.score.textContent = snap.score.toLocaleString('en-US');
+    pauseStats.wave.textContent = String(snap.wave + 1);
+    /*
+     * Where the run is, in the run's own units. The screen carried WAVE 2
+     * with no denominator, no act and no boss count — the one screen a
+     * player reads at leisure said nothing about the run's shape. Every
+     * number is the snapshot's: `act`/`acts`/`bossesBeaten` are published
+     * exactly so no screen hard-codes four.
+     */
+    const down = snap.bossesBeaten;
+    pauseStats.run.textContent =
+      `ACT ${snap.act} OF ${snap.acts} · WAVE ${snap.wave + 1} OF ${TOTAL_WAVES} · ` +
+      `${down} ${down === 1 ? 'BOSS' : 'BOSSES'} DOWN`;
+    pauseStats.mult.textContent = `x${1 + snap.combo}`;
+    /*
+     * The run's TOTAL, not the shards lying on the floor right now.
+     *
+     * `world.notes` is the live array of uncollected shards, so this read as
+     * a number that fell as the player collected them — pausing after a
+     * clean sweep showed 0 notes for a run that had banked hundreds. The
+     * game-over screen already uses `world.totals.notes`; the pause screen
+     * was reading a different quantity under the same label.
+     */
+    pauseStats.notes.textContent = world.totals.notes.toLocaleString('en-US');
+    pauseStats.music.textContent =
+      `${readout.key.toUpperCase()} · ${readout.feel.toUpperCase()} · ${readout.bpm} BPM · ${readout.section.toUpperCase()}`;
+
+    /*
+     * The build plan. Six rows, because the pause screen also carries the
+     * control list and a plan you have to scroll is not one you read.
+     * `combinationPlan` sorts what is takeable now to the top, so the
+     * truncation only ever hides the most distant aims — and it says how
+     * many it hid rather than pretending the list is complete.
+     */
+    const plan = combinationPlan(snap.abilities, discovered);
+    const SHOWN = 6;
+    pauseStats.combos.replaceChildren();
+    for (const row of plan.slice(0, SHOWN)) {
+      const li = document.createElement('li');
+      if (row.ready) li.classList.add('ready');
+      if (row.kind === 'union') li.classList.add('union');
+      const b = document.createElement('b');
+      // The glyph carries the tier without relying on the colour: filled for
+      // a union, open for anything else ready, hollow for an aim.
+      b.textContent = `${row.ready ? (row.kind === 'union' ? '◆' : '◈') : '◇'} ${row.label}`;
+      const em = document.createElement('em');
+      em.textContent = row.ready ? row.needs : `needs ${row.needs}`;
+      li.append(b, em);
+      pauseStats.combos.append(li);
+    }
+    if (plan.length > SHOWN) {
+      const li = document.createElement('li');
+      const em = document.createElement('em');
+      em.textContent = `+${plan.length - SHOWN} further off`;
+      li.append(em);
+      pauseStats.combos.append(li);
+    }
+    pauseStats.combosNone.classList.toggle('hidden', plan.length > 0);
+  }
+  settingsFromPause = false;
+  pauseScreen.classList.toggle('hidden', !paused);
+  // Pause, not stop: stopping resets the scheduler's cycle counters and the
+  // transport comes back four bars in the past.
+  if (paused) pauseAudio();
+  else startAudio();
+}
+
+/*
+ * THE PAUSE SCREEN'S BUTTONS, and the button that opens it.
+ *
+ * ⏸ toggles, like P. RESUME resumes; so does a tap on the backdrop, because
+ * "tap anywhere to continue" is what a thumb tries first and the audit
+ * measured it doing nothing. SETTINGS opens the gear's panel — the pause
+ * overlay sits above it at z-index 10 to 8, so the panel is unreachable
+ * while paused otherwise — and closing the panel brings the pause screen
+ * back. SET LIST quits: see `quitToSetList`.
+ */
+document.getElementById('ui-pause')!.addEventListener('click', () => setPaused(!paused));
+document.getElementById('pause-resume')!.addEventListener('click', () => setPaused(false));
+pauseScreen.addEventListener('click', (e) => {
+  if (e.target === pauseScreen) setPaused(false);
+});
+document.getElementById('pause-settings')!.addEventListener('click', () => {
+  if (!paused) return;
+  settingsFromPause = true;
+  pauseScreen.classList.add('hidden');
+  hud.setSettings(true);
+});
+document.getElementById('ui-gear-close')!.addEventListener('click', () => {
+  if (settingsFromPause && paused) pauseScreen.classList.remove('hidden');
+  settingsFromPause = false;
+});
+
+/**
+ * Quit to the set list from the pause screen.
+ *
+ * Through the SAME path a death takes: `world.abandonRun` ends the run and
+ * emits `run:over`, the handler above records it, pays out the waves cleared
+ * and paints the summary screen, and `showMenu('gameover')` steps straight
+ * past that screen to the set list — BACK from there reads the summary, which
+ * is what the game-over screen's own SET LIST & SHOP button does. Two
+ * alternatives rejected: a bare `showMenu('title')` with the run left frozen
+ * behind it, which forfeits the payout and leaves `inRun` true under a menu;
+ * and a second `run:over`-like path here, which is the duplicate wiring the
+ * game-over screen's own comment in index.html warns against.
+ *
+ * The audio stays paused — `setPaused(true)` paused it — and the next START
+ * restarts the scheduler: `playPattern` autostarts a paused Cyclist
+ * (`cyclist.mjs` `setPattern(pat, true)` on `started === false`).
+ */
+function quitToSetList(): void {
+  if (!inRun || world.isOver || !paused) return;
+  paused = false;
+  settingsFromPause = false;
+  pauseScreen.classList.add('hidden');
+  world.abandonRun();
+  showMenu('gameover');
+}
+document.getElementById('pause-setlist')!.addEventListener('click', quitToSetList);
+
 /*
  * Recover a suspended context.
  *
@@ -1602,11 +1844,12 @@ for (const evt of ['pointerdown', 'keydown', 'touchend'] as const) {
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && inRun && audioSuspended()) resumeAudio();
-  if (document.hidden && inRun && !paused) {
-    paused = true;
-    pauseScreen.classList.remove('hidden');
-    pauseAudio();
-  }
+  // The wake lock is released by the browser on hide; take it again while a
+  // run is live, which is the window the screen must not sleep in.
+  if (!document.hidden && inRun && !world.isOver) reholdWake();
+  // Through `setPaused`, so the screen that comes up is the one RESUME and a
+  // backdrop tap take down — see there for the notification-shade trap.
+  if (document.hidden) setPaused(true);
 });
 
 loop.start();
@@ -1620,6 +1863,10 @@ if (import.meta.env.DEV) {
     director,
     loop,
     startRun,
+    // The pause state lives in this file, not in the world (`writeSnapshot`
+    // hardcodes `paused = false`); `tools/touchcheck.mjs` reads it here.
+    paused: () => paused,
+    setPaused,
     readout: () => director.readout(world.transport),
     miniCacheStats,
     // What ?seed= actually resolved to, so a capture can record the seed that

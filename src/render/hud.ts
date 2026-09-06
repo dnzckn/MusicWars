@@ -41,6 +41,7 @@ import { ARCHETYPE_INFO } from '../game/enemies';
 import { powerupDef } from '../game/powerups';
 import { BOSS_COUNT, BOSS_EVERY, TOTAL_WAVES } from '../game/waves';
 import { characterOf, labelOf, maxLevelOf, slotOf } from '../game/weapons';
+import { offerKeyWord } from '../core/platform';
 import { characterHue, readyFusions, pendingFusions } from './levelup';
 
 const $ = (id: string): HTMLElement => {
@@ -607,10 +608,13 @@ export class Hud {
      * and dies wondering why. It rides the XP line because that is where
      * somebody already looks to ask "am I close", and it replaces the raw
      * numbers while any are waiting so it cannot be missed.
+     *
+     * `offerKeyWord` is SPACE on a keyboard and TAP on a phone: the line said
+     * SPACE to a device with no space bar for as long as offers have banked.
      */
     if (snap.pendingOffers > 0) {
       const n = snap.pendingOffers;
-      this.set('xpnum', this.els.xpnum, `${n} LEVEL UP${n > 1 ? 'S' : ''} — SPACE`);
+      this.set('xpnum', this.els.xpnum, `${n} LEVEL UP${n > 1 ? 'S' : ''} — ${offerKeyWord()}`);
       this.els.xpnum.classList.add('xp-ready');
     } else {
       this.set('xpnum', this.els.xpnum, `${Math.floor(snap.xp)} / ${Math.round(snap.xpToNext)}`);

@@ -47,6 +47,7 @@
 
 import type { AbilityId, AbilitySlot, EvolvedId, GameSnapshot, GraceKind } from '../core/events';
 import { clamp01, TAU } from '../core/math';
+import { coarsePointer } from '../core/platform';
 import { TOTAL_WAVES } from '../game/waves';
 import {
   DUET_INPUT_LEVEL,
@@ -1709,6 +1710,17 @@ export class LevelUpOverlay {
     const a = page * clamp01((this.age - 0.3) / 0.3);
     this.controls.length = 0;
     if (a <= 0.01) return;
+    /*
+     * NOT ON A PHONE. Measured on both device profiles, this row is 11 view px
+     * of text at 0.54 CSS px per view px: the SKIP lever was 32.7x14.1 CSS px
+     * and a tap 8 px under it missed, against a 44 px minimum target. On a
+     * coarse pointer `main.ts` shows REROLL / BANISH / SKIP as DOM buttons in
+     * the touch row instead, so drawing these too would put the same three
+     * levers on screen twice, one set unusable. `hitTestControl` reads
+     * `this.controls`, which stays empty, so a tap where the row used to be
+     * falls through to the cards rather than to a ghost lever.
+     */
+    if (coarsePointer()) return;
 
     const items: { key: string; label: string; count: number | null }[] = [
       { key: '1-4', label: 'CHOOSE', count: null },

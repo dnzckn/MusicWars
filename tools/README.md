@@ -126,6 +126,21 @@ doing, but it is worth doing carefully and with somewhere to fall back to.
   existing touch check asked whether the controls worked, never where they were,
   so `touchcheck` now asserts they intersect the playfield canvas nowhere.
 
+- `touchcheck`, the mobile blockers (2026-09-06, stage 1 of the mobile
+  programme — "the majority audience will play this on the phone"). The
+  platform audit measured that on touch there was no way to open the level-up
+  offer (Space only) and no way to unpause (P only, and `visibilitychange`
+  pauses on every notification). Fifteen assertions were added, each through a
+  real Playwright touch tap and each seen red once by its own mutation (the
+  file's header lists them): the row is present before the first touch, a
+  LEVEL UP button ≥ 52 px opens the offer, the levers are DOM buttons ≥ 44 px
+  and SKIP closes it, BANISH is a two-step, the ship's TAP badge is a target,
+  ⏸ pauses and RESUME resumes — including after a simulated hidden→visible —
+  nothing tappable is under 44 px, the computed gesture CSS matches the audit's
+  block, and the volume slider still drags. Its first green run found a defect
+  the layout pass had filed as height: BOMB and WELL were 40.8 px WIDE, because
+  the row shrank to fit its content and `flex: 1` had nothing to grow into.
+
 - `variety` / `tensionprobe` — what a player hears over an uninterrupted run.
   Found tension never exceeding 0.5 across 1132 samples: the master musical
   signal, which drives mode selection, section choice and every stem fader, only

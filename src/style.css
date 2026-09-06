@@ -82,6 +82,16 @@ html, body {
   color: var(--ink);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  /*
+   * NO PULL-TO-REFRESH. `overflow: hidden` does not stop Chrome's
+   * pull-to-refresh: a downward pan that reaches the root with nothing to
+   * scroll fires it regardless, and every `.screen` overlay is its own
+   * scroller that hands the gesture up at its top edge — the title screen
+   * measured 81 px of scroll on the iPhone 14 profile, so the pause screen
+   * (where a phone lands on every notification) was one thumb-flick from a
+   * reload mid-run. Platform audit, ranked #2.
+   */
+  overscroll-behavior: none;
 }
 
 /*
@@ -154,6 +164,24 @@ body::before {
   justify-content: safe center;
   overflow-y: auto;
   align-items: center;
+  /*
+   * THE PHONE RULES, on the root of everything the player touches.
+   *
+   * `pan-x pan-y` and not `none`: it walks up to the root for zoom gestures,
+   * so pinch and double-tap zoom are dead app-wide — a zoomed page has no way
+   * back on a phone — while `.screen` keeps its own vertical scroll. Selection
+   * and the long-press callout are off because every screen's text grew
+   * selection handles under a resting thumb (measured `user-select: auto`
+   * everywhere), and the tap highlight was Chromium's default blue flash on
+   * `#stage` and every `.screen`. `#ui-volume` is untouched by this — it is a
+   * range input inside `#stage`, already under `touch-action: none`, and its
+   * native drag works there because `main.ts` never cancels its pointerdown.
+   */
+  touch-action: pan-x pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /*
@@ -269,10 +297,33 @@ body::before {
   display: flex;
   flex-direction: row;
   justify-content: center;
+  align-items: center;
   gap: 10px;
   padding: 2px 0;
   flex: 0 0 auto;
   pointer-events: none;
+  /*
+   * AS WIDE AS THE APP, not as wide as its buttons. `#app` centres its
+   * children, so without this the row shrank to fit its content and the
+   * buttons' `flex: 1` had nothing to grow into — `touchcheck` measured BOMB
+   * and WELL at 40.8 px WIDE on the Pixel 5 profile with the height already
+   * at 44. Stretched, the three play buttons share the width (capped at 140
+   * each), LEVEL UP takes a double share, and the three levers take a third
+   * each.
+   */
+  align-self: stretch;
+  /*
+   * THE ROW RESERVES ITS TALLEST FACE. LEVEL UP is 52 px and the levers 48,
+   * against 44 for FOCUS / BOMB / WELL; without a floor the row would grow
+   * 8 px the moment a level banked and `layout()` would re-zoom the live
+   * playfield under the player's thumb, the same jump the first touch used
+   * to cause when the row appeared. 56 = 52 + the 2 px padding each side.
+   */
+  min-height: 56px;
+  /* Nothing here may pan the page: a thumb sliding off BOMB used to be a
+     vertical pan with `manipulation`, and a pan at the bottom of the page is
+     pull-to-refresh's gesture. */
+  touch-action: none;
 }
 .touch.hidden { display: none; }
 .touch button {
@@ -288,11 +339,79 @@ body::before {
   border: 1px solid rgba(53, 230, 255, .4);
   border-radius: 10px;
   -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
+  touch-action: none;
 }
+.touch button.hidden { display: none; }
 .touch button:active { background: rgba(53, 230, 255, .28); color: #fff; }
 #touch-bomb { color: var(--gold); border-color: rgba(255, 209, 102, .45); background: linear-gradient(180deg, rgba(255,209,102,.10), rgba(11,14,24,.82)); }
 #touch-well { color: var(--violet); border-color: rgba(176, 107, 255, .45); background: linear-gradient(180deg, rgba(176,107,255,.10), rgba(11,14,24,.82)); }
+
+/*
+ * LEVEL UP ×n — the one button that makes the run winnable on a phone.
+ *
+ * Gold, because gold is what the ship's badge and the XP line already use for
+ * a banked level, and the tallest and widest thing in the row (52 px, twice
+ * the flex share) because it is the only control here whose absence loses the
+ * run rather than a life. It shares the XP line's pulse so the three prompts
+ * — badge, line, button — beat together. Hidden unless `pendingOffers > 0`
+ * and no offer is open; `main.ts` toggles it.
+ */
+#touch-levelup {
+  height: 52px;
+  flex: 2 1 0;
+  max-width: none;
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: #ffe08a;
+  border-color: rgba(255, 209, 102, .7);
+  background: linear-gradient(180deg, rgba(255,209,102,.22), rgba(11,14,24,.86));
+  box-shadow: 0 0 18px rgba(255, 209, 102, .18);
+  /*
+   * The GLOW pulses, not the opacity. The first cut shared the XP line's
+   * `xpready` (opacity 1 -> .55) and the photo caught the button at the dim
+   * end, where it read as DISABLED — the one thing the most important button
+   * on a phone must never look like. The border and halo breathe instead, on
+   * the same 1.1 s clock, so the three prompts still beat together.
+   */
+  animation: lvlpulse 1.1s ease-in-out infinite;
+}
+@keyframes lvlpulse {
+  0%, 100% { border-color: rgba(255, 209, 102, .7); box-shadow: 0 0 18px rgba(255, 209, 102, .18); }
+  50% { border-color: rgba(255, 224, 138, 1); box-shadow: 0 0 26px rgba(255, 209, 102, .45); }
+}
+#touch-levelup:active { background: rgba(255, 209, 102, .4); color: #fff; }
+/*
+ * Inert between runs and while paused. On a coarse pointer the row is
+ * reserved from load (main.ts), so it sits under the title, the set list and
+ * the shop with nothing to do, and under the pause screen with its presses
+ * guarded off; at full brightness it read as three live controls on a screen
+ * that has none. Dimmed rather than hidden, because hiding it is the 20 px
+ * stage jump the reservation exists to prevent.
+ */
+.touch.idle button { opacity: .45; }
+
+/*
+ * The offer's levers, on touch. The canvas draws REROLL / BANISH / SKIP as
+ * 11-view-px text — 32.7x14.1 CSS px for SKIP on the iPhone 14 profile, and a
+ * tap 8 px under it missed. On a coarse pointer `levelup.ts` draws none of
+ * them and these take the whole row three ways at 48 px. BANISH is two-step
+ * here (tap it, then tap a card) because the desktop gesture — hold Shift and
+ * click — has no thumb equivalent; `.armed` is the state between the taps.
+ */
+.touch .lever {
+  height: 48px;
+  flex: 1 1 0;
+  max-width: none;
+  font-size: 10.5px;
+}
+#touch-banish { color: var(--hot); border-color: rgba(255, 46, 110, .45); background: linear-gradient(180deg, rgba(255,46,110,.10), rgba(11,14,24,.82)); }
+#touch-banish.armed {
+  color: #fff;
+  border-color: var(--hot);
+  background: linear-gradient(180deg, rgba(255,46,110,.4), rgba(11,14,24,.86));
+  box-shadow: 0 0 18px rgba(255, 46, 110, .35);
+}
+.touch button:disabled { opacity: .38; }
 
 .touch-hint { margin: 0; font-size: 11px; color: var(--cool); letter-spacing: .04em; }
 
@@ -522,9 +641,61 @@ body::before {
    */
   background:
     radial-gradient(ellipse 70% 50% at 50% 42%, rgba(5,6,12,.72), rgba(5,6,12,.95) 70%, rgba(3,4,9,.985));
+  /*
+   * A screen scrolls vertically and nothing else. `contain` stops its top
+   * edge handing a downward pan to the root, which is where pull-to-refresh
+   * lives (see `html, body`); `pan-y` keeps the scroll and kills pinch and
+   * double-tap zoom on the one surface `#app`'s rule does not already reach.
+   */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .screen.hidden { display: none; }
+
+/*
+ * The pause screen's buttons. RESUME is the primary and 52 px tall: it is
+ * the control a phone lands on after every notification. The other two are
+ * ghosts at 44, the floor a thumb can hit; `tools/touchcheck.mjs` asserts
+ * nothing tappable on this screen is under it.
+ */
+.pause-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 10px;
+  /*
+   * RESUME takes a row of its own and the two ghosts share the next. Three in
+   * one row was 406 px of buttons on a 366 px screen, so SET LIST wrapped
+   * alone under the other two (photographed on both profiles) — a stray
+   * third button reads as an afterthought, and it is the destructive one.
+   * Capped at 360 so a desktop pause does not paint a window-wide slab.
+   */
+  width: min(100%, 360px);
+}
+.pause-actions button { margin-top: 0; min-height: 44px; flex: 1 1 0; }
+#pause-resume { min-height: 52px; flex: 1 0 100%; }
+/* `.sub` is toggled `hidden` by main.ts for the workbench's "nothing in
+   reach yet" line and nothing styled that state: the line printed under a
+   populated workbench on every pause. Photographed on both phone profiles;
+   the desktop had it too. */
+.screen .sub.hidden { display: none; }
+/* The two-line touch rule replaces the keycap legend on a coarse pointer;
+   see the media block at the foot of the sheet. */
+.touch-rule {
+  display: none;
+  margin: 0;
+  max-width: 34ch;
+  font-size: 11px;
+  line-height: 1.7;
+  letter-spacing: .06em;
+  color: var(--cool);
+  padding: 10px 16px;
+  border: 1px solid rgba(53, 230, 255, .28);
+  border-radius: 8px;
+  background: rgba(53, 230, 255, .06);
+}
 
 .hero { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
@@ -1251,6 +1422,22 @@ kbd {
 }
 .gear:hover { color: var(--cool); border-color: rgba(53,230,255,.45); }
 .gear:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Pause beside the gear: two buttons in a row at the top of the corner
+   column, the pause first because it is the one a thumb reaches for. */
+.hud-buttons { display: flex; gap: 6px; pointer-events: none; }
+#ui-pause { font-size: 11px; letter-spacing: -.1em; color: var(--ink-2); }
+/*
+ * 44 px on a finger. The 34 px above is right beside a mouse cursor — "above
+ * the 24px minimum target size and below the 44px that would make it the
+ * loudest thing in the corner" — and wrong under a thumb: Apple's floor is
+ * 44 pt and Material's 48 dp, and the layout pass measured the gear at 34x34
+ * on both phone profiles. The settings panel's close button is the same
+ * class and gets the same size.
+ */
+@media (pointer: coarse) {
+  .gear { width: 44px; height: 44px; font-size: 20px; }
+  #ui-pause { font-size: 13px; }
+}
 
 /*
  * The settings panel, over the game.
@@ -1712,6 +1899,7 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   .screen button { transition: none; }
+  #touch-levelup { animation: none; }
   .meter .bar i { transition: none; }
   .hud-mult { transition: none; }
   .live i { animation: none; }
@@ -1737,7 +1925,21 @@ kbd {
  * assertion still means what it always meant.
  */
 @media (max-width: 900px), (pointer: coarse) and (max-height: 900px) {
-  #app { padding: 6px; gap: 4px; }
+  /*
+   * The cabinet's 6 px, or the notch, whichever is bigger. `viewport-fit=cover`
+   * has been set since the first phone pass and nothing read the insets back,
+   * so a standalone or fullscreen run on a notched iPhone would have put the
+   * top-right score under the Dynamic Island and the touch row under the home
+   * indicator. `layout()` reads the computed padding, so the stage box follows.
+   */
+  #app {
+    padding:
+      max(6px, env(safe-area-inset-top))
+      max(6px, env(safe-area-inset-right))
+      max(6px, env(safe-area-inset-bottom))
+      max(6px, env(safe-area-inset-left));
+    gap: 4px;
+  }
   #playfield { box-shadow: 0 0 0 1px var(--line), 0 0 60px hsla(var(--hue), 80%, 55%, .10); }
 
   .hud { padding: 7px; }
@@ -1757,11 +1959,17 @@ kbd {
   .powerups { display: none; }
   .settings { inset: 6px; width: auto; max-width: none; }
 
+  /*
+   * 44, not the 40 this used to say. The layout pass flagged all three at
+   * 40x40 on both phone profiles — under the 44 pt / 48 dp floors — and
+   * "premium and polished" does not include a BOMB button a thumb misses.
+   * LEVEL UP and the levers set their own heights above and are not capped.
+   */
   .touch button {
     width: auto;
     flex: 1 1 0;
     max-width: 140px;
-    height: 40px;
+    height: 44px;
   }
 
   .screen {
@@ -1804,6 +2012,18 @@ kbd {
     border-radius: 8px;
     background: rgba(53, 230, 255, .06);
   }
+}
+/*
+ * And the pause screen's legend, which the note above said "keeps its legend
+ * either way: reaching it requires a keyboard in the first place". That
+ * stopped being true the day `visibilitychange` started pausing — a phone
+ * reaches this screen on every notification — and the legend measured wider
+ * than a 390 px screen. Gated on the pointer alone, not the width: a tablet
+ * has no P key either.
+ */
+@media (pointer: coarse) {
+  #pause-screen .controls, #pause-screen .keys-only { display: none; }
+  #pause-screen .touch-rule { display: block; }
 }
 
 /*

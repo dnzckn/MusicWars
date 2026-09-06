@@ -2129,6 +2129,30 @@ export class World {
     return prog.isChoosing(this.progression);
   }
 
+  /**
+   * The player quit, from the pause screen's SET LIST button.
+   *
+   * A phone has no P key and no way to leave a run except the browser's back
+   * gesture, which is a reload; this is the deliberate exit. It ends the run
+   * the way a death does — `phase = 'over'`, so the ~20 `phase !== 'over'`
+   * guards stop the simulation with no edit, and `run:over` with `lost`, so
+   * `main.ts`'s one handler records the run, pays out the waves cleared and
+   * paints the summary exactly as it does for a death. A quit that paid
+   * nothing was considered and rejected: dying pays, dying is always
+   * available, so forfeiting on a quit would only punish the player who used
+   * the button over the one who flew into a wall.
+   *
+   * What it does NOT share with dying is `player:death`. That event is the
+   * director's collapse — tempo sagging, filter closing, every pitched layer
+   * muted — and the music is paused under the set list anyway. `winRun`
+   * makes the same distinction for the opposite reason.
+   */
+  abandonRun(): void {
+    if (this.phase === 'over') return;
+    this.phase = 'over';
+    this.bus.emit('run:over', { score: this.score, wave: this.waveIndex + 1, outcome: 'lost' });
+  }
+
   // -------------------------------------------------------------------------
   // lifecycle
   // -------------------------------------------------------------------------

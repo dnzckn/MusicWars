@@ -271,6 +271,19 @@ export class Input {
   touchBomb = false;
   touchWell = false;
   touchFocus = false;
+  /**
+   * "Show me the level-ups I have banked", from a tap rather than from Space.
+   *
+   * On touch there was NO way to open the offer: `OPEN_OFFER_KEYS` is Space
+   * and nothing else set `openOffers` — the platform audit's critical row, in
+   * the owner's words "the majority audience will play this on the phone".
+   * `main.ts` sets this from the LEVEL UP button in the touch row and from a
+   * tap on the ship's badge; `sample()` reads it once and clears it, exactly
+   * as `touchBomb` is consumed, so one tap is one edge whatever the frame
+   * rate — the same contract the key path has (see `pressed`). The world's
+   * own latch (`offerEdge`) then sees a single rising edge.
+   */
+  pointerOpenOffers = false;
 
   /*
    * THE MOUSE STEER. "holding left or right to turn wth mouse."
@@ -639,11 +652,12 @@ export class Input {
     let banish = this.pointerBanish;
     let reroll = this.pointerReroll;
     let skip = this.pointerSkip;
-    let openOffers = false;
+    let openOffers = this.pointerOpenOffers;
     this.pointerChoice = -1;
     this.pointerBanish = -1;
     this.pointerReroll = false;
     this.pointerSkip = false;
+    this.pointerOpenOffers = false;
     const shifted = this.down.has('ShiftLeft') || this.down.has('ShiftRight');
 
     /*
