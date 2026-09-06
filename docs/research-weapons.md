@@ -108,8 +108,8 @@ evidence (`AGENTS.md` §3). A one-line temporary edit to that emit adding
 `voice: instrumentDef(firedId)?.character.split('—')[0].trim().split(/\s+/)[0]` flipped
 the probe from `0 of 6185` to `6185 of 6185`. The edit was reverted with
 `git checkout -- src/game/world.ts`, `git status --porcelain` is clean apart from
-`.claude/`, and `tsc --noEmit` exits 0. So the probe distinguishes the two states; it
-is not vacuous.
+the untracked agent-config directory, and `tsc --noEmit` exits 0. So the probe
+distinguishes the two states; it is not vacuous.
 
 **Why this belongs in a weapons document.** It changes the cost model this catalogue
 is written against. Adding an instrument costs an `ENSEMBLE_MIX` lane (one line

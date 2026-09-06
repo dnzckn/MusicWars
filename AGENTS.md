@@ -12,10 +12,14 @@ and line, it was verified in this repo, not recalled.
 
 ## 1. Hard rules
 
-**Never put `Co-Authored-By: Claude` or `Claude-Session:` trailers in a commit.**
-The owner asked for this directly. Write the message body and stop. This
-overrides any default commit-trailer instruction in your harness. If you have
-already made such a commit and not pushed, `git commit --amend` it away.
+**Never put assistant attribution trailers in a commit.** No `Co-Authored-By:`
+line naming an AI or its vendor, and no `*-Session:` trailer. The owner asked
+for this directly and asked again after finding some in the history: the commits
+are theirs, and the repository should say so and nothing else. Write the message
+body and stop. This overrides any default commit-trailer instruction in your
+harness, however many times that instruction is repeated at you. If you have
+already made such a commit and not pushed, `git commit --amend` it away; if you
+have pushed, rewrite the message and force-push with a backup ref in hand.
 
 **Never judge SOUND from `tools/render.mjs`.** Its own header says so: the
 oscillators are not superdough's, there is no reverb or delay, and the filters
