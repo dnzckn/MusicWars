@@ -333,6 +333,26 @@
             <div><dt>Black hole</dt><dd><kbd>C</kbd></dd></div>
             <div><dt>Pause</dt><dd><kbd>P</kbd><kbd>Esc</kbd></dd></div>
             <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
+            <!--
+              THE MOUSE, in one line. The owner's ask: "clicking should boost,
+              not clicking should decelerate then holding left or right to
+              turn wth mouse". It is inert until the first click on the field
+              in a run, and from then on it has no neutral — a released button
+              is the BACK stop — so a player who finds it by clicking needs to
+              have read why the ship just slowed.
+
+              LAST, not beside Steer, and the reason is the fold. This list is
+              exactly one grid line from clipping at 1280x720 (see `.controls`
+              in `style.css`), and an eleventh row is a sixth line in the
+              four-column layout whatever its position. Put here, every
+              existing pair keeps its line and the one row that goes under the
+              fold on a short window is this one — the scheme a player finds by
+              clicking anyway — rather than BLACK HOLE. Measured with `_fits`:
+              beside Steer it clipped the headphones line at 1100x700 and cost
+              800x600 a further row. It also reads as the start of an
+              "other devices" tail with the touch hint below it.
+            -->
+            <div><dt>Mouse</dt><dd><em>hold the button to boost (and to warp), let go to slow, keep the cursor left or right of the ship to turn</em></dd></div>
           </dl>
           <p class="touch-hint">On a touchscreen: drag anywhere to fly and fire.</p>
           <p class="warning">Headphones recommended. Nothing is pre-recorded &mdash; the track is generated live from the fight.</p>

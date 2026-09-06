@@ -91,6 +91,58 @@ export interface InputState {
  */
 export const WARP_STICK = 0.92;
 
+/**
+ * The mouse scheme's steering range: the cursor's horizontal offset from the
+ * ship, in VIEW pixels, at which the steer reaches full lock.
+ *
+ * The owner's ask, verbatim: "clicking should boost, not clicking should
+ * decelerate then holding left or right to turn wth mouse". So the button is
+ * the throttle (see `mouseHeld`) and the cursor's side of the ship is the
+ * steer, proportional up to this range and clamped past it.
+ *
+ * CHOSEN, NOT MEASURED, and here is the arithmetic it was chosen on. The
+ * cursor sits still while the ship moves toward it, so the steer is a
+ * proportional controller on the gap: lateral speed is `PLAYER_SPEED *
+ * dx / MOUSE_STEER_RANGE`, which closes the gap with a time constant of
+ * `MOUSE_STEER_RANGE / PLAYER_SPEED` = 120/430 = 0.28 s, on top of the flight
+ * model's 35 ms acceleration half-life. That is an order of magnitude slower
+ * than the velocity damping, so the ship settles under the cursor rather than
+ * hunting around it, and fast enough that a cursor flicked to the far side of
+ * the ship is answered inside a third of a second. A range under the touch
+ * layer's 46 px ramp would make the mouse bang-bang — full lock for any
+ * cursor not on the ship — which is a keyboard with worse ergonomics; a range
+ * over ~250 would leave the ship lagging a cursor a quarter-screen away at
+ * half speed. Nobody has flown it by hand yet; when someone does, this is the
+ * number to move.
+ *
+ * VIEW pixels, and the cursor is kept in view space too — not world space
+ * like the touch target — for a reason that was measured rather than
+ * foreseen. The camera FOLLOWS the ship across the track (`camera.ts`,
+ * `follow`), so a cursor converted to world space at its last `pointermove`
+ * goes stale the moment the ship moves and the camera pans after it; a still
+ * mouse sends no further events. The first draft stored world x and the ship
+ * stopped 19 px short of a cursor 200 px to its right after a 2 s hold — the
+ * camera had panned 11 px and the ship was inside the dead zone of a point
+ * that was no longer under the pointer. In view space the cursor's offset is
+ * `mouseX - (shipX - viewX)`, re-evaluated every step against wherever the
+ * camera is now, and `main.ts` hands `viewX` over beside `shipX`. View rather
+ * than screen pixels so the feel does not change with the window; `main.ts`
+ * converts through the same `toView` the offer's hit test uses.
+ */
+export const MOUSE_STEER_RANGE = 120;
+
+/**
+ * Cursor offsets smaller than this steer nothing, in view pixels.
+ *
+ * A hand resting on a mouse is not still to the pixel, and without a dead
+ * zone the ship would twitch a pixel left and right for as long as the cursor
+ * sat on it. 10 view px is about 10 screen px at a 1440-wide window
+ * (`viewForStage` gives zoom 1 there) — under the width of a cursor arrow,
+ * over any tremor. Kept well under the range so the proportional band still
+ * covers 92% of its travel.
+ */
+export const MOUSE_DEAD_ZONE = 10;
+
 const MOVE_KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
@@ -151,6 +203,68 @@ export class Input {
   touchBomb = false;
   touchWell = false;
   touchFocus = false;
+
+  /*
+   * THE MOUSE SCHEME. "clicking should boost, not clicking should decelerate
+   * then holding left or right to turn wth mouse."
+   *
+   * Three pieces of state, all written by `main.ts`'s pointer handlers and
+   * READ here in `sample()` — the same shape as `pointerTarget`, so the
+   * per-step contract on `sample()` (idempotent for held state) holds for the
+   * mouse for free: nothing here is an edge.
+   *
+   * ENGAGED is the piece that keeps this from being a regression for everyone
+   * else. Before the first mouse-button press on the field during a run the
+   * mouse is exactly as inert as it was — a keyboard player who never clicks
+   * never meets this, and a mouse resting on the desk cannot steer. Once
+   * engaged it stays engaged for the run, because the scheme has no neutral:
+   * released is the BACK stop, not "no input", and flipping in and out of
+   * that on some heuristic would have the ship lurching between cruise and
+   * brake on its own. `main.ts` resets it in `startRun`.
+   *
+   * HELD is the throttle. Down is the forward stop, up is the back stop —
+   * the two ends of the one axis `World` reads warp from, so holding the
+   * button for `WARP_ARM` warps exactly as holding W does, and a held release
+   * drops it exactly as holding S does. No new mode, no new gate: the gauge,
+   * the banner and `tools/warp.mjs`'s measurements all apply unchanged.
+   *
+   * X is the cursor in VIEW space (see `MOUSE_STEER_RANGE` for why not world
+   * space), or null while it is off the stage. Only the horizontal offset
+   * from the ship is read ("holding left or right to turn"); the vertical is
+   * ignored because the button already owns the fore-and-aft axis and a
+   * cursor that also throttled would fight it.
+   */
+  private mouseEngaged = false;
+  private mouseHeld = false;
+  private mouseX: number | null = null;
+
+  /** True once a mouse click on the field has taken the ship this run. */
+  get mouseActive(): boolean {
+    return this.mouseEngaged;
+  }
+
+  /** The deliberate act: the first primary-button press on the field, at view x. */
+  engageMouse(viewX: number): void {
+    this.mouseEngaged = true;
+    this.mouseX = viewX;
+  }
+
+  /** The primary button's state; the throttle while engaged. */
+  setMouseHeld(held: boolean): void {
+    this.mouseHeld = held;
+  }
+
+  /** The cursor's view x, or null when it has left the stage. */
+  setMouseX(viewX: number | null): void {
+    this.mouseX = viewX;
+  }
+
+  /** A new run: the mouse is inert again until it is clicked. */
+  resetMouse(): void {
+    this.mouseEngaged = false;
+    this.mouseHeld = false;
+    this.mouseX = null;
+  }
 
   private down = new Set<string>();
   /**
@@ -243,6 +357,13 @@ export class Input {
   /** The ship's current position, so pointer steering knows where it is. */
   shipX = 450;
   shipY = 560;
+  /**
+   * The camera's left edge, in world px, so the mouse cursor — held in VIEW
+   * space — can be compared with the ship, which is in world space. Set by
+   * `main.ts` every step beside `shipX`; the touch target does not need it
+   * because it is stored in world space and compared there.
+   */
+  viewX = 0;
 
   constructor(target: EventTarget = window) {
     target.addEventListener('keydown', (e) => {
@@ -257,6 +378,10 @@ export class Input {
     target.addEventListener('blur', () => {
       this.down.clear();
       this.pressed.clear();
+      // The mouse button goes the way the keys do: a window that lost focus
+      // will never see the pointerup. Engagement stays — the ship simply
+      // falls to the back stop, which is what an unheld button means.
+      this.mouseHeld = false;
     });
     window.addEventListener('gamepadconnected', (e) => {
       this.gamepadIndex = (e as GamepadEvent).gamepad.index;
@@ -306,12 +431,51 @@ export class Input {
         y += (dy / d) * speed;
       }
     }
+    /** A fore-or-aft key is down, so the keyboard owns the throttle this step. */
+    let keyThrottle = false;
     for (const code of this.down) {
       const v = MOVE_KEYS[code];
       if (v) {
         x += v[0];
         y += v[1];
+        if (v[1] !== 0) keyThrottle = true;
       }
+    }
+
+    if (this.mouseEngaged) {
+      /*
+       * THE CURSOR'S SIDE OF THE SHIP IS THE STEER.
+       *
+       * Proportional to the horizontal gap up to `MOUSE_STEER_RANGE`, dead
+       * inside `MOUSE_DEAD_ZONE`, and null — steer 0 — while the cursor is
+       * off the stage: a pointer that has left the window is not pointing at
+       * anything, and the last x it was seen at is a guess about the player's
+       * intent that would keep the ship turning toward a wall.
+       *
+       * A/D ADD to it and the sum is CLAMPED, before the normalise below. The
+       * normalise alone would not do: it scales x and y together, so D held
+       * on top of a full-lock cursor would push x to 2 and come out of the
+       * hypot as a MORE lateral heading than full lock — the steer is a
+       * position, not a sum, for the same reason the throttle is.
+       */
+      if (this.mouseX !== null) {
+        // Cursor (view) against the ship's VIEW position, so a panning camera
+        // cannot leave a still cursor pointing at a stale world x.
+        const dx = this.mouseX - (this.shipX - this.viewX);
+        if (Math.abs(dx) > MOUSE_DEAD_ZONE) x += Math.max(-1, Math.min(1, dx / MOUSE_STEER_RANGE));
+      }
+      x = Math.max(-1, Math.min(1, x));
+      /*
+       * THE BUTTON IS THE THROTTLE, and the keys win while one is down.
+       *
+       * Held is the forward stop and released is the BACK stop — not zero.
+       * "not clicking should decelerate" is the ask, and a released button
+       * that meant cruise would make the mouse a boost key rather than a
+       * throttle. W/S/arrows override it for as long as they are held so a
+       * player who reaches for the keyboard mid-fight gets the keyboard, and
+       * the mouse resumes the instant they let go.
+       */
+      if (!keyThrottle) y += this.mouseHeld ? -1 : 1;
     }
 
     // Touch state first; the keyboard scan below ORs on top of it.

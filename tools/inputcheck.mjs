@@ -421,6 +421,181 @@ console.log('\nC2. the throttle axis survives the diagonal normalise');
 }
 
 // ---------------------------------------------------------------------------
+// C3. The mouse scheme. "clicking should boost, not clicking should decelerate
+//     then holding left or right to turn wth mouse."
+//
+//     `main.ts` writes three pieces of state (`engageMouse`, `setMouseHeld`,
+//     `setMouseX`) and `sample()` folds them into the SAME axes the keys
+//     drive, so nothing downstream — the flight model, warp, the gauge — knows
+//     a mouse exists. What has to hold, none of it visible from the browser:
+//
+//       1. The button IS the throttle axis warp reads. Held is the forward
+//          stop; released is the BACK stop, not zero ("not clicking should
+//          decelerate"). A released button that read 0 would make the mouse a
+//          boost key, and warp would be unleavable from it.
+//       2. Before the click the mouse is INERT — a held button and an offset
+//          cursor produce nothing — so a keyboard player is not regressed by a
+//          mouse resting on the desk, and `resetMouse` (a new run) puts it back.
+//       3. Keys win while held, and the mouse resumes when they let go.
+//       4. The cursor's horizontal offset steers: proportional to the range,
+//          clamped past it, dead near the ship, zero off the stage; A/D add to
+//          it and the SUM is clamped. And the offset is taken from the ship's
+//          VIEW position — the camera follows the ship across the track, and
+//          a still cursor must keep pointing where it points.
+//       5. Touch keeps its path and its UI switch (`touchActive`), and the
+//          mouse path never flips that switch.
+//
+//     THE STEER IS READ BACK THROUGH THE NORMALISE, and this is the one piece
+//     of arithmetic the check has to know. `x` is divided by `hypot(x, y)` when
+//     that exceeds 1, and with the mouse engaged y is pinned at ±1 (by the
+//     button or by a held key), so a full-lock cursor comes out as x = 0.707 —
+//     the same number W+D gives, which is correct: a diagonal is not faster.
+//     The pre-normalise steer is recovered as `x / |y|`, because both were
+//     divided by the same length and |y| was exactly 1 before it. That makes
+//     the clamp assertion real rather than satisfied by the normalise: an
+//     UNCLAMPED D-plus-full-lock sum is (2, 1) → (0.894, 0.447) and reads 2
+//     here, where the clamped (1, 1) → (0.707, 0.707) reads 1.
+//
+//     SEEN RED, per assertion, by mutating `src/core/input.ts` one defect at
+//     a time and restoring it byte-identical (a scratch script, deleted;
+//     2026-09-05). Eleven mutations, seventeen assertions, every one red at
+//     least once, all at 0/240 unless noted:
+//       - gate removed (`if (this.mouseEngaged)` → `if (true)`):
+//           "not engaged … inert", "resetMouse (a new run)", and "touch drag
+//           … x +1" — the un-engaged touch input inherited a mouse throttle
+//       - throttle sign flipped (`mouseHeld ? -1 : 1` → `? 1 : -1`):
+//           "button held … forward stop", "released … AFT",
+//           "W let go … resumes", "cursor off the stage"
+//       - `!keyThrottle` dropped: "W held over a released mouse",
+//           "S held over a held button"
+//       - range doubled: "cursor +120 … steer +1", "60 px left … -0.5", and
+//           "A held plus a full-lock cursor" (0.5 - 1 is not 0)
+//       - both clamps removed: "360 px right … clamped",
+//           "D held plus a full-lock cursor" (reads 2, as predicted above)
+//       - dead zone removed: "inside the 10 px dead zone"
+//       - key x ignored while engaged: "A held plus a full-lock cursor", and
+//           the dead zone again (the rewrite dropped it too)
+//       - camera ignored (`shipX - viewX` → `shipX`): "camera panned … view
+//           space, not world" — the defect the browser pass found first
+//       - null check removed (null coerces to x = 0, i.e. 450 px left of the
+//           ship): "cursor off the stage"
+//       - `resetMouse` left `mouseEngaged` set: "resetMouse (a new run)"
+//       - `engageMouse` set `touchActive`: "never set touchActive" (read true)
+//       - `setPointerTarget` no longer set `touchActive`, and its `d > 3`
+//           arrive test raised to 3000: "touch drag … x +1",
+//           "touch drag set touchActive" (read false)
+// ---------------------------------------------------------------------------
+console.log('\nC3. the mouse scheme: the button is the throttle, the cursor side is the steer');
+{
+  const { MOUSE_STEER_RANGE, MOUSE_DEAD_ZONE, WARP_STICK } = await import('../src/core/input.ts');
+  const SAMPLES = 240;
+  /** Samples on which `pred` held, over SAMPLES steps at 4 per frame. */
+  const run = (input, pred) => {
+    let n = 0;
+    for (let i = 0; i < SAMPLES; i++) {
+      const st = input.sample();
+      if (pred(st)) n++;
+      if (i % 4 === 3) frameBoundary(input);
+    }
+    return n;
+  };
+  /** The pre-normalise steer, recovered as described above. */
+  const steerOf = (st) => (Math.abs(st.y) < 1e-9 ? st.x : st.x / Math.abs(st.y));
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  const zero = (v) => Math.abs(v) < 1e-9;
+
+  // 2. Inert before the click: everything set EXCEPT engagement.
+  const idle = new Input(win);
+  idle.setMouseHeld(true);
+  idle.setMouseX(idle.shipX + MOUSE_STEER_RANGE);
+  const inert = run(idle, (st) => zero(st.throttle) && zero(st.x));
+  check(
+    inert === SAMPLES,
+    `not engaged: a held button and a cursor ${MOUSE_STEER_RANGE} px off are inert (throttle 0, x 0) on ${inert}/${SAMPLES}`,
+  );
+
+  // 1. The button is the throttle.
+  const input = new Input(win);
+  input.engageMouse(input.shipX); // the click, on the ship
+  input.setMouseHeld(true);
+  const fwd = run(input, (st) => st.throttle >= WARP_STICK);
+  check(fwd === SAMPLES, `engaged, button held: throttle at the forward stop on ${fwd}/${SAMPLES} ("clicking should boost")`);
+  input.setMouseHeld(false);
+  const aft = run(input, (st) => st.throttle <= -WARP_STICK);
+  check(aft === SAMPLES, `engaged, button released: throttle at the AFT stop on ${aft}/${SAMPLES} ("not clicking should decelerate")`);
+
+  // 3. Keys win while held; the mouse resumes.
+  keydown('KeyW');
+  const wWins = run(input, (st) => st.throttle >= WARP_STICK);
+  check(wWins === SAMPLES, `W held over a released mouse: throttle +1 on ${wWins}/${SAMPLES} (keys win)`);
+  keyup('KeyW');
+  const resumed = run(input, (st) => st.throttle <= -WARP_STICK);
+  check(resumed === SAMPLES, `W let go: the mouse throttle resumes at -1 on ${resumed}/${SAMPLES}`);
+  input.setMouseHeld(true);
+  keydown('KeyS');
+  const sWins = run(input, (st) => st.throttle <= -WARP_STICK);
+  check(sWins === SAMPLES, `S held over a held button: throttle -1 on ${sWins}/${SAMPLES} (warp is still leavable from the keyboard)`);
+  keyup('KeyS');
+
+  // 4. The cursor side steers. Button released, so |y| = 1 from the mouse alone.
+  input.setMouseHeld(false);
+  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
+  const full = run(input, (st) => near(steerOf(st), 1));
+  check(full === SAMPLES, `cursor +${MOUSE_STEER_RANGE} px right of the ship: steer +1 on ${full}/${SAMPLES}`);
+  input.setMouseX(input.shipX - MOUSE_STEER_RANGE / 2);
+  const half = run(input, (st) => near(steerOf(st), -0.5));
+  check(half === SAMPLES, `cursor ${MOUSE_STEER_RANGE / 2} px left: steer -0.5 on ${half}/${SAMPLES} (proportional)`);
+  input.setMouseX(input.shipX + MOUSE_STEER_RANGE * 3);
+  const far = run(input, (st) => near(steerOf(st), 1));
+  check(far === SAMPLES, `cursor ${MOUSE_STEER_RANGE * 3} px right: steer clamped to +1 on ${far}/${SAMPLES}`);
+  const inside = Math.floor(MOUSE_DEAD_ZONE * 0.9);
+  input.setMouseX(input.shipX + inside);
+  const dead = run(input, (st) => zero(st.x));
+  check(dead === SAMPLES, `cursor ${inside} px right, inside the ${MOUSE_DEAD_ZONE} px dead zone: steer 0 on ${dead}/${SAMPLES}`);
+  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
+  keydown('KeyD');
+  const summed = run(input, (st) => near(steerOf(st), 1));
+  check(summed === SAMPLES, `D held plus a full-lock cursor right: steer 1 on ${summed}/${SAMPLES} (the sum is clamped; unclamped reads 2)`);
+  keyup('KeyD');
+  keydown('KeyA');
+  const cancelled = run(input, (st) => zero(st.x));
+  check(cancelled === SAMPLES, `A held plus a full-lock cursor right: steer 0 on ${cancelled}/${SAMPLES} (the key ADDS)`);
+  keyup('KeyA');
+  /*
+   * THE CAMERA PANS AND THE CURSOR DOES NOT MOVE. The cursor is a VIEW x and
+   * the ship a world x; with the camera's left edge at `viewX` the ship is
+   * drawn at `shipX - viewX`, so a cursor sitting exactly on the ship's world
+   * x is half a range to its RIGHT once the camera has panned half a range
+   * left. Stored in world space (the first draft) this reads 0 — the ship
+   * stopped 19 px short of a still cursor in the browser, because the camera
+   * had followed it and the cursor's world x was the one from the last event.
+   */
+  input.setMouseX(input.shipX);
+  input.viewX = MOUSE_STEER_RANGE / 2;
+  const panned = run(input, (st) => near(steerOf(st), 0.5));
+  check(panned === SAMPLES, `camera panned ${MOUSE_STEER_RANGE / 2} px with the cursor still: steer +0.5 on ${panned}/${SAMPLES} (view space, not world)`);
+  input.viewX = 0;
+  input.setMouseX(null);
+  const left = run(input, (st) => zero(st.x) && st.throttle <= -WARP_STICK);
+  check(left === SAMPLES, `cursor off the stage: steer 0 while the throttle stays at its stop on ${left}/${SAMPLES}`);
+
+  // 2 again. A new run puts the mouse back to inert.
+  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
+  input.setMouseHeld(true);
+  input.resetMouse();
+  const reset = run(input, (st) => zero(st.throttle) && zero(st.x));
+  check(reset === SAMPLES, `resetMouse (a new run): throttle 0, x 0 on ${reset}/${SAMPLES}`);
+
+  // 5. The mouse never flips the UI's touch switch; touch still does, and still steers.
+  check(input.touchActive === false, `the mouse path never set touchActive (want false): ${input.touchActive}`);
+  const touch = new Input(win);
+  touch.setPointerTarget(touch.shipX + 100, touch.shipY);
+  const dragged = run(touch, (st) => st.x > 0.99 && st.shoot);
+  check(dragged === SAMPLES, `touch drag 100 px right: x +1 and firing on ${dragged}/${SAMPLES} (unchanged)`);
+  check(touch.touchActive === true, `touch drag set touchActive (want true): ${touch.touchActive}`);
+}
+
+// ---------------------------------------------------------------------------
 // D. The other edge paths: the offer cards, and the gamepad.
 // ---------------------------------------------------------------------------
 console.log('\nD. the remaining edge actions, 2 steps per frame (the 60 Hz case)');

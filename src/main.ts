@@ -365,6 +365,72 @@ function routeOfferPointer(e: PointerEvent): boolean {
   return true;
 }
 
+/*
+ * THE MOUSE SCHEME. The owner's ask, verbatim: "clicking should boost, not
+ * clicking should decelerate then holding left or right to turn wth mouse".
+ *
+ * The state lives in `Input` (`engageMouse` / `setMouseHeld` / `setMouseX`)
+ * and is read in `sample()` beside the touch target; these handlers only
+ * translate events. Three decisions are made here rather than there, because
+ * they are about the page and not about the axis:
+ *
+ * ENGAGEMENT IS A CLICK ON THE FIELD, IN A RUN. Not a click on the START
+ * button (the title screen is inside `#stage`, so that pointerdown bubbles
+ * through here — `inRun` is still false at that instant), not a click on a
+ * level-up card (`routeOfferPointer` consumes it first), not a click on the
+ * pause screen or the game-over screen, and not a click on the HUD's gear —
+ * `onField` requires the event to have landed on a canvas or the stage itself.
+ * A keyboard player who picks cards with the mouse must never find their ship
+ * at the back stop because the scheme took an offer click as the deliberate
+ * act; and a mouse that is merely resting on the desk must not steer. Once
+ * engaged, HELD is tracked physically — any primary-button press over the
+ * stage, and the `buttons` bit on every move, so a release that happened over
+ * another window is caught the moment the cursor comes back.
+ *
+ * ONLY THE PRIMARY BUTTON BOOSTS, and the context menu is suppressed while
+ * engaged so a right-click mid-fight does not open a menu over the field. A
+ * right-click before engagement is inert and opens the menu as it always did.
+ *
+ * NO POINTER CAPTURE for the mouse. Capture suppresses `pointerleave`, and the
+ * steer must go to 0 when the cursor leaves the stage; a release outside the
+ * stage is caught by the `window` listener below instead. The touch path keeps
+ * its capture because a dragging finger has no leave semantics worth keeping.
+ *
+ * `toView`, NOT `toWorld`, and this is the one place the two callers below
+ * genuinely differ. The touch target is a point in the simulation the finger
+ * is dragging toward; the cursor is a point on the SCREEN the ship is steered
+ * beside, and the camera follows the ship across the track, so a cursor fixed
+ * in world space at its last event drifts away from the pointer as the camera
+ * pans — measured as the ship stopping 19 px short of a still cursor. `Input`
+ * compares the view x against `shipX - viewX`, which the update hook feeds it
+ * every step.
+ *
+ * `preventDefault` only when the press landed on the field: the volume slider
+ * and the HUD's buttons live inside `#stage`, and cancelling their pointerdown
+ * would kill the slider's native drag.
+ */
+/** Did this pointer event land on the field itself, not on a control over it? */
+function onField(e: Event): boolean {
+  return e.target === stage || e.target === playfield || e.target === overlay;
+}
+
+/** A mouse press over the stage is a control input only while a run is live. */
+function mouseLive(): boolean {
+  return inRun && !paused && !world.isOver && !world.choosing;
+}
+
+function mousePointerDown(e: PointerEvent): void {
+  if (e.button !== 0) return;
+  if (!input.mouseActive) {
+    if (!mouseLive() || !onField(e)) return;
+    input.engageMouse(toView(e).x);
+  } else {
+    input.setMouseX(toView(e).x);
+  }
+  input.setMouseHeld(true);
+  if (onField(e)) e.preventDefault();
+}
+
 stage.addEventListener('pointerdown', (e) => {
   // Mouse included, deliberately: the offer is the one screen a desktop player
   // is expected to click, and the steering path below ignores mice entirely.
@@ -372,7 +438,10 @@ stage.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     return;
   }
-  if (e.pointerType === 'mouse') return;
+  if (e.pointerType === 'mouse') {
+    mousePointerDown(e);
+    return;
+  }
   if (touchControls.classList.contains('hidden')) {
     touchControls.classList.remove('hidden');
     // The row is a sibling below the stage, so revealing it takes height away
@@ -391,7 +460,14 @@ stage.addEventListener('pointerdown', (e) => {
   e.preventDefault();
 });
 stage.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'mouse') return;
+  if (e.pointerType === 'mouse') {
+    if (!input.mouseActive) return;
+    input.setMouseX(toView(e).x);
+    // The physical truth of the button, which `pointerup` alone cannot give:
+    // a release over another window never reaches this page's listeners.
+    input.setMouseHeld((e.buttons & 1) !== 0);
+    return;
+  }
   // Do not steer while an offer is open. The world is paused, so a drag across
   // the cards would bank up a heading the ship then takes the instant play
   // resumes — the player would arrive back in the fight somewhere they did not
@@ -409,6 +485,20 @@ const releasePointer = (e: PointerEvent) => {
 };
 stage.addEventListener('pointerup', releasePointer);
 stage.addEventListener('pointercancel', releasePointer);
+// Off the stage, the cursor points at nothing: steer 0, throttle untouched.
+stage.addEventListener('pointerleave', (e) => {
+  if (e.pointerType === 'mouse') input.setMouseX(null);
+});
+// On `window`, not the stage: a button let go over the HUD, the page margin or
+// the browser chrome is still let go. Cheap enough to run unconditionally.
+const releaseMouse = (e: PointerEvent) => {
+  if (e.pointerType === 'mouse' && e.button === 0) input.setMouseHeld(false);
+};
+window.addEventListener('pointerup', releaseMouse);
+window.addEventListener('pointercancel', releaseMouse);
+stage.addEventListener('contextmenu', (e) => {
+  if (input.mouseActive) e.preventDefault();
+});
 
 const bindTouchButton = (id: string, press: () => void, hold?: (down: boolean) => void) => {
   const el = document.getElementById(id)!;
@@ -895,9 +985,11 @@ const loop = new Loop({
     const injected = import.meta.env.DEV
       ? ((window as unknown as Record<string, unknown>).__botInput as typeof input.state | null)
       : null;
-    // Pointer steering needs to know where the ship is to steer toward a point.
+    // Pointer steering needs to know where the ship is to steer toward a point;
+    // the mouse cursor is held in view space, so it also needs the camera.
     input.shipX = world.player.x;
     input.shipY = world.player.y;
+    input.viewX = world.camera.viewX;
     const state = injected ?? input.sample();
     /*
      * THE ONE INBOUND EDGE OF THE GAME/MUSIC BOUNDARY.
@@ -1248,6 +1340,9 @@ async function startRun(): Promise<void> {
    */
   world.stage = selectedStage;
   world.unlocked = forceFullRoster ? null : unlockedRoster(meta);
+  // The mouse is inert again until it is clicked on the field: the AGAIN and
+  // START clicks that bring a player here are not that click.
+  input.resetMouse();
   hideScreens();
   // Drop the victory treatment with the screen. It is re-decided on the next
   // `run:over` either way, but a hidden element carrying the previous run's

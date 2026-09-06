@@ -763,8 +763,21 @@ body::before {
  * to the markup and no reordering. The order still puts the four a new player
  * needs first, so a window short enough to clip even this loses the least.
  */
+/*
+ * THE ELEVENTH ROW. The Mouse row ("clicking should boost, not clicking should
+ * decelerate then holding left or right to turn wth mouse") is a sixth line in
+ * this layout whatever its position, and the fit above had no line to spare:
+ * measured before it, 1280x720 was 700px of content in a 700px box and
+ * 1100x700 was 680 in 680. With it, 712 in 700 and 730 in 680 — the headphones
+ * line clipped. Two pixels of row gap and three of top margin here, and two of
+ * screen gap in the 780px block below, are what puts both back to exactly 0
+ * overflow with nothing clipped (a scratch harness injecting each candidate
+ * and measuring; row gap alone left 20px, screen gap alone 12px). 800x600 was
+ * already clipping four items before the row and now clips three: the mouse
+ * row itself goes under the fold there, and PAUSE and VOLUME come back.
+ */
 @media (max-height: 900px) {
-  .controls { grid-template-columns: auto auto auto auto; gap: 6px 14px; }
+  .controls { grid-template-columns: auto auto auto auto; gap: 4px 14px; margin-top: 3px; }
 }
 /*
  * And the last 65px, at the sizes that still need it.
@@ -777,7 +790,8 @@ body::before {
  * 9px — the smallest thing touched here is the 13px tagline.
  */
 @media (max-height: 780px) {
-  #title-screen { gap: 8px; padding: 14px 24px; }
+  /* 6px, from 8: the Mouse row's share — see the block above. */
+  #title-screen { gap: 6px; padding: 14px 24px; }
   #title-screen .hero { gap: 6px; }
   #title-screen .tagline { font-size: 12px; line-height: 1.5; }
   #title-screen .warning { line-height: 1.4; }

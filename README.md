@@ -42,7 +42,9 @@ npm install && npm run dev
 ```
 
 Then open <http://localhost:5173>. The ship never stops: **W**/**S** are a
-throttle, **A**/**D** or the arrows steer, and the band fires on its own.
+throttle, **A**/**D** or the arrows steer, and the band fires on its own. With a
+mouse, hold the button to boost (and to warp), release it to slow down, and
+keep the cursor left or right of the ship to turn.
 **Shift** focuses, **X** bombs, **C** opens a black hole, and **Space** spends
 the level-ups you have banked. Hold **W** for 1.4 s to WARP — the wave clock
 runs about 9× faster, the stage floods, and the boss comes sooner.
