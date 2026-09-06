@@ -1,14 +1,18 @@
-# Deploy the game to GitHub Pages on every push to master.
+# Publish the game to GitHub Pages on every push to master.
 #
-# Why a workflow and not a gh-pages branch of built files: the built bundle is
-# ~1 MB of minified JavaScript that changes on every commit, and a branch of it
-# is a second history nobody reads. The workflow builds from source on the
-# runner and hands `dist/` to Pages; the repository stays source only.
+# THE SITE IS SERVED FROM THE `gh-pages` BRANCH, and the reason is measured:
+# the first version of this workflow used the "GitHub Actions" Pages source
+# (`configure-pages` + `deploy-pages`), which needs the repository's Pages
+# source set by hand in Settings → Pages, and the workflow's own token is not
+# allowed to create the site — two runs failed at exactly that step. Pushing a
+# `gh-pages` branch instead switched Pages on by itself (`has_pages` false →
+# true within a minute of the push, the site answering 200), which is the
+# behaviour GitHub has kept for that branch name since the beginning. So the
+# runner builds from source and force-pushes `dist/` onto `gh-pages` as a
+# single orphan commit: the branch is a build artefact, not a history, and
+# nobody reads it.
 #
-# One-time setting if the first run reports "Get Pages site failed": in the
-# repository's Settings → Pages, set Source to "GitHub Actions". The
-# `enablement: true` below asks the token to do that itself and works on
-# public repositories.
+# `npm run build` runs the typecheck first, so a red tree does not publish.
 name: pages
 
 on:
@@ -17,16 +21,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,21 +37,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # The typecheck is part of `npm run build`; a red tree does not deploy.
       - run: npm run build
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish dist to gh-pages
+        run: |
+          set -e
+          cd dist
+          touch .nojekyll
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Pages: built from ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages:gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
