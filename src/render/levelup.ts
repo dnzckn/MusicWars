@@ -49,6 +49,7 @@ import type { AbilityId, AbilitySlot, EvolvedId, GameSnapshot, GraceKind } from 
 import { clamp01, TAU } from '../core/math';
 import { coarsePointer } from '../core/platform';
 import { TOTAL_WAVES } from '../game/waves';
+import { fitFont, font } from './type';
 import {
   DUET_INPUT_LEVEL,
   FUSIONS,
@@ -663,6 +664,22 @@ export class LevelUpOverlay {
    */
   private static readonly CARD_MAX_W = 1000;
 
+  /**
+   * Cards narrower than this take the row layout (`drawCardNarrow`). In CSS
+   * px, since `layout` runs in them: a card is `0.876 · W`, so this is every
+   * window under 594 px wide — the phones (332 on the iPhone 14 profile, 350
+   * on the Pixel 7, 305 at 360 wide) and no desktop window anyone plays in.
+   */
+  private static readonly NARROW_W = 520;
+
+  /**
+   * Word-wrapped lines, memoised: the narrow card wraps four notes to three
+   * lines every frame, and a search for the break point is dozens of
+   * `measureText` calls per line. Keyed on the text, the width, the line cap
+   * and the font, cleared when an offer opens.
+   */
+  private wrapCache = new Map<string, string[]>();
+
   /* ---------------------------------------------------------------- state */
 
   /**
@@ -680,6 +697,7 @@ export class LevelUpOverlay {
     this.rerolls = payload.rerolls ?? null;
     this.banishes = payload.banishes ?? null;
     this.age = 0;
+    this.wrapCache.clear();
     this.exiting = false;
     this.exitAge = 0;
     this.chosen = -1;
@@ -884,9 +902,12 @@ export class LevelUpOverlay {
    */
   hitTest(px: number, py: number): number {
     if (!this.cards || this.exiting) return -1;
+    // View px in, layout px inside: see `u` on `draw`.
+    const x = px / this.u;
+    const y = py / this.u;
     for (let i = 0; i < this.cards.length; i++) {
       const c = this.cards[i];
-      if (px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h) return i;
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) return i;
     }
     return -1;
   }
@@ -901,7 +922,10 @@ export class LevelUpOverlay {
    * layout is private.
    */
   rects(): { x: number; y: number; w: number; h: number }[] {
-    return (this.cards ?? []).map((c) => ({ x: c.x, y: c.y, w: c.w, h: c.h }));
+    // In VIEW px, the space `main.ts` converts a tap into and every tool
+    // measures in, whatever `u` the layout ran at.
+    const u = this.u;
+    return (this.cards ?? []).map((c) => ({ x: c.x * u, y: c.y * u, w: c.w * u, h: c.h * u }));
   }
 
   /** What each card resolved to, for the same reason. */
@@ -918,13 +942,22 @@ export class LevelUpOverlay {
   /** The levers, in the same coordinate space. */
   hitTestControl(px: number, py: number): 'reroll' | 'banish' | 'skip' | null {
     if (!this.cards || this.exiting) return null;
+    const x = px / this.u;
+    const y = py / this.u;
     for (const c of this.controls) {
-      if (px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h) {
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) {
         return c.label.toLowerCase() as 'reroll' | 'banish' | 'skip';
       }
     }
     return null;
   }
+
+  /**
+   * View px per LAYOUT px — see `draw`. 1 until the renderer says otherwise,
+   * which is also what the node harnesses (`tools/levelupdraw.mjs`) get, so
+   * their arithmetic is unchanged.
+   */
+  private u = 1;
 
   /* -------------------------------------------------------------- drawing */
 
@@ -936,6 +969,28 @@ export class LevelUpOverlay {
    * renderer's decaying beat lamp; both are passed in rather than recomputed so
    * this screen keeps time with the enemies rather than near them.
    */
+  /**
+   * `u` is VIEW px per CSS px (`Renderer.viewPerCss`, 1 by default), and
+   * THIS PANEL LAYS ITSELF OUT IN CSS PX. The view is zoomed — `viewForStage`
+   * keeps √(w·h) in [1004, 1240] — so a layout in view px is a different
+   * physical size at every window: at 1440x900 a 13 px note is 13 CSS px,
+   * and on the iPhone 14 profile it was 7, with the card's title at 11 and
+   * the lever row at 6 (the layout pass measured every one of them; the
+   * levers are DOM buttons now, `main.ts`). A card is a thing the player
+   * READS, for seconds at a time, on the screen whose whole job is a
+   * decision — so it is sized in the unit a person reads in, the same rule
+   * the run bar and the banner follow, and then the arithmetic below is the
+   * arithmetic it always was: `W` and `H` arrive divided by `u`, the context
+   * is scaled by `u`, and everything drawn is a CSS px. At 1440x900 `u` is 1
+   * and nothing here changes. `hitTest`/`rects`/`hitTestControl` convert at
+   * the boundary so `main.ts` and every tool keep talking in view px.
+   *
+   * Rejected: scaling only the fonts and leaving the geometry in view px. On
+   * the phone that gives 84 CSS px cards holding 24 CSS px type, which is
+   * two lines of note and nothing else; in CSS px the `CARD_MAX_W` and
+   * 155 px height clamps mean what they say and the cards come out 104 px
+   * tall on a 390x844 phone, 78 (the floor) on the 664-tall Safari variant.
+   */
   draw(
     g: CanvasRenderingContext2D,
     snap: GameSnapshot,
@@ -944,16 +999,23 @@ export class LevelUpOverlay {
     H: number,
     beat: number,
     pulse: number,
+    u = 1,
   ): void {
     this.step(dt);
+    this.u = Math.max(0.05, u);
+    const Wc = W / this.u;
+    const Hc = H / this.u;
+    g.save();
+    g.scale(this.u, this.u);
     if (this.cards) {
       // The falling edge of `choosing` closes the screen whatever the events
       // did or did not say. See the note on `sawChoosing`.
       if (snap.choosing) this.sawChoosing = true;
       else if (this.sawChoosing && !this.exiting) this.resolve(this.chosen);
-      this.drawOffer(g, snap, W, H, beat, pulse);
+      this.drawOffer(g, snap, Wc, Hc, beat, pulse);
     }
-    if (this.celebrations.length) this.drawCelebrations(g, W, H);
+    if (this.celebrations.length) this.drawCelebrations(g, Wc, Hc);
+    g.restore();
   }
 
   private step(dt: number): void {
@@ -1127,14 +1189,14 @@ export class LevelUpOverlay {
      * guessed advance width so it stays put in whatever font resolves.
      */
     const heading = `LEVEL ${this.offerLevel}`;
-    g.font = `800 ${(30 * k).toFixed(1)}px ui-monospace, monospace`;
+    g.font = font(800, 30 * k, 1);
     const headW = g.measureText(heading).width;
     g.fillStyle = `rgba(240,246,255,${a})`;
     g.fillText(heading, cx, y + 42 * k);
 
     if (this.queued > 0) {
       const label = `+${this.queued}`;
-      g.font = `800 ${(13 * k).toFixed(1)}px ui-monospace, monospace`;
+      g.font = font(800, 13 * k, 1);
       const w = g.measureText(label).width + 14 * k;
       const bx = cx + headW / 2 + 10 * k + w / 2;
       g.fillStyle = `hsla(${GOLD}, 85%, 52%, ${a * 0.22})`;
@@ -1173,11 +1235,11 @@ export class LevelUpOverlay {
     // (11 was 8.6 CSS px at 900x700, photographed — under the run bar's
     // 9 CSS px floor. This panel is sized in view px throughout, so on the
     // phone every line here is small; that is the panel's, not this line's.)
-    g.font = `700 ${(12 * k).toFixed(1)}px ui-monospace, monospace`;
+    g.font = font(700, 12 * k, 1);
     g.fillStyle = `rgba(190,205,235,${(a * 0.8).toFixed(3)})`;
     g.fillText(`WAVE ${snap.wave + 1} OF ${TOTAL_WAVES} · ACT ${snap.act}`, cx, y + 63 * k);
 
-    g.font = `600 ${(13 * k).toFixed(1)}px ui-monospace, monospace`;
+    g.font = font(600, 13 * k, 1);
     g.fillStyle = `hsla(200, 60%, 78%, ${a * 0.72})`;
     g.fillText(
       this.queued > 0
@@ -1314,6 +1376,22 @@ export class LevelUpOverlay {
     }
     g.stroke();
 
+    /*
+     * A NARROW CARD IS A DIFFERENT CARD. Below `NARROW_W` — every phone, and
+     * nothing wider than a 594 px window — the proportional layout below has
+     * no room for what it places: a 332 px card holds 42 characters of 12 px
+     * note per line and the notes run to ninety (`tools/levelup.mjs` budgets
+     * them against the wide card), the tier tag and the level readout fight
+     * the title for one line, and the number circle spends 62 px of width on
+     * keys a phone does not have. `drawCardNarrow` lays the same facts out as
+     * a stack of rows, by priority, in the height the card actually has.
+     */
+    if (w < LevelUpOverlay.NARROW_W) {
+      this.drawCardNarrow(g, c, x, y, w, h, hue, flare, beatLift);
+      g.restore();
+      return;
+    }
+
     // The card's number, in a circle. 1-4 select from the keyboard.
     g.textAlign = 'center';
     g.textBaseline = 'middle';
@@ -1322,7 +1400,7 @@ export class LevelUpOverlay {
     g.strokeStyle = `hsla(${hue}, 90%, 68%, ${0.5 + beatLift})`;
     g.lineWidth = 1.4;
     g.stroke();
-    g.font = '700 14px ui-monospace, monospace';
+    g.font = font(700, 14, 1);
     g.fillStyle = `hsla(${hue}, 95%, 78%, 0.95)`;
     g.fillText(String(i + 1), x + 34, cy + 0.5);
 
@@ -1349,7 +1427,7 @@ export class LevelUpOverlay {
      * exactly the half that tells the player what they made.
      */
     const isDuet = c.label.includes(' × ');
-    g.font = `800 ${h > 120 ? (isDuet ? 16 : 21) : (isDuet ? 14 : 18)}px ui-monospace, monospace`;
+    g.font = font(800, h > 120 ? (isDuet ? 16 : 21) : (isDuet ? 14 : 18), 1);
     g.fillStyle = `hsl(${hue}, 92%, ${76 + flare * 14}%)`;
     if (isDuet && g.measureText(c.label).width > sw - 8) {
       /*
@@ -1393,7 +1471,7 @@ export class LevelUpOverlay {
      * asserts every rung has a described change so there is somewhere for that
      * to be caught. Breaking on the last space that fits keeps words whole.
      */
-    g.font = '600 13px ui-monospace, monospace';
+    g.font = font(600, 13, 1);
     g.fillStyle = 'rgba(226,234,250,0.9)';
     const noteMax = sw - 96;
     if (g.measureText(c.note).width <= noteMax) {
@@ -1408,7 +1486,7 @@ export class LevelUpOverlay {
       g.fillText(this.fit(g, tail, noteMax), sx, cy - h * 0.09 + 7);
     }
 
-    g.font = '400 11px ui-monospace, monospace';
+    g.font = font(400, 11, 1);
     g.fillStyle = `hsla(${hue}, 55%, 72%, 0.62)`;
     g.fillText(this.fit(g, c.character, sw - 8), sx, cy + h * 0.05);
 
@@ -1425,12 +1503,12 @@ export class LevelUpOverlay {
      */
     if (c.tier) {
       g.textAlign = 'right';
-      g.font = '700 10px ui-monospace, monospace';
+      g.font = font(700, 10, 1);
       g.fillStyle = `hsla(${hue}, 70%, 78%, 0.72)`;
       g.fillText(TIER_WORD[c.tier], x + w - 16, top);
     } else if (c.slot) {
       g.textAlign = 'right';
-      g.font = '700 10px ui-monospace, monospace';
+      g.font = font(700, 10, 1);
       g.fillStyle = `hsla(${hue}, 50%, 70%, 0.5)`;
       g.fillText(c.slot === 'instrument' ? 'INSTRUMENT' : 'RIG', x + w - 16, top);
     }
@@ -1450,7 +1528,7 @@ export class LevelUpOverlay {
     if (c.completes || c.replaces || c.toward) {
       const by = y + h - 15;
       g.textAlign = 'left';
-      g.font = '800 10px ui-monospace, monospace';
+      g.font = font(800, 10, 1);
       /*
        * A SWAP MUST STATE ITS PRICE, and it says so before anything else.
        *
@@ -1534,6 +1612,7 @@ export class LevelUpOverlay {
     sw: number,
     hue: number,
     beatLift: number,
+    withText = true,
   ): void {
     const n = Math.max(1, c.max);
     // Floored at 8: on a narrow field `(sw - 150) / n` goes negative, and a
@@ -1572,8 +1651,10 @@ export class LevelUpOverlay {
       }
     }
 
+    // The narrow card prints this readout on its title line instead.
+    if (!withText) return;
     g.textAlign = 'right';
-    g.font = '700 12px ui-monospace, monospace';
+    g.font = font(700, 12, 1);
     if (c.isNew) {
       g.fillStyle = `hsla(${hue}, 95%, 78%, 0.95)`;
       g.fillText('JOINS THE BAND', sx + sw, y + 0.5);
@@ -1617,7 +1698,7 @@ export class LevelUpOverlay {
     g.textAlign = 'left';
     g.textBaseline = 'middle';
 
-    g.font = '800 10px ui-monospace, monospace';
+    g.font = font(800, 10, 1);
     g.fillStyle = 'rgba(150,170,205,0.55)';
     g.fillText('YOUR ENSEMBLE', padX, y0);
     g.strokeStyle = 'rgba(150,170,205,0.16)';
@@ -1639,13 +1720,13 @@ export class LevelUpOverlay {
       // Not "ON THE NEXT BOSS" — a boss has not resolved a fusion since they
       // became cards you pick. Same false-instruction fix as the HUD banner.
       const head = `◈ ${labelOf(r.to)} IS READY TO COMBINE`;
-      g.font = '800 11px ui-monospace, monospace';
+      g.font = font(800, 11, 1);
       g.fillStyle = `hsla(${GOLD}, 95%, 72%, 0.95)`;
       g.fillText(head, padX, y0 + 84);
       // Measured while the bold font is still set. Measuring after the switch
       // would size the heading with the lighter face and start the tail early.
       const tailX = padX + 8 + g.measureText(head).width;
-      g.font = '400 11px ui-monospace, monospace';
+      g.font = font(400, 11, 1);
       g.fillStyle = `hsla(${GOLD}, 60%, 74%, 0.6)`;
       g.fillText(this.fit(g, `— ${r.line}`, bodyRight - tailX), tailX, y0 + 84);
     }
@@ -1662,7 +1743,7 @@ export class LevelUpOverlay {
     y: number,
     maxW: number,
   ): void {
-    g.font = '700 10px ui-monospace, monospace';
+    g.font = font(700, 10, 1);
     g.fillStyle = 'rgba(140,160,196,0.5)';
     g.fillText(title, x, y);
 
@@ -1672,7 +1753,7 @@ export class LevelUpOverlay {
       const hue = characterHue(characterOf(id));
       const max = maxLevelOf(id);
       const text = max > 1 ? `${labelOf(id)} ${level}` : labelOf(id);
-      g.font = '700 10px ui-monospace, monospace';
+      g.font = font(700, 10, 1);
       const w = g.measureText(text).width + 16;
       if (cx + w > limit) break;
       const maxed = level >= max;
@@ -1739,7 +1820,7 @@ export class LevelUpOverlay {
     g.save();
     g.globalAlpha = a;
     g.textBaseline = 'middle';
-    g.font = '700 11px ui-monospace, monospace';
+    g.font = font(700, 11, 1);
 
     const y = H - 30;
     const widths = items.map((it) => {
@@ -1836,7 +1917,7 @@ export class LevelUpOverlay {
       g.lineWidth = union ? 2.4 : 1.6;
       g.stroke();
 
-      g.font = '800 11px ui-monospace, monospace';
+      g.font = font(800, 11, 1);
       g.fillStyle = `hsla(${c.hue}, 90%, 74%, 0.9)`;
       /*
        * Name the tier that actually happened.
@@ -1868,17 +1949,19 @@ export class LevelUpOverlay {
       if (merge < 1) {
         // The two parents, sliding in from the wings toward each other.
         const spread = (1 - eased) * W * 0.28;
-        g.font = '700 17px ui-monospace, monospace';
+        g.font = font(700, 17, 1);
         g.fillStyle = `hsla(${c.hue}, 60%, 78%, ${1 - eased * 0.85})`;
         g.fillText(c.a, cx - spread - 4, cy + 4);
         g.fillText(c.b, cx + spread + 4, cy + 4);
       }
       if (merge > 0.55) {
         const rise = clamp01((merge - 0.55) / 0.45);
-        g.font = `800 ${union ? 34 : 28}px ui-monospace, monospace`;
+        // Fitted to the plate: `HEARTSWALLOWER` at 34 CSS px is wider than
+        // the 0.84·W plate on a 360 px stage.
+        fitFont(g, c.to, W * 0.84 - 24, 800, union ? 34 : 28, 1);
         g.fillStyle = `hsla(${c.hue}, 98%, ${78 + burst * 18}%, ${rise})`;
         g.fillText(c.to, cx, cy + 4);
-        g.font = '500 12px ui-monospace, monospace';
+        fitFont(g, c.line, W * 0.84 - 24, 500, 12, 1);
         g.fillStyle = `hsla(${c.hue}, 70%, 76%, ${rise * 0.85})`;
         g.fillText(c.line, cx, cy + plateH / 2 - 22);
       }
@@ -1889,7 +1972,7 @@ export class LevelUpOverlay {
        * so the player seeing it may never see it again.
        */
       if (union && merge > 0.8) {
-        g.font = '700 10px ui-monospace, monospace';
+        g.font = font(700, 10, 1);
         g.fillStyle = `hsla(${GOLD}, 90%, 72%, ${clamp01((merge - 0.8) / 0.2) * 0.8})`;
         g.fillText('A SLOT COMES BACK', cx, cy + plateH / 2 - 6);
       }
@@ -1914,5 +1997,198 @@ export class LevelUpOverlay {
     let s = text;
     while (s.length > 1 && g.measureText(`${s}…`).width > max) s = s.slice(0, -1);
     return `${s}…`;
+  }
+
+  /**
+   * `text` broken at spaces into at most `maxLines` lines of `maxW`, the
+   * last one ellipsised if the text runs on — the two-line note logic from
+   * the wide card, generalised. Breaks on the last space that fits; a single
+   * word wider than the line is cut mid-word rather than overrunning.
+   */
+  private wrap(g: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
+    const key = `${text}|${maxW.toFixed(1)}|${maxLines}|${g.font}`;
+    const hit = this.wrapCache.get(key);
+    if (hit) return hit;
+    const out: string[] = [];
+    let rest = text.trim();
+    // One glyph's advance, for the first guess at the break: the face is
+    // monospace so the guess is exact and the loop below runs once or twice.
+    const em = Math.max(1, g.measureText('M').width);
+    while (rest && out.length < maxLines) {
+      if (out.length === maxLines - 1 || g.measureText(rest).width <= maxW) {
+        out.push(out.length === maxLines - 1 ? this.fit(g, rest, maxW) : rest);
+        rest = '';
+        break;
+      }
+      let cut = Math.min(rest.length, Math.max(1, Math.floor(maxW / em)));
+      while (cut > 1 && g.measureText(rest.slice(0, cut)).width > maxW) cut--;
+      while (cut < rest.length && g.measureText(rest.slice(0, cut + 1)).width <= maxW) cut++;
+      const space = rest.lastIndexOf(' ', cut);
+      const head = space > 0 ? rest.slice(0, space) : rest.slice(0, cut);
+      out.push(head);
+      rest = rest.slice(head.length).trim();
+    }
+    if (this.wrapCache.size > 256) this.wrapCache.clear();
+    this.wrapCache.set(key, out);
+    return out;
+  }
+
+  /**
+   * The narrow card: the same facts as the wide one, as ROWS, by priority.
+   *
+   * The wide card places its lines as fractions of the height, which is
+   * right when the card is 788x142 (1440x900) and wrong when it is 332x104
+   * (a 390x844 phone) or 332x78 (the same phone with Safari's bars up): the
+   * note needs three lines of 12 px there, the height holds five rows, and
+   * something has to give in a stated order. So:
+   *
+   *   title row      the name at 16 px (a duet's two names at 14), and on the
+   *                  same line, right-aligned, the level readout that used to
+   *                  ride the staff (`LV 1 → 2`, `JOINS THE BAND`) and the
+   *                  pool or tier word. Always.
+   *   note           up to three lines of 12 px, the first two before
+   *                  anything else, the third after the payoff line.
+   *   payoff         `◈ ONE PICK FROM …`, `⇄ REPLACES …`, `↗ 2 LEVELS FROM …`
+   *                  — `docs/progression.md`: a card one pick from a fusion
+   *                  "must say so", so this outranks the note's third line.
+   *   staff          the noteheads, without their text (it moved up). Only
+   *                  when there is room after the note.
+   *   character      the flavour line, last.
+   *
+   * At 104 px every row fits; at the 78 px floor the card is title, two
+   * lines of note and the payoff. No number circle on a coarse pointer —
+   * `1`–`4` are keys — which hands the note 48 px of width; a narrow window
+   * with a mouse keeps it. Every size here is a CSS px (`render/type.ts`),
+   * with 12 for the note because it is the sentence the decision is made
+   * from and 11 for the rest.
+   */
+  private drawCardNarrow(
+    g: CanvasRenderingContext2D,
+    c: Card,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    hue: number,
+    flare: number,
+    beatLift: number,
+  ): void {
+    const circle = !coarsePointer();
+    const sx = x + (circle ? 62 : 14);
+    const right = x + w - 14;
+    const sw = right - sx;
+    const cy = y + h / 2;
+    g.textBaseline = 'middle';
+
+    if (circle) {
+      g.textAlign = 'center';
+      g.beginPath();
+      g.arc(x + 34, cy, 14, 0, TAU);
+      g.strokeStyle = `hsla(${hue}, 90%, 68%, ${0.5 + beatLift})`;
+      g.lineWidth = 1.4;
+      g.stroke();
+      g.font = font(700, 14, 1);
+      g.fillStyle = `hsla(${hue}, 95%, 78%, 0.95)`;
+      g.fillText(String(this.cards!.indexOf(c) + 1), x + 34, cy + 0.5);
+    }
+
+    // The right-hand readout on the title line, measured first so the title
+    // can be fitted beside it.
+    const lv = !c.id
+      ? ''
+      : c.isNew
+        ? 'JOINS THE BAND'
+        : c.level >= c.max
+          ? `LV ${c.from} → ${c.level}  MAX`
+          : `LV ${c.from} → ${c.level}`;
+    const pool = c.tier ? TIER_WORD[c.tier] : c.slot ? (c.slot === 'instrument' ? 'INSTRUMENT' : 'RIG') : '';
+    const tag = lv && pool ? `${lv} · ${pool}` : lv || pool;
+    g.font = font(700, 10, 1);
+    const tagW = tag ? g.measureText(tag).width : 0;
+
+    const isDuet = c.label.includes(' × ');
+    g.font = font(800, isDuet ? 14 : 16, 1);
+    const titleMax = sw - (tagW ? tagW + 12 : 0);
+    const duetTwoLines = isDuet && g.measureText(c.label).width > titleMax;
+    const titleH = duetTwoLines ? 32 : 20;
+
+    // The rows that fit, in priority order; see the note above.
+    const PAD = 9;
+    const LINE = 13;
+    let budget = h - 2 * PAD - titleH;
+    g.font = font(600, 12, 1);
+    const needed = this.wrap(g, c.note, sw, 3).length;
+    let lines = Math.min(needed, 2, Math.floor(budget / LINE));
+    budget -= lines * LINE;
+    const payoff = c.replaces
+      ? { text: `⇄ REPLACES ${labelOf(c.replaces as AbilityId)}`, colour: `hsla(${SPEND}, 92%, 68%, ${0.85 + flare * 0.15})` }
+      : c.completes
+        ? { text: `◈ ONE PICK FROM ${labelOf(c.completes)}`, colour: `hsla(${GOLD}, 95%, 72%, ${0.85 + flare * 0.15})` }
+        : c.toward
+          ? {
+              text: `↗ ${c.toward.away} ${c.toward.away === 1 ? 'LEVEL' : 'LEVELS'} FROM ${labelOf(c.toward.to as AbilityId)}`,
+              colour: `hsla(${hue}, 60%, 74%, 0.5)`,
+            }
+          : null;
+    const showPayoff = !!payoff && budget >= 14;
+    if (showPayoff) budget -= 14;
+    if (needed > lines && budget >= LINE) {
+      lines++;
+      budget -= LINE;
+    }
+    const showStaff = !!c.id && budget >= 16;
+    if (showStaff) budget -= 16;
+    const showCharacter = !!c.character && budget >= LINE;
+
+    // Title row.
+    let yy = y + PAD;
+    g.textAlign = 'left';
+    g.font = font(800, isDuet ? 14 : 16, 1);
+    g.fillStyle = `hsl(${hue}, 92%, ${76 + flare * 14}%)`;
+    if (duetTwoLines) {
+      const [left, rightName] = c.label.split(' × ');
+      g.fillText(this.fit(g, `${left} ×`, titleMax), sx, yy + 8);
+      g.fillText(this.fit(g, rightName, titleMax), sx, yy + 24);
+    } else {
+      g.fillText(this.fit(g, c.label, titleMax), sx, yy + 10);
+    }
+    if (tag) {
+      g.textAlign = 'right';
+      g.font = font(700, 10, 1);
+      g.fillStyle = lv && c.id && c.level >= c.max && !c.isNew
+        ? `hsla(${GOLD}, 95%, 74%, 0.95)`
+        : `hsla(${hue}, 70%, 78%, 0.72)`;
+      g.fillText(tag, right, yy + 10);
+      g.textAlign = 'left';
+    }
+    yy += titleH;
+
+    // Note rows.
+    if (lines > 0) {
+      g.font = font(600, 12, 1);
+      g.fillStyle = 'rgba(226,234,250,0.9)';
+      for (const line of this.wrap(g, c.note, sw, lines)) {
+        g.fillText(line, sx, yy + LINE / 2);
+        yy += LINE;
+      }
+    }
+    if (showCharacter) {
+      g.font = font(400, 11, 1);
+      g.fillStyle = `hsla(${hue}, 55%, 72%, 0.62)`;
+      g.fillText(this.fit(g, c.character, sw), sx, yy + LINE / 2);
+      yy += LINE;
+    }
+    if (showStaff) {
+      this.drawLevelStaff(g, c, sx, yy + 8, sw, hue, beatLift, false);
+      yy += 16;
+    }
+    // The payoff sits on the card's bottom edge whatever was skipped above
+    // it: the budget already reserved its row.
+    if (showPayoff && payoff) {
+      g.textAlign = 'left';
+      g.font = font(800, 11, 1);
+      g.fillStyle = payoff.colour;
+      g.fillText(this.fit(g, payoff.text, sw), sx, y + h - PAD - 7);
+    }
   }
 }

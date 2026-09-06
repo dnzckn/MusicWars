@@ -187,6 +187,17 @@ export class Hud {
    * playfield the first time the player cleared the screen.
    */
   private openerState: 'pre' | 'done' = 'pre';
+
+  /**
+   * Whether the TUNING UP opener is on screen right now — the class toggle
+   * below is the truth, and this reads the same latch it was written from.
+   * `main.ts` hands it to the renderer each frame so the run bar can keep its
+   * diamond labels out from under the opener's column on a narrow stage
+   * (`Renderer.openerUp`); the rule that decides the opener lives here, once.
+   */
+  get openerUp(): boolean {
+    return this.last['opener'] === 'true';
+  }
   private lastTime = 0;
 
   /** Cache of last-written text, so we are not touching the DOM 60 times a second for nothing. */

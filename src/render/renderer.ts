@@ -35,6 +35,7 @@ import { ParticleShape } from '../game/particles';
 import { powerupDef } from '../game/powerups';
 import { SHARD_HUES, Status } from '../game/world';
 import { PLAYFIELD_W, TRACK_ANCHOR } from '../game/field';
+import { BODY_FLOOR, FIGHT_FLOOR, fitFont, font } from './type';
 import { WarpGrid } from './grid';
 import { fusionLine, LevelUpOverlay } from './levelup';
 import { playerBulletSprites, ROTATIONS, softDot } from './sprites';
@@ -241,6 +242,22 @@ export class Renderer {
    * `tools/effectsdraw.mjs` gets: its stub canvas is exactly the view.
    */
   private cssPerView = 1;
+
+  /**
+   * View px per CSS px — `1 / cssPerView`, kept as its own number because
+   * every text call below multiplies by it (`render/type.ts`). 1.84 on the
+   * iPhone 14 profile, 1.72 on the Pixel 7, 1.0 at 1440x900.
+   */
+  private viewPerCss = 1;
+
+  /**
+   * Whether the TUNING UP opener is on screen, written by `main.ts` from the
+   * HUD's own state each frame (`Hud.openerUp`) — the HUD owns that rule and
+   * this file must not carry a second copy of it. `drawRunBar` reads it to
+   * hide the diamond labels on a narrow stage while the opener's column is
+   * over them; see there.
+   */
+  openerUp = false;
 
   private resized = true;
 
@@ -517,6 +534,7 @@ export class Renderer {
     if (cssH <= 0 || cssW <= 0) return;
     this.resized = false;
     this.cssPerView = Math.max(0.05, cssH / w.viewH);
+    this.viewPerCss = 1 / this.cssPerView;
     const dpr = Math.min(3, Math.max(1, devicePixelRatio || 1));
     /*
      * BOTH AXES, taking the smaller ratio.
@@ -1561,27 +1579,37 @@ export class Renderer {
     const word = offerKeyWord();
     const label = n > 1 ? `${word}  ×${n}` : word;
     const beat = this.pulse * (0.35 + lift * 0.4);
+    /*
+     * SIZED IN CSS PX (`render/type.ts`): the word TAP is the one thing on
+     * the field a phone player must read mid-fight, and at 11 view px it was
+     * 6 CSS px on both phone profiles — the plate 9 CSS px tall, the type
+     * smaller than the ship. The plate is 17 CSS px and the type 12 (the
+     * fight floor); `u` is view px per CSS px, 1 at 1440x900 where nothing
+     * here changes. Its offset above the ship stays in view px: that is a
+     * distance in the world, not a size a person reads.
+     */
+    const u = this.viewPerCss;
+    const h = 17 * u;
 
     g.save();
     g.translate(x, y - 44 - lift * 6);
     g.scale(scale, scale);
-    g.font = '800 11px ui-monospace, monospace';
+    g.font = font(800, 11, u, FIGHT_FLOOR);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    const tw = Math.max(64, g.measureText(label).width + 22);
+    const tw = Math.max(64 * u, g.measureText(label).width + 22 * u);
     /*
      * Where the plate landed, in VIEW px with the camera applied, so a tap on
      * it can be routed to `openOffers` by `main.ts` — the same seam
-     * `levelUp.hitTest` gives the cards. The plate is 17 view px tall, which
-     * is 9 CSS px on a phone (`cssPerView` ≈ 0.54 measured on both device
-     * profiles); `main.ts` inflates the rect to a thumb-sized target, not
-     * this file, because the CSS-pixel size is the stage's business.
+     * `levelUp.hitTest` gives the cards. `main.ts` inflates the rect to a
+     * thumb-sized target, not this file, because the CSS-pixel size of a
+     * TARGET is the stage's business; the size of the TYPE is this file's.
      */
     this.promptRect = {
       x: x + w.camera.x - (tw * scale) / 2,
-      y: y - 44 - lift * 6 + w.camera.y - (17 * scale) / 2,
+      y: y - 44 - lift * 6 + w.camera.y - (h * scale) / 2,
       w: tw * scale,
-      h: 17 * scale + 5,
+      h: h * scale + 5 * u,
     };
 
     // Plate: opaque, because a translucent one over a bullet hell is the
@@ -1590,7 +1618,6 @@ export class Renderer {
     g.fillStyle = 'rgba(6,8,15,0.92)';
     g.strokeStyle = `hsla(45, 95%, ${64 + beat * 25}%, ${0.7 + lift * 0.3})`;
     g.lineWidth = 1.4;
-    const h = 17;
     const r = h / 2;
     g.beginPath();
     g.moveTo(-tw / 2 + r, -h / 2);
@@ -1603,14 +1630,14 @@ export class Renderer {
     g.stroke();
 
     g.fillStyle = `hsla(45, 100%, ${80 + beat * 20}%, 1)`;
-    g.fillText(label, 0, 0.5);
+    g.fillText(label, 0, 0.5 * u);
 
     // A caret pointing down at the ship, so the plate is attached to the thing
     // it is about rather than floating over the field.
     g.beginPath();
-    g.moveTo(-4, h / 2);
-    g.lineTo(0, h / 2 + 5);
-    g.lineTo(4, h / 2);
+    g.moveTo(-4 * u, h / 2);
+    g.lineTo(0, h / 2 + 5 * u);
+    g.lineTo(4 * u, h / 2);
     g.closePath();
     g.fillStyle = `hsla(45, 95%, ${64 + beat * 25}%, ${0.7 + lift * 0.3})`;
     g.fill();
@@ -1627,16 +1654,21 @@ export class Renderer {
     // particular re-rasterises the glyph outline every call. Only the big ones
     // (bosses, extends) get an outline; the rest lean on a dark shadow, which
     // costs a fraction and reads the same at 12px.
-    let font = '';
+    //
+    // 12 and 17 CSS px, not view px (`render/type.ts`): a kill's score at 12
+    // view px was 6.5 CSS px on the phone, a smudge that moved. The pop-in
+    // scale runs through the same floor, so the first 100 ms of a small popup
+    // grow from the floor rather than from 7 px.
+    const u = this.viewPerCss;
+    let current = '';
     for (const p of pops) {
       const t = p.age / 0.95;
       // Pop out fast, then settle — a linear fade reads as a glitch.
       const scale = p.age < 0.1 ? 0.6 + (p.age / 0.1) * 0.55 : 1.15 - (t - 0.1) * 0.15;
       const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
-      const size = (p.big ? 17 : 12) * scale;
-      const next = `700 ${size.toFixed(1)}px ui-monospace, monospace`;
-      if (next !== font) {
-        font = next;
+      const next = font(700, (p.big ? 17 : 12) * scale, u);
+      if (next !== current) {
+        current = next;
         g.font = next;
       }
       if (p.big) {
@@ -2124,6 +2156,16 @@ export class Renderer {
   }
 
   private drawDrops(g: CanvasRenderingContext2D): void {
+    /*
+     * The pickup's plate and its two-letter label are CSS-sized
+     * (`render/type.ts`): a 9 view px monogram in an 18 view px box was a
+     * 5 CSS px glyph on the phone, and the box with it. The pickup's HITBOX is
+     * the world's business and does not move; only the drawn plate grows, from
+     * 18 to 33 view px on the iPhone profile, which for a thing the player is
+     * meant to fly INTO is the right direction to be wrong in.
+     */
+    const u = this.viewPerCss;
+    const r = 9 * u;
     for (const d of this.world.drops) {
       const def = powerupDef(d.kind);
       const bob = Math.sin(d.age * 6) * 2;
@@ -2132,17 +2174,17 @@ export class Renderer {
       g.globalCompositeOperation = 'lighter';
       const dot = this.dot(def.hue);
       g.globalAlpha = 0.75;
-      g.drawImage(dot, -18, -18, 36, 36);
+      g.drawImage(dot, -2 * r, -2 * r, 4 * r, 4 * r);
       g.globalCompositeOperation = 'source-over';
       g.globalAlpha = 1;
       g.strokeStyle = `hsl(${def.hue}, 100%, 70%)`;
       g.lineWidth = 2;
-      g.strokeRect(-9, -9, 18, 18);
+      g.strokeRect(-r, -r, 2 * r, 2 * r);
       g.fillStyle = `hsl(${def.hue}, 100%, 85%)`;
-      g.font = 'bold 9px ui-monospace, monospace';
+      g.font = font('bold', 9, u);
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(def.label.slice(0, 2), 0, 0.5);
+      g.fillText(def.label.slice(0, 2), 0, 0.5 * u);
       g.restore();
     }
   }
@@ -2166,6 +2208,34 @@ export class Renderer {
     // Screen furniture: `drawBanner` runs from `drawOverlay`, outside the
     // camera translate, so this is the middle of the VIEW and not of the field.
     const y = w.viewH * 0.34 + slide;
+    /*
+     * EVERYTHING BELOW IS IN CSS PX THROUGH `u` (`render/type.ts`). The
+     * subtitle was 12 view px, which the layout pass measured at 6.5 CSS px
+     * on the iPhone 14 profile — the key and groove the banner exists to
+     * teach, unreadable on the device most players hold. Title 26 CSS px
+     * (the fight floor is 12; it was 30 view px, which is 30 CSS px only at
+     * 1440x900), subtitle 12, and the plate 60 CSS px tall to hold them.
+     *
+     * THE PLATE STOPS SHORT OF BOTH EDGE WIDGETS. It spanned the whole view,
+     * and the banner sits at `TRACK_ANCHOR` — the ship's station line — which
+     * is exactly the height the throttle gauge is pinned at on the right
+     * edge; the layout pass measured the two overlapping 10.8x32.5 CSS px on
+     * every banner. The run bar's diamond labels are on the left edge at the
+     * same heights. So the plate runs from clear of the labels (the track's
+     * x plus the widest label, `FINAL` at 10 CSS px bold, plus air) to clear
+     * of the gauge (its head reaches 14 view px left of the track centre at
+     * `viewW - 26`; see `drawThrottle`). The text is still centred on the
+     * FIELD's centre, where the ship is, and is fitted to the narrower of the
+     * two half-widths so it cannot reach either widget. One rule at every
+     * width rather than a phone special: at 1440x900 the plate loses 60 px at
+     * each end and the gauge is no longer painted over.
+     */
+    const u = this.viewPerCss;
+    const x0 = RUN_BAR.x + (FINAL_R + 5 + 34 + 8) * u;
+    const x1 = w.viewW - 26 - 14 - 8 * u;
+    const cx = w.viewW / 2;
+    const halfW = Math.max(40 * u, Math.min(cx - x0, x1 - cx));
+    const plateH = 30 * u;
 
     g.save();
     g.textAlign = 'center';
@@ -2173,7 +2243,7 @@ export class Renderer {
 
     g.globalAlpha = alpha * 0.5;
     g.fillStyle = '#05060c';
-    g.fillRect(0, y - 30, w.viewW, 60);
+    g.fillRect(x0, y - plateH, x1 - x0, 2 * plateH);
     /*
      * Colour by kind, so the type of moment reads before the words do.
      * A boss and a compliment should not look the same.
@@ -2202,22 +2272,29 @@ export class Renderer {
     g.globalAlpha = alpha;
     g.strokeStyle = `hsla(${hue}, 90%, 60%, 0.5)`;
     g.lineWidth = 1;
+    // The rules are 64% of the view wide at 1440x900, as they were; on a
+    // narrow view they are the plate's own width, so they cannot reach the
+    // gauge either.
+    const ruleHalf = Math.min(halfW, w.viewW * 0.32);
     g.beginPath();
-    g.moveTo(w.viewW * 0.18, y - 30);
-    g.lineTo(w.viewW * 0.82, y - 30);
-    g.moveTo(w.viewW * 0.18, y + 30);
-    g.lineTo(w.viewW * 0.82, y + 30);
+    g.moveTo(cx - ruleHalf, y - plateH);
+    g.lineTo(cx + ruleHalf, y - plateH);
+    g.moveTo(cx - ruleHalf, y + plateH);
+    g.lineTo(cx + ruleHalf, y + plateH);
     g.stroke();
 
-    g.font = '800 30px ui-monospace, monospace';
-    g.fillStyle = w.bannerKind === 'grade' ? `hsl(${hue}, 100%, 72%)` : '#ffffff';
-    g.fillText(w.banner, w.viewW / 2, y - 6);
-
     const sub = w.bannerSub || this.bannerDetail;
+    // Fitted to the plate's half-width: `THE LAST ONE IS DOWN` is 20
+    // characters, which at 26 CSS px bold is wider than a 360 px stage's
+    // plate, so it comes down to fit (to 12 at the very least, never below).
+    fitFont(g, w.banner, 2 * halfW - 12 * u, 800, 26, u, FIGHT_FLOOR);
+    g.fillStyle = w.bannerKind === 'grade' ? `hsl(${hue}, 100%, 72%)` : '#ffffff';
+    g.fillText(w.banner, cx, y - (sub ? 7 : 0) * u);
+
     if (sub) {
-      g.font = '600 12px ui-monospace, monospace';
+      fitFont(g, sub, 2 * halfW - 12 * u, 600, 12, u);
       g.fillStyle = `hsla(${hue}, 95%, 72%, 0.9)`;
-      g.fillText(sub, w.viewW / 2, y + 16);
+      g.fillText(sub, cx, y + 15 * u);
     }
     g.restore();
   }
@@ -2356,11 +2433,15 @@ export class Renderer {
       g.strokeStyle = `hsla(305, 100%, 72%, ${0.55 + Math.sin(w.snapshot.time * 5.4) * 0.25})`;
       g.lineWidth = 1;
       g.strokeRect(cx - 9.5, top - 3.5, 19, H + 7);
-      g.font = '700 9px ui-monospace, monospace';
+      // A mode caption, read mid-fight: the fight floor, in CSS px
+      // (`render/type.ts`). It was 9 view px — 5 CSS px on the phone, under
+      // the one gauge that says which mode the ship is in.
+      const u = this.viewPerCss;
+      g.font = font(700, 10, u, FIGHT_FLOOR);
       g.textAlign = 'center';
       g.textBaseline = 'alphabetic';
       g.fillStyle = 'hsl(305, 100%, 84%)';
-      g.fillText('WARP', cx - 1, top - 9);
+      g.fillText('WARP', cx - 1, top - 9 * u);
     }
 
     g.restore();
@@ -2438,7 +2519,8 @@ export class Renderer {
    * px through `cssPerView`, because the view is zoomed (`viewForStage` keeps
    * √(w·h) in [1004, 1240]) and CSS px per view px measured 1.000 at 1440x900,
    * 0.770 at 900x700, 0.797 at 1280x600 and 0.519 on a 375x812 phone: the old
-   * `13px` numeral was 6.7 CSS px on the phone. Text has a 9 CSS px floor. The
+   * `13px` numeral was 6.7 CSS px on the phone. Text has the 10 CSS px floor
+   * of `render/type.ts` (it had its own 9 until the mobile pass). The
    * diamonds are CSS-sized because they are glyphs the player reads as a state
    * (hollow, lit, filled, gold — colour alone is not a state a colourblind
    * player can read, `tools/colourblind.mjs`), and a glyph that shrinks with
@@ -2477,10 +2559,24 @@ export class Renderer {
   private drawRunBar(g: CanvasRenderingContext2D, map: RunMap | null): void {
     const w = this.world;
     if (!map || w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
-    // View px per CSS px, and a font size in view px that is `px` CSS px on
-    // screen with the 9 CSS px floor.
-    const u = 1 / this.cssPerView;
-    const css = (px: number) => Math.max(9, px) * u;
+    // View px per CSS px; every font below is CSS-sized through
+    // `render/type.ts`, whose 10 px body floor replaced this file's own 9.
+    const u = this.viewPerCss;
+    /*
+     * THE DIAMOND LABELS HIDE UNDER THE OPENER ON A NARROW STAGE. The TUNING
+     * UP column is centred and its rule box and cue sheet are 330 CSS px wide
+     * on a 378 px stage, so they land on `1`, `2`, `3` and `FINAL` — the
+     * layout pass measured the collision at 24.7x78 CSS px on every phone
+     * profile. The segments and the diamonds still draw (the shape of the run
+     * is the lesson the runway teaches); the four words wait for the first
+     * wave, which the banner announces anyway. The threshold is where the
+     * opener's 400 px cue sheet, centred, clears the labels' right edge with
+     * air: at 560 CSS px the sheet starts at 80 and the labels end near 55;
+     * at 480 it starts at 40 and does not. Desktop windows are untouched.
+     * Rejected: a left margin on the opener, which would set the one screen
+     * with nothing under it off-centre from the ship it is about.
+     */
+    const labels = !(this.openerUp && w.viewW * this.cssPerView < 560);
     const x = RUN_BAR.x;
     const top = w.viewH * RUN_BAR.top;
     const bot = w.viewH * RUN_BAR.bot;
@@ -2580,7 +2676,8 @@ export class Renderer {
         g.lineWidth = (final ? 1.8 : 1.2) * u;
         g.stroke();
       }
-      g.font = `${next ? 700 : 600} ${css(9).toFixed(1)}px ui-monospace, monospace`;
+      if (!labels) return;
+      g.font = font(next ? 700 : 600, 10, u);
       g.textAlign = 'left';
       g.textBaseline = 'middle';
       g.fillStyle =
@@ -2608,10 +2705,10 @@ export class Renderer {
      */
     g.textAlign = 'left';
     g.textBaseline = 'top';
-    g.font = `700 ${css(12).toFixed(1)}px ui-monospace, monospace`;
+    g.font = font(700, 12, u);
     g.fillStyle = 'rgba(226,234,250,0.92)';
     g.fillText(map.line1, 6 * u, bot + 8 * u);
-    g.font = `600 ${css(9).toFixed(1)}px ui-monospace, monospace`;
+    g.font = font(600, 10, u);
     g.fillStyle =
       map.line2Kind === 'final'
         ? 'hsl(275, 95%, 78%)'
@@ -2657,7 +2754,7 @@ export class Renderer {
     if (!boss) return;
     const frac = clamp01(boss.hp / boss.maxHp);
     if (!Number.isFinite(frac)) return;
-    const u = 1 / this.cssPerView;
+    const u = this.viewPerCss;
     const bh = 6 * u;
     const fin = boss.bossFinal;
     g.save();
@@ -2671,7 +2768,7 @@ export class Renderer {
     g.fillStyle = 'rgba(255,255,255,0.6)';
     for (const th of boss.phaseThresholds) g.fillRect(w.viewW * th, 0, u, 9 * u);
     if (map) {
-      g.font = `700 ${(Math.max(9, 10) * u).toFixed(1)}px ui-monospace, monospace`;
+      g.font = font(700, 10, u, BODY_FLOOR);
       g.textAlign = 'center';
       g.textBaseline = 'top';
       g.fillStyle = fin ? 'hsl(275, 95%, 84%)' : 'hsl(352, 95%, 80%)';
@@ -2797,6 +2894,8 @@ export class Renderer {
     this.attachHook();
     // Last, so the level-up screen sits over the vignette, the boss bar and the
     // banner rather than under them.
-    this.levelUp.draw(g, w.snapshot, dt, w.viewW, w.viewH, beat, this.pulse);
+    // `viewPerCss` last: the panel lays itself out in CSS px (see its
+    // `draw`), so the cards are the same size in the hand at every zoom.
+    this.levelUp.draw(g, w.snapshot, dt, w.viewW, w.viewH, beat, this.pulse, this.viewPerCss);
   }
 }

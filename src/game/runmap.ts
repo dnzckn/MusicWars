@@ -74,7 +74,8 @@ export const STAGE_PHASES: readonly StagePhase[] = [
  *                view, because the stack's type is sized in CSS px (see
  *                `cssPerView` in the renderer) and does not scale with the
  *                bar. Line 1 sits at `bot + 8` (12 px), line 2 at `bot + 23`
- *                (9 px): 8 + 15 + 9 + 2 of descender air.
+ *                (10 px — `render/type.ts`'s body floor, up from 9 in the
+ *                mobile pass): 8 + 15 + 10 + 2 of descender air.
  *   diamondGap   CSS px between one group's top segment and the next
  *                group's bottom one, holding a mini diamond (2·MINI_R + 4).
  *                CSS, like the diamonds themselves: a diamond is a glyph the
@@ -94,7 +95,7 @@ export const RUN_BAR = {
   bot: 0.86,
   headroom: 0,
   finalSlot: FINAL_R * 2 + 4,
-  stackHeight: 34,
+  stackHeight: 35,
   diamondGap: MINI_R * 2 + 4,
   segmentGap: 2,
   /** Below this many view px per segment the gaps go and the groups are solid. */
