@@ -343,8 +343,6 @@ body::before {
 }
 .touch button.hidden { display: none; }
 .touch button:active { background: rgba(53, 230, 255, .28); color: #fff; }
-#touch-bomb { color: var(--gold); border-color: rgba(255, 209, 102, .45); background: linear-gradient(180deg, rgba(255,209,102,.10), rgba(11,14,24,.82)); }
-#touch-well { color: var(--violet); border-color: rgba(176, 107, 255, .45); background: linear-gradient(180deg, rgba(176,107,255,.10), rgba(11,14,24,.82)); }
 
 /*
  * LEVEL UP ×n — the one button that makes the run winnable on a phone.

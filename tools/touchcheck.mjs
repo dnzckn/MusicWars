@@ -71,10 +71,17 @@
  *                      red twice: with the handler's `setPaused(true)` gated
  *                      off ("hidden paused false"), and with the RESUME
  *                      listener removed ("RESUME by tap -> paused true").
- *   min-target         every visible button in `#touch-controls` and on the
- *                      pause screen is ≥ 44 CSS px on both axes — red with
- *                      the mobile block's `.touch button { height: 40px }` and
+ *   min-target         all four `#touch-controls` buttons (measured with
+ *                      `.hidden` lifted — the row is empty in ordinary play
+ *                      since FOCUS/BOMB/WELL went) and every pause-screen
+ *                      button are ≥ 44 CSS px on both axes — red with the
+ *                      mobile block's `.touch button { height: 40px }` and
  *                      with `.pause-actions button { min-height: 0 }`.
+ *   row-holds          `#touch-controls` contains exactly LEVEL UP, REROLL,
+ *                      BANISH and SKIP, and `touch-focus` / `touch-bomb` /
+ *                      `touch-well` are absent from the document — red by
+ *                      putting any one of the three back in `index.html`,
+ *                      which is the way they would come back.
  *   gesture-css        computed `overscroll-behavior: none` on html/body,
  *                      `contain` + `touch-action: pan-y` on `.screen`,
  *                      `pan-x pan-y` + `user-select: none` on `#app`, `none`
@@ -182,16 +189,24 @@ const moved = await p.evaluate(async () => {
     controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden'),
   };
 });
-// Tap the bomb button.
-const bombed = await p.evaluate(async () => {
-  const mw = window.__musicwars;
-  const before = mw.world.player.bombs;
-  const el = document.getElementById('touch-bomb');
-  el.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 2, pointerType: 'touch', bubbles: true, cancelable: true }));
-  await new Promise((r) => setTimeout(r, 500));
-  el.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2, pointerType: 'touch', bubbles: true, cancelable: true }));
-  return { before, after: mw.world.player.bombs };
-});
+/*
+ * WHAT THE ROW HOLDS — replacing the bomb-button tap, which had no button left
+ * to tap.
+ *
+ * That probe pressed `#touch-bomb` and asserted `player.bombs` went down. The
+ * button is gone: "remove focus bomb and well". The assertion is REPLACED
+ * rather than dropped, because the thing worth pinning is now the opposite —
+ * that the row holds the run's decisions and nothing else, so a future button
+ * cannot creep back in unnoticed. Every id must be one of the four, and the
+ * three removed ids must be absent from the whole document (not merely hidden:
+ * a hidden button is one CSS rule away from being back on the field).
+ */
+const rowIds = await p.evaluate(() => ({
+  present: [...document.querySelectorAll('#touch-controls button')].map((b) => b.id),
+  removed: ['touch-focus', 'touch-bomb', 'touch-well'].filter((id) => document.getElementById(id) !== null),
+}));
+const ROW_ALLOWED = ['touch-levelup', 'touch-reroll', 'touch-banish', 'touch-skip'];
+const rowStray = rowIds.present.filter((id) => !ROW_ALLOWED.includes(id));
 /*
  * The buttons must not sit on the playfield.
  *
@@ -434,11 +449,34 @@ check('visibility-resume', vis.pausedByHide && vis.stillPausedOnReturn && vis.sc
   `hidden paused ${vis.pausedByHide}, still paused on return ${vis.stillPausedOnReturn}, then RESUME by tap -> paused ${visResumed.paused}`);
 if (await p.evaluate(() => window.__musicwars.paused())) await fallback('resuming', 'KeyP');
 
-// Nothing tappable under 44 px, in the row or on the pause screen.
-const rowButtons = await buttons('#touch-controls');
+/*
+ * Nothing tappable under 44 px, in the row or on the pause screen.
+ *
+ * THE ROW IS EMPTY IN ORDINARY PLAY and that is the design: FOCUS / BOMB /
+ * WELL were removed ("remove focus bomb and well"), so the row shows LEVEL UP
+ * only while a level is banked and the three levers only while an offer is
+ * open. A visible-buttons count would therefore read zero here and the old
+ * `>= 3` floor would fail on a correct build — so the four are un-hidden for
+ * the measurement and restored immediately. That measures the CSS sizing,
+ * which is what this assertion is about; whether each is shown at the right
+ * moment is what `levelup-visible`, `levers-size` and the row-holds probe
+ * above already pin. The denominator is printed either way: four row buttons
+ * and three pause buttons, or the check has stopped examining anything.
+ */
+const rowButtons = await p.evaluate(() => {
+  const row = [...document.querySelectorAll('#touch-controls button')];
+  const was = row.map((b) => b.classList.contains('hidden'));
+  row.forEach((b) => b.classList.remove('hidden'));
+  const out = row.map((b) => {
+    const r = b.getBoundingClientRect();
+    return { id: b.id, w: Math.round(r.width), h: Math.round(r.height) };
+  });
+  row.forEach((b, i) => { if (was[i]) b.classList.add('hidden'); });
+  return out;
+});
 const small = [...rowButtons, ...pauseButtons].filter((b) => b.w < 44 || b.h < 44);
-check('min-target', rowButtons.length >= 3 && pauseButtons.length >= 3 && small.length === 0,
-  `${rowButtons.length} row buttons, ${pauseButtons.length} pause buttons; under 44: ${small.length ? JSON.stringify(small) : 'none'}`);
+check('min-target', rowButtons.length === 4 && pauseButtons.length >= 3 && small.length === 0,
+  `${rowButtons.length} row buttons (measured un-hidden), ${pauseButtons.length} pause buttons; under 44: ${small.length ? JSON.stringify(small) : 'none'}`);
 
 // The gesture rules, as computed, on the elements the audit measured.
 const css = await p.evaluate(() => {
@@ -489,7 +527,8 @@ console.log('auto-firing     :', moved.firing > 0, ' controls visible:', moved.c
 console.log('throttle held   : min', moved.thrMin, 'max', moved.thrMax, '(want 1, 1 — a held finger is the boost, wherever it landed)');
 console.log('vy during hold  : min', Math.round(moved.minVy), 'vs cruise before', Math.round(before.vy), '(want at least 200 past it)');
 console.log('after the lift  : throttle', moved.after, '(want 0 — cruise, not -1)');
-console.log('bomb button     :', bombed.before, '->', bombed.after);
+console.log('touch row holds :', rowIds.present.join(', ') || '(nothing)', rowStray.length ? `STRAY: ${rowStray.join(', ')}` : '');
+console.log('removed buttons :', rowIds.removed.length ? `STILL IN THE DOM: ${rowIds.removed.join(', ')}` : 'focus/bomb/well absent');
 console.log('page errors     :', errs.length ? errs.slice(0, 2) : 'none');
 const throttleOk = moved.thrMin === 1 && moved.thrMax === 1 && moved.minVy < before.vy - 200 && moved.after === 0;
 const ok =
@@ -497,7 +536,8 @@ const ok =
   moved.firing > 0 &&
   throttleOk &&
   moved.controlsVisible &&
-  bombed.after < bombed.before &&
+  rowStray.length === 0 &&
+  rowIds.removed.length === 0 &&
   !errs.length &&
   overlap.length === 0 &&
   bad.length === 0;

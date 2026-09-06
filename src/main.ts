@@ -635,18 +635,26 @@ const bindTouchButton = (id: string, press: () => void, hold?: (down: boolean) =
   el.addEventListener('pointercancel', up);
   el.addEventListener('pointerleave', up);
 };
-// Not while paused: the row sits under the pause screen's reach, and
-// `touchBomb` is consumed by `sample()`, which does not run while paused —
-// a press here would bank a bomb that went off on the first step after
-// RESUME. Photographed: FOCUS / BOMB / WELL live under PAUSED on both phone
-// profiles. The same guard is on LEVEL UP below.
-bindTouchButton('touch-bomb', () => {
-  if (!paused) input.touchBomb = true;
-});
-bindTouchButton('touch-well', () => {
-  if (!paused) input.touchWell = true;
-});
-bindTouchButton('touch-focus', () => {}, (down) => (input.touchFocus = down));
+/*
+ * FOCUS, BOMB AND WELL ARE NOT IN THE TOUCH ROW. Asked for by name: "remove
+ * focus bomb and well".
+ *
+ * They were three of the four buttons under the field, and on a phone the row
+ * is the only furniture the game puts over the playfield — so what it holds
+ * is the whole of the second thumb's vocabulary. The owner wants that
+ * vocabulary to be the run's decisions (LEVEL UP, and the offer's levers)
+ * rather than three panic keys.
+ *
+ * WHAT A PHONE LOSES, stated rather than buried: FOCUS and the BLACK HOLE are
+ * keyboard-only now. The BOMB is not lost — `World.autoBombRescue` spends one
+ * for you on the hit that would have killed you ("the panic bomb the player
+ * did not have to press"), which is how a phone player's bombs are spent
+ * anyway. Restoring any of them is this block plus a button in `index.html`
+ * and the field in `Input`; the tombstone there says which.
+ *
+ * The guard the removed handlers carried is still on LEVEL UP below: a press
+ * while paused would bank an edge that fired on the first step after RESUME.
+ */
 /*
  * THE LEVEL-UP BUTTON, AND THE OFFER'S LEVERS, IN THE SAME ROW.
  *
@@ -681,9 +689,6 @@ bindTouchButton('touch-banish', () => {
 let banishArmed = false;
 
 const touchRow = {
-  focus: document.getElementById('touch-focus') as HTMLButtonElement,
-  bomb: document.getElementById('touch-bomb') as HTMLButtonElement,
-  well: document.getElementById('touch-well') as HTMLButtonElement,
   levelup: document.getElementById('touch-levelup') as HTMLButtonElement,
   reroll: document.getElementById('touch-reroll') as HTMLButtonElement,
   banish: document.getElementById('touch-banish') as HTMLButtonElement,
@@ -718,7 +723,6 @@ function paintTouchRow(): void {
   // and the set list, and under the pause screen, and its buttons do nothing
   // in any of those. See `.touch.idle` in style.css.
   touchControls.classList.toggle('idle', !live || paused);
-  for (const b of [r.focus, r.bomb, r.well]) b.classList.toggle('hidden', levers);
   r.levelup.classList.toggle('hidden', levers || pending <= 0);
   r.levelup.textContent = pending > 1 ? `LEVEL UP ×${pending}` : 'LEVEL UP';
   for (const b of [r.reroll, r.banish, r.skip]) b.classList.toggle('hidden', !levers);
@@ -1249,6 +1253,9 @@ const loop = new Loop({
     // Caption every announcement with what the music just became.
     renderer.bannerDetail = `${readout.key.toUpperCase()} · ${readout.feel.toUpperCase()} · ${readout.bpm} BPM`;
     renderer.targetHue = readout.paletteHue;
+    // The HUD decides whether TUNING UP is up (one frame behind, which is
+    // the same lag `bannerDetail` has); the run bar reads it for its labels.
+    renderer.openerUp = hud.openerUp;
     renderer.render(paused || !inRun ? 1 : alpha, frameDt, world.transport, readout.tension, loop.fps);
 
     /*

@@ -189,6 +189,9 @@ function analyse(name, inputY) {
     stageHeld,
     stageRatio: stageHeld / CRUISE_SPEED,
     homeAt,
+    // Where the ship actually ends the release window, which is the reading
+    // that survives the spring's removal.
+    restScreen: rel.length ? rel[rel.length - 1].screen : settled.screen,
   };
 }
 
@@ -204,7 +207,13 @@ for (const r of [fwd, back]) {
   console.log(`   screen travel before pinning : ${r.travel.toFixed(3)} of a view (${(r.travel * VIEW_H).toFixed(0)} px)`);
   console.log(`   time until it pins           : ${f3(r.pinTime)} s   at screen ${r.pinScreen.toFixed(3)}`);
   console.log(`   rail speed while held         : ${r.stageHeld.toFixed(0)} px/s  = ${r.stageRatio.toFixed(2)}x cruise`);
-  console.log(`   90% back to station          : ${f3(r.homeAt)} s`);
+  // The ship no longer walks back to `TRACK_ANCHOR` when the stick is released
+  // — the recentre spring was removed on the owner's word ("don't reposition
+  // the ship when player lets go"); see the tombstone in `player.ts`. So this
+  // line reports where the ship SETTLES rather than how long it takes to come
+  // home, and `homeAt` is null on a build that holds station, which is the
+  // intended behaviour rather than a failure.
+  console.log(`   holds at (fraction of view)  : ${f3(r.restScreen)}   [90% back to station: ${f3(r.homeAt)} s — null means it holds]`);
 }
 
 const travelRatio = fwd.travel / Math.max(1e-6, back.travel);

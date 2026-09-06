@@ -816,13 +816,15 @@ export class World {
    * has no such problem because it is the ship that is going slower than the
    * rail there, so the clamp is genuinely a carry.
    */
-  private trackBounds(): { x0: number; y0: number; x1: number; y1: number; yHome: number } {
+  private trackBounds(): { x0: number; y0: number; x1: number; y1: number } {
+    // `yHome` went with the recentre spring the owner asked to remove; see the
+    // tombstone in `player.ts`. `TRACK_ANCHOR` is still where a run starts and
+    // still what the camera frames on, so it is not dead — only the pull is.
     return {
       x0: 12,
       x1: PLAYFIELD_W - 12,
       y0: -Infinity,
       y1: this.trackBack,
-      yHome: this.trackY + VIEW_H * TRACK_ANCHOR,
     };
   }
 

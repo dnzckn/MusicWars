@@ -189,34 +189,38 @@ export const RAIL_FLOOR = 0.70;
 
 
 /*
- * How hard the ship settles back to its station in the track window, and over
- * what distance, when the throttle is released.
+ * TOMBSTONE — `RECENTRE_SPEED` (160 px/s) and `RECENTRE_SPAN` (220 px): the
+ * spring that pulled the ship back to `TRACK_ANCHOR` whenever the throttle was
+ * released.
  *
- * WHY THE WINDOW NEEDS THIS AT ALL. Without it the window has no restoring
- * force in either direction: the rail advances at `CRUISE_SPEED` and a coasting
- * ship travels at `CRUISE_SPEED`, so wherever the player leaves the ship in the
- * frame is where it stays, forever. Verified in the browser — boost to the
- * front of the window, release, and the ship sits at 0.16 of the view for as
- * long as you like. `TRACK_ANCHOR` would then be nothing but a starting
- * position, and since the threat is all ASTERN there is never a reason to come
- * back: every player would ride the front edge permanently, seeing the most
- * pursuit, and the throttle would be a one-way ratchet rather than a choice.
+ * REMOVED ON THE OWNER'S WORD, playing on a phone: "don't reposition the ship
+ * when player lets go, seems to move to near top automatically". Measured
+ * before it went, at 412x915 (the station is 0.34 of the view):
  *
- * With it, boosting and braking are what they read as — transients. Let go and
- * the ship drifts back to station.
+ *     braked to 0.501, released   ->  0.492 / 0.466 / 0.423 / 0.375 / 0.353
+ *                                     at +0.25 / 0.5 / 1 / 2 / 3 s
+ *     boosted to 0.156, released  ->  0.271 at +1.5 s, 0.314 at +3 s
  *
- * 160 px/s is under `TRIM_SPEED` by enough that holding the stick still pins
- * the ship against either end of the window (260 - 160 = 100 px/s of net
- * travel, so both edges are still reachable and still hold), and easing it in
- * over 220 px means the last stretch of the return is not a lurch.
+ * — the ship walked back to station from BOTH directions over about three
+ * seconds, and on a tall phone screen 0.34 reads as "near the top". Under the
+ * binary touch throttle the release is not a rare event but the resting state
+ * (hold to boost, let go to cruise), so the spring fired constantly and every
+ * finger-up dragged the ship somewhere the player had not asked for.
  *
- * JUDGED, NOT MEASURED, like the camera's deadzone and the window fractions
- * themselves: no node-only gate can tell you whether a throttle springs back
- * nicely. What IS verified is the failure it fixes, which was a position the
- * ship could enter and never leave.
+ * WHAT THE OLD ARGUMENT SAID, kept because it is the risk this accepts:
+ * without a restoring force the window has none in either direction — the rail
+ * advances at `CRUISE_SPEED` and a coasting ship travels at `CRUISE_SPEED`, so
+ * wherever the player leaves the ship is where it stays. `TRACK_ANCHOR` is now
+ * only a starting position, and since the threat is all ASTERN a player may
+ * simply ride the front of the window, seeing the most pursuit. That is the
+ * trade the owner asked for, and it is not a defect to be quietly re-fixed:
+ * the throttle is a position the player sets, not a lever that springs back.
+ *
+ * The back edge is still a hard clamp (`bounds.y1` = `World.trackBack`) and
+ * the front is still the camera dragging forward, so neither end is a place
+ * the ship can leave the screen from. Restoring the spring is this block plus
+ * one term in `wantY`; `tools/throttlefeel.mjs` prints the drift either way.
  */
-const RECENTRE_SPEED = 160;
-const RECENTRE_SPAN = 220;
 
 /*
  * Halflives for the velocity approach, in seconds.
@@ -665,11 +669,11 @@ export class Player {
      * against a moving front edge would have its forward velocity zeroed on
      * every frame and would stutter.
      *
-     * `yHome` is the station inside that window — `TRACK_ANCHOR` in world
-     * coordinates — which the ship settles back to when the throttle is
-     * released. See `RECENTRE_SPEED`.
+     * There is no `yHome` any more: the ship holds whatever place in the
+     * window the player left it in. See the tombstone above `PLAYER_SPEED`'s
+     * halflives for the measurement that removed it.
      */
-    bounds: { x0: number; y0: number; x1: number; y1: number; yHome: number },
+    bounds: { x0: number; y0: number; x1: number; y1: number },
     moveScale = 1,
   ): PowerupKind[] {
     this.prevX = this.x;
@@ -699,11 +703,9 @@ export class Player {
      * exceeding it.
      */
     const trimTop = Math.min(CRUISE_SPEED, TRIM_SPEED * (this.focused ? PLAYER_FOCUS_SPEED / PLAYER_SPEED : 1) * boost * moveScale);
-    // Plus the settle back to station. Added to the TARGET rather than applied
-    // as a separate impulse, so it goes through the same damping the stick does
-    // and cannot fight the acceleration curve. See `RECENTRE_SPEED`.
-    const settle = clamp((bounds.yHome - this.y) / RECENTRE_SPAN, -1, 1) * RECENTRE_SPEED;
-    const wantY = -CRUISE_SPEED + input.y * trimTop + settle;
+    // No settle term: the target is the cruise plus the stick, and nothing
+    // else. Let go and the ship keeps the place in the window it has.
+    const wantY = -CRUISE_SPEED + input.y * trimTop;
     const halflife = this.focused ? FOCUS_HALFLIFE : push > 0.01 ? ACCEL_HALFLIFE : BRAKE_HALFLIFE;
     this.vx = damp(this.vx, wantX, halflife, dt);
     this.vy = damp(this.vy, wantY, halflife, dt);

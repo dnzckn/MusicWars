@@ -267,10 +267,17 @@ export class Input {
     this.pointerFiring = true;
   }
 
-  /** Momentary actions from on-screen buttons. */
-  touchBomb = false;
-  touchWell = false;
-  touchFocus = false;
+  /*
+   * TOMBSTONE — `touchBomb`, `touchWell`, `touchFocus`.
+   *
+   * Three booleans set by the FOCUS / BOMB / WELL buttons in the touch row and
+   * consumed below. The buttons were removed on the owner's word ("remove
+   * focus bomb and well") and these went with them rather than staying as
+   * controls nothing writes: `tools/session.mjs` counts inert controls, and
+   * this file's own history is that an unread field is a field that rots.
+   * Restoring one is this declaration, its read in `sample()`, a button in
+   * `index.html` and a `bindTouchButton` in `main.ts`.
+   */
   /**
    * "Show me the level-ups I have banked", from a tap rather than from Space.
    *
@@ -632,11 +639,11 @@ export class Input {
 
     // Touch state first; the keyboard scan below ORs on top of it.
     let shoot = this.pointerFiring;
-    let bomb = this.touchBomb;
-    let focus = this.touchFocus;
-    let well = this.touchWell;
-    this.touchBomb = false;
-    this.touchWell = false;
+    // Keyboard only since the touch row lost its three panic buttons; the
+    // scan below is now the sole writer of all three.
+    let bomb = false;
+    let focus = false;
+    let well = false;
     for (const code of this.down) {
       if (SHOOT_KEYS.has(code)) shoot = true;
       if (BOMB_KEYS.has(code)) bomb = true;
