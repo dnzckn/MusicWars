@@ -87,18 +87,36 @@ export interface WavePlan {
   lengthBeats: number;
 }
 
-/** Every fourth wave is a boss. */
+/** Every second wave is a boss: one ordinary wave, then a mini. */
 /*
- * Four. Three was tried and measured worse.
+ * TWO, ON THE OWNER'S WORD: "the stages feel too long, let's cut them in half
+ * ... 2 per mini boss".
  *
- * Bosses are the only set piece and a five-minute run meets one, so more of
- * them looked like the obvious answer to "rather uninteresting". But a boss
- * fight runs 100-150s against ordinary waves at 26-31s, so one every three
- * waves makes a run *mostly boss*: tools/content.mjs went from wave 8 with 42
- * kills to wave 6 with 18. Set pieces stop being set pieces when they are most
- * of the game.
+ * WHAT THIS OVERRIDES, because it is a measured result and not a preference.
+ * This constant was 4, and 3 had been tried and measured WORSE: a boss fight
+ * runs 100-150 s against ordinary waves at 26-31 s, so shortening the cycle
+ * makes a run mostly boss — `tools/content.mjs` went from wave 8 with 42 kills
+ * to wave 6 with 18, and the note concluded "set pieces stop being set pieces
+ * when they are most of the game". Two is further in the direction that
+ * measurement warned about, not less.
+ *
+ * WHY IT IS STILL THE RIGHT NUMBER NOW. That measurement answered "is the run
+ * more interesting per minute", on a desktop, when a run was the whole game.
+ * The question has changed twice since. The run now ENDS (`BOSS_COUNT`), so
+ * the cycle length sets the run's total length rather than its texture: at 4
+ * a run was sixteen waves and `tools/finale.mjs` timed it at 14-16 minutes.
+ * And the audience changed — "the majority audience will play this on the
+ * phone" — where fourteen minutes is not a session, it is a commitment. At 2
+ * the run is eight waves and about half that.
+ *
+ * So the trade is deliberate and it is the one the old note describes: a
+ * larger share of a run is now boss. The countervailing fact is that the
+ * player reaches a boss twice as often, which is where the game's only set
+ * piece, its rewards and its act structure live. If it reads as too
+ * boss-heavy the knob is `BOSS_COUNT` (fewer, longer acts) rather than a
+ * return to 4, which is the length that was called too long.
  */
-export const BOSS_EVERY = 4;
+export const BOSS_EVERY = 2;
 
 /* ------------------------------------------------------------------------ *
  * THE RUN ENDS
@@ -174,7 +192,7 @@ export const MINI_BOSSES = BOSS_COUNT - 1;
  * The wave index of the final boss. Clearing it ends the run in a WIN.
  *
  * Boss waves are `index % BOSS_EVERY === BOSS_EVERY - 1`, so the n-th boss is
- * at `n * BOSS_EVERY - 1` counting from one: 3, 7, 11, 15 at `BOSS_COUNT` 4.
+ * at `n * BOSS_EVERY - 1` counting from one: 1, 3, 5, 7 at `BOSS_COUNT` 4.
  * (This line used to end "…, 19" from the five-boss draft the table above
  * cut; the run ends at 15 and a comment listing a sixteenth act's boss is the
  * drift the constant exists to prevent.)

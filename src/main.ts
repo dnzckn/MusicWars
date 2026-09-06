@@ -740,16 +740,27 @@ function paintTouchRow(): void {
 // ---------------------------------------------------------------------------
 
 const autoPickBox = document.getElementById('ui-autopick') as HTMLInputElement | null;
+/**
+ * Who spends the levels, written in one place.
+ *
+ * Three things set it now — the settings checkbox and the title screen's two
+ * doors — and they must agree, because the title says "you can change this any
+ * time in the settings menu" and a checkbox that disagreed with the button the
+ * player just pressed would make that a lie. So the buttons call this rather
+ * than touching `autoPick`, and it drives the checkbox back.
+ */
+function setAutoPick(on: boolean): void {
+  autoPick = on;
+  if (autoPickBox) autoPickBox.checked = on;
+  try {
+    localStorage.setItem(AUTOPICK_KEY, on ? '1' : '0');
+  } catch {
+    /* Preference is still live for this run; only persistence is lost. */
+  }
+}
 if (autoPickBox) {
   autoPickBox.checked = autoPick;
-  autoPickBox.addEventListener('change', () => {
-    autoPick = autoPickBox.checked;
-    try {
-      localStorage.setItem(AUTOPICK_KEY, autoPick ? '1' : '0');
-    } catch {
-      /* Preference is still live for this run; only persistence is lost. */
-    }
-  });
+  autoPickBox.addEventListener('change', () => setAutoPick(autoPickBox.checked));
 }
 
 const volumeSlider = document.getElementById('ui-volume') as HTMLInputElement;
@@ -1603,7 +1614,21 @@ async function startRun(): Promise<void> {
   settingsFromPause = false;
 }
 
-startButton.addEventListener('click', () => void startRun());
+/*
+ * The two title doors. `#start-button` is "I'll pick my powerups" and
+ * `#start-autopick` is "pick for me"; both begin the run at once and differ
+ * only in the preference they write first, which is the same one the settings
+ * checkbox owns (`setAutoPick`). A tool clicking `#start-button` therefore
+ * gets exactly what it always got — a run, with the offer screen live.
+ */
+startButton.addEventListener('click', () => {
+  setAutoPick(false);
+  void startRun();
+});
+document.getElementById('start-autopick')?.addEventListener('click', () => {
+  setAutoPick(true);
+  void startRun();
+});
 retryButton.addEventListener('click', () => void startRun());
 
 /* ------------------------------------------------------------------------ *

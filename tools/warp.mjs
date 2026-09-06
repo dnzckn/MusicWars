@@ -58,7 +58,7 @@
 import './lib/headless-audio.mjs';
 import { makeBrain } from './lib/bot-brain.mjs';
 
-const { World, WARP_ARM, WARP_DROP, WARP_RATE } = await import('../src/game/world.ts');
+const { World, WARP_ARM, WARP_DROP, WARP_RATE, WARP_NEUTRAL_GRACE, WARP_BLEED } = await import('../src/game/world.ts');
 const { WARP_STICK } = await import('../src/core/input.ts');
 const { BOSS_EVERY } = await import('../src/game/waves.ts');
 const { PLAYER_CONTACT } = await import('../src/game/player.ts');
@@ -364,14 +364,60 @@ if (SECTIONS.has('2')) {
   check(w.snapshot.running, `warmed past 'idle' in ${f2(warm * DT)}s (a run that never starts cannot warp)`);
   check(!w.warping, `warp is off before anything is held: ${w.warping ? 'on' : 'off'}`);
 
-  // A tap, then a pause: the charge must be SPENT, not banked.
+  /*
+   * A TAP, THEN A PAUSE — three assertions where there was one, because the
+   * rule they test changed and the old one tested it by proxy.
+   *
+   * What stood here: tap 0.8 of the arm time, release for 0.5 s, assert the
+   * charge is exactly 0, with the reason in its own message — "eleven dodges
+   * must not add up to a warp". That reason is still the property that
+   * matters. The mechanism it assumed is gone: the owner asked for the gauge
+   * to stop emptying the instant a finger lifts ("no adjustment of the warp vs
+   * pullback when the user isnt actively changing it"), because under the
+   * binary pointer throttle a lift is the resting state rather than a
+   * decision. `World.updateWarp` now holds the charge for
+   * `WARP_NEUTRAL_GRACE` and spends it at `WARP_BLEED` after that.
+   *
+   * So the single proxy is replaced by the three things that must be true, and
+   * the middle one stops testing the eleven-dodges claim by implication and
+   * tests it literally. This is a replacement, not a relaxation: a build that
+   * banks charge across releases — the pure hold, which was built first — goes
+   * red on the second and third of these.
+   */
   inp.throttle = 1;
   for (let i = 0; i < Math.round((WARP_ARM * 0.8) / DT); i++) step();
   const chargeAfterTap = w.warpCharge;
-  inp.throttle = 0;
-  for (let i = 0; i < Math.round(0.5 / DT); i++) step();
   check(chargeAfterTap > 0.7, `0.8 of the arm time charged it to ${f2(chargeAfterTap)} (the meter is live)`);
-  check(w.warpCharge === 0, `letting go SPENT the charge: ${f2(w.warpCharge)} (want 0 — eleven dodges must not add up to a warp)`);
+
+  // 1. A LIFT SHORTER THAN THE GRACE COSTS NOTHING. This is the owner's report.
+  inp.throttle = 0;
+  for (let i = 0; i < Math.round((WARP_NEUTRAL_GRACE * 0.6) / DT); i++) step();
+  const chargeAfterBlink = w.warpCharge;
+  check(
+    Math.abs(chargeAfterBlink - chargeAfterTap) < 0.02,
+    `a lift shorter than the grace keeps the charge: ${f2(chargeAfterBlink)} against ${f2(chargeAfterTap)}`,
+  );
+
+  // 2. A SUSTAINED RELEASE SPENDS IT, to exactly nothing.
+  for (let i = 0; i < Math.round((WARP_NEUTRAL_GRACE + WARP_ARM / WARP_BLEED + 0.2) / DT); i++) step();
+  check(w.warpCharge === 0, `holding neutral SPENT the charge: ${f2(w.warpCharge)} (want 0)`);
+
+  // 3. ELEVEN DODGES DO NOT ADD UP TO A WARP — the old message's own claim,
+  //    now driven rather than implied. Each dodge is a boost of half the arm
+  //    time and a gap of one grace and a half: eleven of them are 7.7 s of
+  //    forward stop, five and a half arm times, and must still not warp.
+  let dodgePeak = 0;
+  for (let d = 0; d < 11; d++) {
+    inp.throttle = 1;
+    for (let i = 0; i < Math.round((WARP_ARM * 0.5) / DT); i++) step();
+    dodgePeak = Math.max(dodgePeak, w.warpCharge);
+    inp.throttle = 0;
+    for (let i = 0; i < Math.round((WARP_NEUTRAL_GRACE * 1.5) / DT); i++) step();
+    if (w.warping) break;
+  }
+  check(!w.warping, `eleven dodges did not add up to a warp: peak charge ${f2(dodgePeak)}, warping ${w.warping ? 'YES' : 'no'}`);
+  inp.throttle = 0;
+  for (let i = 0; i < Math.round(1.5 / DT); i++) step();
 
   inp.throttle = 1;
   simT = 0;

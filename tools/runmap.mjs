@@ -136,6 +136,14 @@ function runOnce(seed) {
     sumRetreats: 0,
     line1Agree: 0,
     line1Checked: 0,
+    /*
+     * WHICH WAVES THE BAR NAMED, as a set of indices rather than a count of
+     * frames. `line1Agree/line1Checked` is a per-FRAME ratio and stays; this
+     * is per WAVE, and it is what replaced "every WAVE banner carries OF n"
+     * when `BOSS_EVERY` went to 2 and that assertion went vacuous — see the
+     * check for the reasoning.
+     */
+    wavesOnBar: new Set(),
     line2Agree: 0,
     line2Checked: 0,
     wtbAgree: 0,
@@ -151,6 +159,10 @@ function runOnce(seed) {
     clobbered: 0,
     waveOverAct: 0,
     waveOverActChecked: 0,
+    // NOT `announces` — that name is already the ARRAY of intercepted records
+    // on this object, and shadowing it made `r.announces.filter` throw.
+    announceCount: 0,
+    anyOverAct: 0,
     waveDenominator: 0,
     waveBanners: 0,
     guardRejected: 0,
@@ -192,7 +204,10 @@ function runOnce(seed) {
 
     // B. Line 1 is the same number `#ui-wave` prints (`snap.wave + 1`), over TOTAL_WAVES.
     r.line1Checked++;
-    if (m.line1 === `WAVE ${w.snapshot.wave + 1} OF ${TOTAL_WAVES}`) r.line1Agree++;
+    if (m.line1 === `WAVE ${w.snapshot.wave + 1} OF ${TOTAL_WAVES}`) {
+      r.line1Agree++;
+      r.wavesOnBar.add(w.snapshot.wave);
+    }
 
     // C. Line 2 against the world's own wavesToBoss / bossActive, and the
     //    function's derivation of wavesToBoss against the world's getter.
@@ -244,6 +259,9 @@ function runOnce(seed) {
       r.waveOverActChecked++;
       if (a.overKind === 'act' && a.overAge < 2.4) r.waveOverAct++;
     }
+    // The same rule over every announce, whatever its kind: see the check.
+    r.announceCount++;
+    if (a.overKind === 'act' && a.overAge < 2.4) r.anyOverAct++;
   }
   return r;
 }
@@ -331,14 +349,44 @@ check(
   `[${tele.join(' ')}] of ${total} announces`,
 );
 check(total > 0 && sum((r) => r.clobbered) === 0, 'no update announces twice', `${sum((r) => r.clobbered)} clobbered of ${total}`);
+/*
+ * WIDENED FROM 'wave' TO EVERY KIND, because at `BOSS_EVERY` 2 the wave-kind
+ * version measures nothing.
+ *
+ * The yield rule it was written for still holds — `beginWave` skips the plain
+ * WAVE banner while a boss-down 'act' banner is younger than its own 2.4 s
+ * life — but every ordinary wave now follows a boss kill, so the branch fires
+ * every time and NO wave-kind banner is raised at all: the assertion read
+ * "0 of 0" and failed on its own denominator rule, which is the rule working.
+ * Asserting the same property over every announce is strictly stronger and
+ * cannot go vacuous while the game raises banners.
+ */
 check(
-  sum((r) => r.waveOverActChecked) > 0 && sum((r) => r.waveOverAct) === 0,
-  'a WAVE banner never writes over a live act banner',
-  `${sum((r) => r.waveOverAct)} of ${sum((r) => r.waveOverActChecked)} wave-kind banners`,
+  sum((r) => r.announceCount) > 0 && sum((r) => r.anyOverAct) === 0,
+  'no banner of any kind writes over a live act banner',
+  `${sum((r) => r.anyOverAct)} of ${sum((r) => r.announceCount)} announces`,
+);
+/*
+ * THE WAVE NUMBER REACHES THE PLAYER AT EVERY WAVE, and the channel is now the
+ * BAR rather than a banner.
+ *
+ * This replaces "every WAVE banner carries OF n". That assertion was about the
+ * banner because the banner was where a player learned the wave; with a
+ * two-wave cycle the banner is never raised (above), so the question it was
+ * really asking — does the player ever get told which wave of how many they
+ * are on — has to be asked of the thing that is on screen the whole time.
+ * `line1Agree` already checks the bar frame by frame, but a frame ratio cannot
+ * tell you a WHOLE WAVE went unnamed, so this counts distinct wave indices.
+ * The banner keeps its own check below, conditional because zero is now legal.
+ */
+check(
+  runs.every((r) => r.wavesOnBar.size === TOTAL_WAVES),
+  `the bar names every one of the ${TOTAL_WAVES} waves`,
+  `[${runs.map((r) => r.wavesOnBar.size).join(' ')}] of ${TOTAL_WAVES}`,
 );
 check(
-  sum((r) => r.waveBanners) > 0 && sum((r) => r.waveDenominator) === sum((r) => r.waveBanners),
-  `every WAVE banner carries OF ${TOTAL_WAVES}`,
+  sum((r) => r.waveBanners) === 0 || sum((r) => r.waveDenominator) === sum((r) => r.waveBanners),
+  `every WAVE banner that fires carries OF ${TOTAL_WAVES}`,
   `${sum((r) => r.waveDenominator)}/${sum((r) => r.waveBanners)}`,
 );
 for (const a of runs[0].announces.filter((x) => x.kind === 'act' || x.sub === 'INCOMING')) {

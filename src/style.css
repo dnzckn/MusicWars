@@ -2281,3 +2281,33 @@ kbd {
 #menu-starters { margin: 2px 0 4px; }
 #menu-starters legend { font-size: 8.5px; }
 #menu-starters .starter { padding: 6px 10px; font-size: 9.5px; }
+
+/*
+ * THE TWO TITLE DOORS. "let me pick my powerups, pick for me".
+ *
+ * Side by side on a desktop and stacked on a phone, because at 390 px two
+ * buttons of this label length on one row put each under the 44 px tap
+ * minimum the touch audit set. The primary keeps the filled treatment it
+ * always had; the second is a ghost, so the pair reads as one decision with a
+ * default rather than as two equal commands.
+ */
+.start-choice { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.start-choice #start-autopick {
+  background: transparent;
+  color: var(--cool);
+  border: 1px solid rgba(53, 230, 255, .45);
+  box-shadow: none;
+}
+.start-choice #start-autopick:hover { background: rgba(53, 230, 255, .12); }
+.start-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--dim);
+  text-align: center;
+}
+@media (pointer: coarse) {
+  .start-choice { flex-direction: column; align-items: stretch; }
+  .start-choice button { min-height: 56px; width: 100%; }
+  .start-note { font-size: 12px; }
+}

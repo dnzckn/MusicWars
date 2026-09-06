@@ -356,6 +356,14 @@ export const WARP_ARM = 1.4;
 export const WARP_DROP = WARP_ARM;
 
 /**
+ * How long a neutral throttle costs a warp charge nothing, and how fast it is
+ * spent after that. See the `else` branch of `updateWarp` for the reasoning
+ * and for the measurement that rejected a grace of infinity.
+ */
+export const WARP_NEUTRAL_GRACE = 0.4;
+export const WARP_BLEED = 4;
+
+/**
  * How many times faster the wave's clock runs while warp is engaged.
  *
  * The owner asked for "10x or more". Twelve, and it is measured at the output
@@ -1681,6 +1689,8 @@ export class World {
   private warpHold = 0;
   /** Seconds it has been held at its AFT stop. The way out. */
   private warpBrake = 0;
+  /** Seconds the throttle has been at neither stop. See `updateWarp`. */
+  private warpNeutral = 0;
   /** Whether the stage is running fast right now. */
   private warpOn = false;
   /**
@@ -4576,8 +4586,72 @@ export class World {
       this.warpBrake = 0;
       return;
     }
-    this.warpHold = this.throttle >= WARP_STICK ? this.warpHold + dt : 0;
-    this.warpBrake = this.throttle <= -WARP_STICK ? this.warpBrake + dt : 0;
+    /*
+     * A NEUTRAL THROTTLE CHANGES NEITHER CHARGE. Asked for by name: "there
+     * should be no adjustment of the warp vs pullback when the user isnt
+     * actively changing it. as it it shoudl stay where it's at."
+     *
+     * Both lines used to end `: 0` — anything but the stop concerned zeroed
+     * that charge, so letting go emptied the gauge instantly. That was
+     * defensible when the throttle was a key you held: releasing W WAS the
+     * decision not to warp. It is wrong under the binary pointer throttle,
+     * where releasing is the RESTING state (hold to boost, let go to cruise),
+     * so on a phone the gauge could only ever fill during one unbroken press
+     * and visibly drained the moment the finger lifted.
+     *
+     * Now each stop feeds its own charge and clears the opposite one, and
+     * neutral holds both where they are: the only thing that undoes a
+     * forward charge is actively pulling back, which is the gesture that
+     * means "no". Death and the pre-wave idle still reset both, above.
+     *
+     * THE CONSEQUENCE, STATED RATHER THAN DISCOVERED: `WARP_ARM` is 1.4 s and
+     * that number was chosen against CONTINUOUS holds — measured over 172,800
+     * bot steps, the longest unbroken forward hold was 0.60 s, so nothing
+     * warped by accident. Cumulative holds are a different distribution: a
+     * phone player who boosts in bursts now reaches 1.4 s of total forward
+     * time within a few seconds of ordinary play, so warp will engage far more
+     * often and is meant to. If it fires more than the owner wants, the knob
+     * is `WARP_ARM` (or a slow bleed here on neutral) — not a return to the
+     * reset, which is the thing that was asked to go.
+     */
+    if (this.throttle >= WARP_STICK) {
+      this.warpHold += dt;
+      this.warpBrake = 0;
+      this.warpNeutral = 0;
+    } else if (this.throttle <= -WARP_STICK) {
+      this.warpBrake += dt;
+      this.warpHold = 0;
+      this.warpNeutral = 0;
+    } else {
+      /*
+       * NEUTRAL: HOLD FIRST, THEN SPEND. The owner's words were "there should
+       * be no adjustment of the warp vs pullback when the user isnt actively
+       * changing it", and what they were watching is the gauge emptying the
+       * instant a finger lifts — under the binary pointer throttle a lift is
+       * the resting state, not a decision, so a charge that only survived one
+       * unbroken press could never be built on a phone.
+       *
+       * A PURE HOLD WAS BUILT FIRST AND MEASURED WORSE, which is why this is a
+       * grace rather than the literal reading. `tools/warp.mjs` already
+       * asserts, in its own words, that "eleven dodges must not add up to a
+       * warp": with nothing to spend the charge, forward time accumulates over
+       * a whole run, every threshold is crossed eventually, and warp stops
+       * being a mode a player chooses — measured, the gate went from 5 red to
+       * 8, and the charge stood at 0.80 after a release that used to clear it.
+       *
+       * So: a lift shorter than `WARP_NEUTRAL_GRACE` costs nothing, which is
+       * the complaint answered, and sustained neutral spends the charge at
+       * `WARP_BLEED` times the rate it filled, which keeps warp deliberate.
+       * Both numbers are judged rather than measured — a lift between two
+       * boosts is a few tenths of a second, and a gauge that empties in about
+       * a third of a second reads as spent rather than as broken.
+       */
+      this.warpNeutral += dt;
+      if (this.warpNeutral > WARP_NEUTRAL_GRACE) {
+        this.warpHold = Math.max(0, this.warpHold - dt * WARP_BLEED);
+        this.warpBrake = Math.max(0, this.warpBrake - dt * WARP_BLEED);
+      }
+    }
     if (!this.warpOn && this.warpHold >= WARP_ARM) {
       this.warpOn = true;
       this.warpBeatDebt = 0;

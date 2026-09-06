@@ -290,7 +290,26 @@
             <legend>OPEN WITH</legend>
             <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
           </fieldset>
-          <button id="start-button" type="button">PRESS TO BEGIN</button>
+          <!--
+            TWO DOORS INTO A RUN, AND THEY DIFFER ONLY IN WHO SPENDS THE
+            LEVELS. Asked for: "when the game starts should be menu that says,
+            let me pick my powerups, pick for me / then in small text shoudl
+            stay that you can change the setting sint he setting smenu".
+
+            It is two buttons rather than a menu IN FRONT of the start button,
+            for the reason the block below already records: `#start-button`
+            must keep beginning a run immediately, because 128 files in
+            `tools/` click it and then measure a running game. So the choice
+            is offered ALONGSIDE it — the primary button keeps its id, its
+            position and its behaviour, and simply says which of the two it
+            is. Both write the same preference the settings checkbox writes,
+            so the small line under them is true rather than decorative.
+          -->
+          <div class="start-choice">
+            <button id="start-button" type="button">I'LL PICK MY POWERUPS</button>
+            <button id="start-autopick" type="button">PICK FOR ME</button>
+          </div>
+          <p class="start-note">You can change this any time in the settings menu.</p>
           <!--
             WHICH STAGE THIS BUTTON WILL START, and why the button itself is
             untouched.
