@@ -1005,9 +1005,22 @@ function weightOf(state: ProgressionState, opt: OfferOption): number {
   return Math.max(0.0001, w);
 }
 
+/*
+ * TWO ROWS, NOT THREE: the bomb card is gone with the bomb drop.
+ *
+ * It was `{ kind: 'bomb', label: 'ENCORE', note: 'one bomb in reserve' }`, and
+ * it went for the reason the drop did — "we recently removed bombs and wells
+ * from the game, so those drops should be deleted too". A grace card is the
+ * consolation a player gets when the draft has nothing left to offer them;
+ * spending that on a charge they cannot press is worse than the blank card it
+ * was written to replace.
+ *
+ * `GraceKind` keeps its `'bomb'` member and `world.applyOffer` keeps the
+ * branch that honours it, so a save or a tool carrying one is still answered.
+ * Nothing generates it now.
+ */
 const GRACE: readonly { kind: GraceKind; label: string; note: string; character: string }[] = [
   { kind: 'rest', label: 'REST', note: 'a shield back', character: 'mournful — a bar of rest' },
-  { kind: 'bomb', label: 'ENCORE', note: 'one bomb in reserve', character: 'heavy — a struck tam-tam' },
   { kind: 'shards', label: 'RESONATE', note: 'a handful of shards', character: 'shimmering — a ringing tail' },
 ];
 

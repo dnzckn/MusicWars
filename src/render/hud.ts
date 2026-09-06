@@ -573,21 +573,24 @@ export class Hud {
       this.els.lives.appendChild(pip);
     }
 
-    // Consumables: bombs then black holes, so both panic buttons read at once.
+    /*
+     * THE CONSUMABLE ROW IS EMPTY, and that is the whole of it.
+     *
+     * It drew five bomb pips and three black-hole pips — "both panic buttons
+     * read at once". Neither button exists: the touch row was cut back to the
+     * run's decisions, no kill drops a bomb any more, and DOWNBEAT fires its
+     * field instead of banking a charge. A readout of two stocks a player can
+     * neither spend nor collect is the clearest kind of clutter, and it sat in
+     * the top-left corner of a phone screen where space is the scarcest thing
+     * the game has.
+     *
+     * `#ui-stock` itself stays in the markup, emptied here rather than deleted
+     * there: `tools/domwiring.mjs` asserts every id the code reaches for
+     * exists, `panelshot` measures the corner groups, and an element with no
+     * children takes no space. The bombs a run still carries are spent by
+     * `autoBombRescue` without being asked for, so there is nothing to show.
+     */
     this.els.stock.replaceChildren();
-    // Five, the cap `world.ts` actually enforces on a bomb pickup. At three,
-    // the fourth and fifth were collected and invisible — same defect as the
-    // lives row above.
-    for (let i = 0; i < 5; i++) {
-      const pip = document.createElement('i');
-      pip.className = i < snap.bombs ? 'bomb on' : 'bomb';
-      this.els.stock.appendChild(pip);
-    }
-    for (let i = 0; i < 3; i++) {
-      const pip = document.createElement('i');
-      pip.className = i < snap.wells ? 'well on' : 'well';
-      this.els.stock.appendChild(pip);
-    }
   }
 
   /**

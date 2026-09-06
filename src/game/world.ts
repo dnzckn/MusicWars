@@ -4487,7 +4487,10 @@ export class World {
        * matter what the stage was doing.
        */
       this.player.lives = Math.min(this.player.maxLives + 2, this.player.lives + 1);
-      this.player.bombs = Math.min(5, this.player.bombs + 1);
+      // The +1 bomb that rode along with the extra life is gone with the bomb
+      // drop: a reward the player cannot spend is not a reward. The LIFE is
+      // untouched — lives are the one stock this game is actually about.
+
       this.popups.push({ x: this.player.x, y: this.player.y - 40, text: 'EXTEND', age: 0, hue: 150, big: true });
       // Steeper than the score curve, so extends stay rare as scores inflate.
       this.nextExtend = Math.round(this.nextExtend * 3.2);
@@ -7768,10 +7771,10 @@ export class World {
       if (dist2(d.x, d.y, this.player.x, this.player.y) < r * r) {
         const def = powerupDef(d.kind);
         const level = this.player.addPowerup(d.kind, def.duration);
-        if (d.kind === 'bomb') this.player.bombs = Math.min(5, this.player.bombs + 1);
+        // `bomb` has weight 0 now (see `POWERUPS`), so no kill can put one on
+        // the floor; the branch that granted a charge here went with it.
         if (d.kind === 'encore') {
           this.player.hp = this.player.maxHp;
-          this.player.bombs = Math.min(5, this.player.bombs + 1);
           this.player.invuln = Math.max(this.player.invuln, 3);
           this.clearRoom();
         }
@@ -10250,8 +10253,30 @@ export class World {
    * `pendingWell` and `player.wells` all stay reachable — one tier further up
    * than before.
    */
-  private fieldSwallows(id: string): boolean {
-    return id === 'downbeat';
+  private fieldSwallows(_id: string): boolean {
+    /*
+     * NOTHING SWALLOWS ANY MORE, and the argument is the one written four
+     * paragraphs up, arriving at its own conclusion one tier later.
+     *
+     * That note says a base weapon whose property only happens when the player
+     * presses a second button is a base weapon whose property does not happen
+     * — "the defect class this pass exists to remove" — and it kept the
+     * mechanic for DOWNBEAT alone, where a player who had built that far could
+     * be assumed to know the well key. There is no well key on a phone: the
+     * touch row was cut back to the run's decisions on the owner's word, and
+     * the majority audience plays there. So DOWNBEAT's charge was a field that
+     * banked forever and never landed, which is the same defect with a longer
+     * fuse.
+     *
+     * It fires directly now, like every other field weapon. `throwWell`,
+     * `pendingWell` and `player.wells` are left in place and unreachable
+     * rather than deleted: they are three fields and a method, the well key
+     * still calls the thrower harmlessly, and a future ability that wants a
+     * banked charge has the machinery to hand. `tools/deadhunt-branches.mjs`
+     * will now name them, which is the honest state — dead and visible beats
+     * live and unusable.
+     */
+    return false;
   }
 
   /** The charge waiting to be thrown, and the stats it will be thrown with. */

@@ -82,7 +82,26 @@ export const POWERUPS: readonly PowerupDef[] = [
   { kind: 'timewarp', label: 'TIMEWARP', duration: 17, hue: 210, weight: 0, sound: 'half-time, at exactly the same tempo' },
   // The three surges that stayed out of progression, and the only three that
   // a kill can still drop.
-  { kind: 'bomb', label: 'BOMB', duration: 0, hue: 20, weight: 1.0, sound: 'a slow sub heartbeat' },
+  /*
+   * WEIGHT 0: BOMB NO LONGER REACHES THE FLOOR. "there's still a ton of drops
+   * that relate to bomb, well, and lives, but we recently removed bombs and
+   * wells from the game, so those drops should be deleted too."
+   *
+   * It was 1.0 — the heaviest row in the table and the commonest thing on the
+   * ground. A phone has no bomb button since the touch row was cut back to the
+   * run's decisions, so every one of those pickups was a bright object a
+   * player crossed the field for and could not spend. The KIND stays, with its
+   * label, hue and sound, for the same reason the nine progression rows above
+   * kept theirs: `powerupDef` is looked up by kind from saves, from
+   * `ENSEMBLE_MIX`, and from the audio signature table, and a table with three
+   * rows in it would lose the record of what the others were.
+   *
+   * The charges themselves are not gone: a run still starts with three and
+   * `autoBombRescue` still spends one to save a player from the hit that would
+   * have killed them — the mercy nobody has to press. What has gone is asking
+   * the player to collect a resource they cannot use.
+   */
+  { kind: 'bomb', label: 'BOMB', duration: 0, hue: 20, weight: 0, sound: 'a slow sub heartbeat' },
   /*
    * Hue 300, not 15. BOMB is 20 and these are the two commonest things on the
    * floor; five degrees apart they were the same orange dot at a glance, and
