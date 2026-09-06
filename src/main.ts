@@ -366,26 +366,50 @@ function routeOfferPointer(e: PointerEvent): boolean {
 }
 
 /*
- * THE MOUSE SCHEME. The owner's ask, verbatim: "clicking should boost, not
- * clicking should decelerate then holding left or right to turn wth mouse".
+ * THE POINTER SCHEME — one throttle rule for the finger and the mouse button.
  *
- * The state lives in `Input` (`engageMouse` / `setMouseHeld` / `setMouseX`)
- * and is read in `sample()` beside the touch target; these handlers only
- * translate events. Three decisions are made here rather than there, because
- * they are about the page and not about the axis:
+ * The owner, after playing on a phone, verbatim: "clicking on the screen
+ * makes the ship slow down (if the click is behind the ship), should
+ * literally be binary, click to go faster or youre decelerating so a little
+ * like flappy bird in a sense, but letting go shouldnt slow down the ship but
+ * go back to base line speed, so to slow dowh the ship you need to click and
+ * drag backwards".
  *
- * ENGAGEMENT IS A CLICK ON THE FIELD, IN A RUN. Not a click on the START
- * button (the title screen is inside `#stage`, so that pointerdown bubbles
- * through here — `inRun` is still false at that instant), not a click on a
- * level-up card (`routeOfferPointer` consumes it first), not a click on the
- * pause screen or the game-over screen, and not a click on the HUD's gear —
- * `onField` requires the event to have landed on a canvas or the stage itself.
- * A keyboard player who picks cards with the mouse must never find their ship
- * at the back stop because the scheme took an offer click as the deliberate
- * act; and a mouse that is merely resting on the desk must not steer. Once
- * engaged, HELD is tracked physically — any primary-button press over the
- * stage, and the `buttons` bit on every move, so a release that happened over
- * another window is caught the moment the cursor comes back.
+ * The state lives in `Input` — `pressPointer` / `dragPointer` /
+ * `releasePointer` for the throttle both devices share, `engageMouse` /
+ * `setMouseX` for the cursor's steer, `setPointerTarget` for the finger's —
+ * and is read in `sample()`; these handlers only translate events. Every
+ * y handed to the throttle is a VIEW y from `toView`, for both devices, so
+ * `BRAKE_DRAG_ENGAGE` means the same distance on the screen whichever hand is
+ * on it. The finger's steer stays a WORLD x from `toWorld`, compared with the
+ * ship's world x as it always was; the cursor's steer is a view x, see below.
+ * The decisions made here rather than in `Input` are about the page, not the
+ * axis:
+ *
+ * MOUSE ENGAGEMENT IS A CLICK ON THE FIELD, IN A RUN. Not a click on the
+ * START button (the title screen is inside `#stage`, so that pointerdown
+ * bubbles through here — `inRun` is still false at that instant), not a click
+ * on a level-up card (`routeOfferPointer` consumes it first), not a click on
+ * the pause screen or the game-over screen, and not a click on the HUD's gear
+ * — `onField` requires the event to have landed on a canvas or the stage
+ * itself. A mouse that is merely resting on the desk must not steer, and a
+ * keyboard player who picks cards with the mouse must not find the cursor
+ * steering their ship afterwards. Once engaged, the button is tracked
+ * physically — any primary-button press over the stage, and the `buttons`
+ * bit on every move, so a release that happened over another window is
+ * caught the moment the cursor comes back, and a press that began over
+ * another window and dragged in counts from where it entered.
+ *
+ * THE FINGER THAT PRESSED IS THE FINGER THAT RELEASES. A tap on FOCUS, BOMB
+ * or WELL is a second pointer: its pointerdown is stopped in `bindTouchButton`
+ * and never reaches here, but its pointerup bubbles through the stage — and
+ * before this it cleared the steering target, so lifting a thumb off FOCUS
+ * stopped the other thumb steering. Under a scheme where a held finger is the
+ * BOOST that would have been a second thumb cancelling the first, so the
+ * release is keyed on `pointerId`: only the contact that owns the throttle
+ * lets it go. A second finger on the FIELD takes ownership (`pressPointer`
+ * restarts the gesture from it), which is the least surprising reading of
+ * "the newest touch is the one I mean".
  *
  * ONLY THE PRIMARY BUTTON BOOSTS, and the context menu is suppressed while
  * engaged so a right-click mid-fight does not open a menu over the field. A
@@ -396,14 +420,13 @@ function routeOfferPointer(e: PointerEvent): boolean {
  * stage is caught by the `window` listener below instead. The touch path keeps
  * its capture because a dragging finger has no leave semantics worth keeping.
  *
- * `toView`, NOT `toWorld`, and this is the one place the two callers below
- * genuinely differ. The touch target is a point in the simulation the finger
- * is dragging toward; the cursor is a point on the SCREEN the ship is steered
- * beside, and the camera follows the ship across the track, so a cursor fixed
- * in world space at its last event drifts away from the pointer as the camera
- * pans — measured as the ship stopping 19 px short of a still cursor. `Input`
- * compares the view x against `shipX - viewX`, which the update hook feeds it
- * every step.
+ * `toView` FOR THE CURSOR'S X, NOT `toWorld`. The camera follows the ship
+ * across the track, so a cursor fixed in world space at its last event drifts
+ * away from the pointer as the camera pans — measured as the ship stopping
+ * 19 px short of a still cursor. `Input` compares the view x against
+ * `shipX - viewX`, which the update hook feeds it every step. A finger sends
+ * a `pointermove` whenever it moves, so its world x has not been measured
+ * going stale the same way, and it is left in world space.
  *
  * `preventDefault` only when the press landed on the field: the volume slider
  * and the HUD's buttons live inside `#stage`, and cancelling their pointerdown
@@ -419,15 +442,30 @@ function mouseLive(): boolean {
   return inRun && !paused && !world.isOver && !world.choosing;
 }
 
+/** The pointer id that currently owns the touch throttle and steer, or null. */
+let touchContactId: number | null = null;
+
+/**
+ * The physical truth of a contact, applied to the shared throttle: down with
+ * nothing pressed is a press from here, down while pressed is a drag, up is a
+ * release. Idempotent, so it can be fed from every move event.
+ */
+function pointerContact(down: boolean, viewY: number): void {
+  if (!down) input.releasePointer();
+  else if (input.pointerPressed) input.dragPointer(viewY);
+  else input.pressPointer(viewY);
+}
+
 function mousePointerDown(e: PointerEvent): void {
   if (e.button !== 0) return;
+  const v = toView(e);
   if (!input.mouseActive) {
     if (!mouseLive() || !onField(e)) return;
-    input.engageMouse(toView(e).x);
+    input.engageMouse(v.x);
   } else {
-    input.setMouseX(toView(e).x);
+    input.setMouseX(v.x);
   }
-  input.setMouseHeld(true);
+  input.pressPointer(v.y);
   if (onField(e)) e.preventDefault();
 }
 
@@ -449,8 +487,10 @@ stage.addEventListener('pointerdown', (e) => {
     // buttons are pushed off the bottom of the window on the very first touch.
     layout();
   }
-  const pt = toWorld(e);
-  input.setPointerTarget(pt.x, pt.y);
+  // World x for the steer, view y for the brake gesture — see the note above.
+  input.setPointerTarget(toWorld(e).x);
+  touchContactId = e.pointerId;
+  input.pressPointer(toView(e).y);
   try {
     stage.setPointerCapture(e.pointerId);
   } catch {
@@ -462,10 +502,11 @@ stage.addEventListener('pointerdown', (e) => {
 stage.addEventListener('pointermove', (e) => {
   if (e.pointerType === 'mouse') {
     if (!input.mouseActive) return;
-    input.setMouseX(toView(e).x);
+    const v = toView(e);
+    input.setMouseX(v.x);
     // The physical truth of the button, which `pointerup` alone cannot give:
     // a release over another window never reaches this page's listeners.
-    input.setMouseHeld((e.buttons & 1) !== 0);
+    pointerContact((e.buttons & 1) !== 0, v.y);
     return;
   }
   // Do not steer while an offer is open. The world is paused, so a drag across
@@ -475,12 +516,30 @@ stage.addEventListener('pointermove', (e) => {
   // the ship actually crept across the arena while they read; it still matters,
   // because the input is live even while the simulation is not.)
   if (world.choosing) return;
-  const pt = toWorld(e);
-  input.setPointerTarget(pt.x, pt.y);
+  // Only the finger that pressed the FIELD steers or throttles. Touch
+  // implicitly captures to the element a finger lands on, so a thumb wiggling
+  // on FOCUS bubbles its moves through here too — and used to steer the ship
+  // toward the FOCUS button. A finger this page never saw press the field
+  // (its down went to a button, or to a card) is inert until it lifts.
+  if (e.pointerId !== touchContactId) return;
+  // `buttons` is NOT consulted here, unlike the mouse path: a touch pointermove
+  // only exists while the contact does, so the move IS the physical truth —
+  // and `tools/touchcheck.mjs` synthesises its moves without `buttons`, which
+  // a mouse-style check would have read as sixty releases. Through
+  // `pointerContact` rather than `dragPointer` so a press that `blur` let go
+  // of while the finger stayed down is taken up again from where it is.
+  pointerContact(true, toView(e).y);
+  input.setPointerTarget(toWorld(e).x);
   e.preventDefault();
 });
 const releasePointer = (e: PointerEvent) => {
   if (e.pointerType === 'mouse') return;
+  // Only the contact that owns the throttle releases it — see the note above
+  // on FOCUS/BOMB/WELL. A null owner means a press this page never saw; let
+  // any lift clear it, as it always did.
+  if (touchContactId !== null && e.pointerId !== touchContactId) return;
+  touchContactId = null;
+  input.releasePointer();
   input.setPointerTarget(null);
 };
 stage.addEventListener('pointerup', releasePointer);
@@ -492,7 +551,7 @@ stage.addEventListener('pointerleave', (e) => {
 // On `window`, not the stage: a button let go over the HUD, the page margin or
 // the browser chrome is still let go. Cheap enough to run unconditionally.
 const releaseMouse = (e: PointerEvent) => {
-  if (e.pointerType === 'mouse' && e.button === 0) input.setMouseHeld(false);
+  if (e.pointerType === 'mouse' && e.button === 0) input.releasePointer();
 };
 window.addEventListener('pointerup', releaseMouse);
 window.addEventListener('pointercancel', releaseMouse);
@@ -985,10 +1044,10 @@ const loop = new Loop({
     const injected = import.meta.env.DEV
       ? ((window as unknown as Record<string, unknown>).__botInput as typeof input.state | null)
       : null;
-    // Pointer steering needs to know where the ship is to steer toward a point;
-    // the mouse cursor is held in view space, so it also needs the camera.
+    // Pointer steering needs the ship's x to steer beside it — only x, since
+    // the finger no longer pulls in y — and the mouse cursor is held in view
+    // space, so it also needs the camera.
     input.shipX = world.player.x;
-    input.shipY = world.player.y;
     input.viewX = world.camera.viewX;
     const state = injected ?? input.sample();
     /*
@@ -1341,8 +1400,12 @@ async function startRun(): Promise<void> {
   world.stage = selectedStage;
   world.unlocked = forceFullRoster ? null : unlockedRoster(meta);
   // The mouse is inert again until it is clicked on the field: the AGAIN and
-  // START clicks that bring a player here are not that click.
-  input.resetMouse();
+  // START clicks that bring a player here are not that click. The pointer
+  // throttle and the finger's steer are let go with it; the finger that
+  // tapped START has lifted (the click fires after its pointerup), so nothing
+  // real is being dropped.
+  input.resetPointer();
+  touchContactId = null;
   hideScreens();
   // Drop the victory treatment with the screen. It is re-decided on the next
   // `run:over` either way, but a hidden element carrying the previous run's

@@ -1,4 +1,28 @@
-/** Confirms the game is playable with touch alone, at phone size. */
+/**
+ * Confirms the game is playable with touch alone, at phone size.
+ *
+ * THE THROTTLE RULE, since 2026-09-06. The owner, from a phone: "clicking on
+ * the screen makes the ship slow down (if the click is behind the ship),
+ * should literally be binary, click to go faster or youre decelerating … but
+ * letting go shouldnt slow down the ship but go back to base line speed, so
+ * to slow dowh the ship you need to click and drag backwards". The touch
+ * layer used to steer toward the finger in y as well as x, which is that bug.
+ * This tool never asserted the y-following — its one movement assertion is
+ * the x displacement of the drag, which survives unchanged — so nothing was
+ * replaced; three assertions were ADDED for the rule that took its place:
+ * while the finger is down and not dragged, `world.throttle` reads exactly
+ * +1 on every sample (binary: a held finger is the boost, wherever it
+ * landed — here it lands at 60% of the field's height, below the ship), the
+ * ship's `vy` goes at least 200 px/s past its pre-touch cruise (the trim is
+ * `TRIM_SPEED` = 430 at full throttle, less the settle term's 160 at the
+ * top clamp; measured -700 against a cruise of -430), and 150 ms after the
+ * lift the throttle reads 0 — cruise, not the -1 the previous day's mouse
+ * rule would have given. Read off the world, not the input, so the whole
+ * path from a synthetic `PointerEvent` through `main.ts` to `World.update`
+ * is under the assertion. Seen red by running this file against a mutated
+ * `input.ts`: pressed-reads-0 ("throttle held" min 0, "vy" not past the
+ * cruise) and released-reads-minus-1 ("after lift" -1), then restored.
+ */
 import { chromium, devices } from 'playwright';
 import { freezePage } from './lib/frozen.mjs';
 const b = await chromium.launch({ executablePath: process.env.CHROME_PATH, args: ['--autoplay-policy=no-user-gesture-required','--mute-audio'] });
@@ -13,7 +37,11 @@ await p.waitForTimeout(2500);
 
 const box = await p.locator('#playfield').boundingBox();
 const cx = box.x + box.width / 2;
-const before = await p.evaluate(() => ({ x: window.__musicwars.world.player.x, y: window.__musicwars.world.player.y }));
+const before = await p.evaluate(() => ({
+  x: window.__musicwars.world.player.x,
+  y: window.__musicwars.world.player.y,
+  vy: window.__musicwars.world.player.vy,
+}));
 
 // Drag: down near the middle, move left, hold.
 await p.touchscreen.tap(cx, box.y + box.height * 0.8);
@@ -40,14 +68,37 @@ const moved = await p.evaluate(async () => {
    * without depending on where in the bar the shutter fell.
    */
   let firing = 0;
+  // The throttle over the hold, min and max: binary means both read 1.
+  let thrMin = Infinity;
+  let thrMax = -Infinity;
+  let minVy = Infinity;
   for (let i = 0; i < 60; i++) {
     send('pointermove', r.left + r.width * 0.2, r.top + r.height * 0.6);
-    firing = Math.max(firing, mw.world.playerBullets.count);
+    // Sample AFTER the wait: a read in the same tick as the pointerdown sees
+    // the world before any simulation step has looked at the finger, and
+    // reported the pre-touch throttle as the hold's minimum (-0 on the first
+    // run of this assertion). The harness being early, not the game being
+    // slow.
     await new Promise((res) => setTimeout(res, 16));
+    firing = Math.max(firing, mw.world.playerBullets.count);
+    thrMin = Math.min(thrMin, mw.world.throttle);
+    thrMax = Math.max(thrMax, mw.world.throttle);
+    minVy = Math.min(minVy, mw.world.player.vy);
   }
   const pos = { x: mw.world.player.x, y: mw.world.player.y };
   send('pointerup', r.left + r.width * 0.2, r.top + r.height * 0.6);
-  return { pos, firing, controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden') };
+  // Long enough for several simulation steps; the release is level state, not an edge.
+  await new Promise((res) => setTimeout(res, 150));
+  const after = mw.world.throttle;
+  return {
+    pos,
+    firing,
+    thrMin,
+    thrMax,
+    minVy,
+    after,
+    controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden'),
+  };
 });
 // Tap the bomb button.
 const bombed = await p.evaluate(async () => {
@@ -87,8 +138,19 @@ await b.close();
 console.log('ship before drag:', JSON.stringify(before));
 console.log('ship after drag :', JSON.stringify({ x: Math.round(moved.pos.x), y: Math.round(moved.pos.y) }));
 console.log('auto-firing     :', moved.firing > 0, ' controls visible:', moved.controlsVisible);
+console.log('throttle held   : min', moved.thrMin, 'max', moved.thrMax, '(want 1, 1 — a held finger is the boost, wherever it landed)');
+console.log('vy during hold  : min', Math.round(moved.minVy), 'vs cruise before', Math.round(before.vy), '(want at least 200 past it)');
+console.log('after the lift  : throttle', moved.after, '(want 0 — cruise, not -1)');
 console.log('bomb button     :', bombed.before, '->', bombed.after);
 console.log('page errors     :', errs.length ? errs.slice(0, 2) : 'none');
-const ok = Math.abs(moved.pos.x - before.x) > 60 && moved.firing > 0 && moved.controlsVisible && bombed.after < bombed.before && !errs.length && overlap.length === 0;
+const throttleOk = moved.thrMin === 1 && moved.thrMax === 1 && moved.minVy < before.vy - 200 && moved.after === 0;
+const ok =
+  Math.abs(moved.pos.x - before.x) > 60 &&
+  moved.firing > 0 &&
+  throttleOk &&
+  moved.controlsVisible &&
+  bombed.after < bombed.before &&
+  !errs.length &&
+  overlap.length === 0;
 console.log(ok ? 'PLAYABLE ON TOUCH' : 'touch controls incomplete');
 if (!ok) process.exit(1);
