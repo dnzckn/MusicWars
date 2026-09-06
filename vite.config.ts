@@ -2,6 +2,21 @@ import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
+  /*
+   * RELATIVE ASSET PATHS, so one build serves every host the game has.
+   *
+   * GitHub Pages serves a project site under `/MusicWars/`, not `/`, and
+   * Vite's default base of `/` would have index.html asking for
+   * `/assets/index-….js` at the domain root and getting the 404 page. `./`
+   * makes every asset reference relative to index.html, which is right on
+   * Pages, on `vite preview`, on the Electron `file://` load and in the
+   * standalone package — none of which cares where the file sits. Nothing
+   * in `src/` fetches an absolute site path (grep: the only `/src/…` URLs
+   * are the two in index.html that Vite rewrites at build); the fonts and
+   * drum samples are absolute CDN URLs and unaffected. `/MusicWars/` was the
+   * alternative and would have broken every other host to fix one.
+   */
+  base: './',
   resolve: {
     alias: {
       /*

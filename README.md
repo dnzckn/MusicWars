@@ -33,6 +33,10 @@ screen drives the tension model that decides how hard the track goes.
 
 ![MusicWars](docs/img/gameplay.png)
 
+Play it in a browser at <https://dnzckn.github.io/MusicWars/> — built from
+`master` by the Pages workflow on every push, so it is always the current
+tree. Or run it locally:
+
 ```bash
 npm install && npm run dev
 ```
