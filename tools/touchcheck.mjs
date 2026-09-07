@@ -177,38 +177,74 @@ const moved = await p.evaluate(async () => {
   send('pointerup', x0, y0);
   await settle(150);
 
-  // ---- PART 2: A REAL DRAG. The finger actually travels. ------------------
+  // ---- PART 2: AN OFFSET, HELD. The thumb moves once and then stops. ------
   /*
-   * THE DRAG IS 120 CSS px OF ACTUAL TRAVEL, and the ship is expected to
-   * answer with the same distance in VIEW px. The two are different units:
-   * `cssPerView` is about 0.54 on this profile, so 120 CSS px is ~223 view px
-   * of ship. The check converts rather than assuming, because a hard-coded
-   * view figure would silently stop meaning "the same distance the thumb
-   * went" the moment the view zoom changed.
+   * THE STICK MUST NOT DECAY, and this is the browser-side statement of it.
+   *
+   * The owner, twice: "if i drag i should continue to be steering in that
+   * direction until i let go", and before that, "seems there's a maximum
+   * amount of movement per drag, there shouldn't be". So the thumb builds a
+   * 60 CSS px offset, and then STOPS MOVING for a second while the ship is
+   * watched in two halves. Both halves must show travel, and the second must
+   * be within a quarter of the first: a stick that decays, or a model that
+   * arrives at a target, shows a big first half and a dead second one.
+   *
+   * WHAT THIS REPLACES, and why it is not a relaxation. The old assertion was
+   * "a 120 CSS px stroke moves the ship 241 view px, within 15%" — a DISTANCE,
+   * because the drag used to be a displacement. It was a true statement about
+   * a model that has been deleted, and it is unstateable now: under a held
+   * stick the distance travelled is speed times time, so the same stroke
+   * covers whatever ground the thumb rests for. Distance was never the
+   * property anyone wanted; continuing to move was.
    */
-  const cssPerView = r.width / mw.world.viewW;
-  const DRAG_CSS = 120;
-  const dragFrom = { x: mw.world.player.x, vy: mw.world.player.vy };
+  const HOLD_CSS = 60;
   send('pointerdown', x0, y0);
-  for (let i = 1; i <= 40; i++) {
-    send('pointermove', x0 + (DRAG_CSS * i) / 40, y0);
+  for (let i = 1; i <= 10; i++) {
+    send('pointermove', x0 + (HOLD_CSS * i) / 10, y0);
     await settle(16);
     firing = Math.max(firing, mw.world.playerBullets.count);
   }
-  await settle(120); // let the ship finish closing the last few px
-  const dragDx = mw.world.player.x - dragFrom.x;
-  send('pointerup', x0 + DRAG_CSS, y0);
-  await settle(150);
+  await settle(120); // let the ship reach the speed the offset is asking for
+  const holdA = mw.world.player.x;
+  const tA = performance.now();
+  /*
+   * THE THUMB IS NOW STILL, AND STILL MEANS NO EVENTS AT ALL.
+   *
+   * The first version of this held the offset by sending `pointermove` to the
+   * SAME coordinates thirty times. That is not a still thumb — a still thumb
+   * sends nothing — and it hid the exact defect this block exists to catch:
+   * fail-testing mutated the stick to be CONSUMED on every read, which is the
+   * maximum-travel-per-drag bug in its purest form, and touchcheck stayed
+   * green because each redundant move re-armed the offset the read had just
+   * eaten. Found by `tools/touchmutate.mjs`, not by reasoning.
+   */
+  await settle(480);
+  const holdB = mw.world.player.x;
+  const tB = performance.now();
+  await settle(480);
+  const holdC = mw.world.player.x;
+  const tC = performance.now();
+  send('pointerup', x0 + HOLD_CSS, y0);
+  await settle(200);
+  const afterVx = mw.world.player.vx;
   const afterThrottle = mw.world.throttle;
 
   return {
     stillDx,
     stillThrMax,
     stillVyMin,
-    stillVyBefore: dragFrom.vy,
+    stillVyBefore: stillFrom.vy,
     stillCharge,
-    dragDx,
-    dragWant: DRAG_CSS / cssPerView,
+    /*
+     * SPEEDS, NOT DISTANCES. The two windows are driven by `setTimeout` in a
+     * page that is also running the game, so they are not the same length —
+     * measured, a nominal 480 ms window ran about 1.3 s. Comparing raw
+     * displacement therefore compares wall-clock jitter as much as it compares
+     * the control. px/s is the quantity the assertion actually means.
+     */
+    firstSpeed: ((holdB - holdA) / (tB - tA)) * 1000,
+    secondSpeed: ((holdC - holdB) / (tC - tB)) * 1000,
+    afterVx,
     firing,
     afterThrottle,
     controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden'),
@@ -230,6 +266,7 @@ const trackBox = await p.locator('#warp-lever .warp-track').boundingBox();
 const lever = await (async () => {
   const lx = leverBox.x + leverBox.width / 2;
   const bottom = trackBox.y + trackBox.height - 6;
+  await p.waitForTimeout(400); // let the previous probe's velocity damp out
   const shipBefore = await p.evaluate(() => window.__musicwars.world.player.x);
   await p.touchscreen.tap(lx, bottom); // a TAP on the lever must do nothing
   await p.waitForTimeout(200);
@@ -592,7 +629,8 @@ if (__reloads() > 0) console.log(`WARNING: page reloaded ${__reloads()}x mid-run
 await b.close();
 console.log('\nship before drag:', JSON.stringify(before));
 console.log('STILL PRESS     : ship moved', Math.round(moved.stillDx), 'px (want under 5), |throttle| max', moved.stillThrMax.toFixed(2), '(want 0), vy', Math.round(moved.stillVyMin), 'vs cruise', Math.round(moved.stillVyBefore), '(want no faster), warpCharge', moved.stillCharge.toFixed(2), '(want 0)');
-console.log('REAL DRAG       : ship moved', Math.round(moved.dragDx), 'px for a 120 css px stroke =', Math.round(moved.dragWant), 'view px (want within 15%)');
+console.log('HELD OFFSET     : ship ran at', Math.round(moved.firstSpeed), 'px/s then', Math.round(moved.secondSpeed), 'px/s, thumb still throughout (want both > 80 and within 20% — a decaying stick reads fast then dead)');
+console.log('after the lift  : vx', Math.round(moved.afterVx), '(want ~0 — the stick centres)');
 console.log('auto-firing     :', moved.firing > 0, ' controls visible:', moved.controlsVisible);
 console.log('after the lift  : throttle', moved.afterThrottle, '(want 0)');
 console.log('warp lever      : box', Math.round(leverBox.width), 'x', Math.round(leverBox.height), 'css px (want w>=44); a tap alone warped:', lever.afterTap, '(want false); stroke up engaged:', lever.engaged, '; latched after release:', lever.latched, '; stroke down dropped out:', !lever.dropped, '; ship dragged by the lever:', Math.round(lever.steered), 'px (want 0)');
@@ -640,7 +678,11 @@ const stillOk =
   moved.stillThrMax < 1e-6 &&
   moved.stillVyMin > moved.stillVyBefore - 20 &&
   moved.stillCharge < 1e-6;
-const dragOk = Math.abs(Math.abs(moved.dragDx) - moved.dragWant) < moved.dragWant * 0.15;
+const holdOk =
+  Math.abs(moved.firstSpeed) > 80 &&
+  Math.abs(moved.secondSpeed) > 80 &&
+  Math.abs(Math.abs(moved.secondSpeed) - Math.abs(moved.firstSpeed)) < Math.abs(moved.firstSpeed) * 0.2 &&
+  Math.abs(moved.afterVx) < 40;
 /*
  * `steered` is the term the lever had to be driven a second way to establish:
  * a lever that does not stop propagation warps AND flies the ship at once, and
@@ -656,7 +698,7 @@ const warpLeverOk =
   lever.steered < 1;
 const ok =
   stillOk &&
-  dragOk &&
+  holdOk &&
   warpLeverOk &&
   moved.firing > 0 &&
   moved.afterThrottle === 0 &&

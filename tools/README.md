@@ -174,6 +174,37 @@ doing, but it is worth doing carefully and with somewhere to fall back to.
   working altogether. The stage does not merely also hear a gesture aimed at
   its children — it takes it.
 
+- The drag, THIRD MODEL (2026-09-06, same day as the first two). The owner:
+  "still unable to click and drag and hold that drag to keep moving in that
+  direction, seems there's a maximum amount of movement per drag, there
+  shouldn't be: eg if i drag i should continue to be steering in that direction
+  until i let go". The first model steered toward the finger's POSITION; the
+  second read the drag as a DISPLACEMENT and moved the ship that far, measured
+  at a faithful 1:1 — and was still wrong, because a stroke is bounded by the
+  glass, so a displacement model has a maximum travel per gesture BY
+  CONSTRUCTION. A leash, a gain and keeping the target alive past the lift were
+  all tried against that ceiling; none of them removes it, because the model has
+  it. The third reads the offset from the press point as a HELD STICK: direction
+  is heading, length is speed, and it stays until you let go. Measured: a 60 css
+  px offset, thumb then still, runs the ship at 427 px/s and then 431 px/s
+  across two windows — flat.
+
+  Two harness defects came out of fail-testing it, and both are the same shape:
+  a check that quietly tests less than it claims. `touchcheck` held its "still"
+  thumb by re-sending `pointermove` to the SAME coordinates thirty times, which
+  is not a still thumb — a still thumb sends nothing — and it re-armed the
+  offset every frame, so a mutation that CONSUMED the stick on read (the
+  maximum-travel bug in its purest form) left the gate green. And `inputmutate`
+  counted a mutation that failed to apply as a pass, so it reported "0 caught
+  nothing" while two rows proved nothing at all. Both fixed; the second is why
+  the harness now prints and counts non-applying rows as failures.
+
+  A third finding is worth keeping as a rule: `releasePointer` zeroing the drag
+  offset was untestable, because `sample()` already reads it only inside `if
+  (pointerDown)`. Two locks, neither individually observable — remove either and
+  nothing goes red. The redundant one was deleted and the load-bearing guard is
+  what the harness now mutates.
+
 - `variety` / `tensionprobe` — what a player hears over an uninterrupted run.
   Found tension never exceeding 0.5 across 1132 samples: the master musical
   signal, which drives mode selection, section choice and every stem fader, only

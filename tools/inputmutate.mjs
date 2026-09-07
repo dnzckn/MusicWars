@@ -20,38 +20,44 @@ const SRC = 'src/core/input.ts';
 const raw = readFileSync(SRC, 'utf8');
 const original = raw.split('\r\n').join('\n');
 
+const NL = String.fromCharCode(10);
+
 const MUTATIONS = [
   ['press writes y again', (s) =>
-    s.replace('    if (this.dragStation !== null) {',
-      '    if (this.pointerDown) dragY -= 1;\n    if (this.dragStation !== null) {')],
+    s.replace('    if (this.pointerDown) {' + NL + '      if (Math.abs(this.dragDX)',
+      '    if (this.pointerDown) dragY -= 1;' + NL + '    if (this.pointerDown) {' + NL + '      if (Math.abs(this.dragDX)')],
   ['drag summed before the throttle read', (s) =>
     s.replace('    const throttle = Math.max(-1, Math.min(1, -y));',
-      '    y = Math.max(-1, Math.min(1, y + dragY));\n    const throttle = Math.max(-1, Math.min(1, -y));')],
-  ['DRAG_RANGE doubled', (s) => s.replace('export const DRAG_RANGE = 40;', 'export const DRAG_RANGE = 80;')],
+      '    y = Math.max(-1, Math.min(1, y + dragY));' + NL + '    const throttle = Math.max(-1, Math.min(1, -y));')],
+  ['DRAG_RANGE doubled', (s) => s.replace('export const DRAG_RANGE = 90;', 'export const DRAG_RANGE = 180;')],
   ['DRAG_DEAD zeroed', (s) => s.replace('export const DRAG_DEAD = 3;', 'export const DRAG_DEAD = 0;')],
-  ['outer clamp removed on x', (s) =>
-    s.replace('if (Math.abs(dx) > DRAG_DEAD) x += Math.max(-1, Math.min(1, dx / DRAG_RANGE));',
-      'if (Math.abs(dx) > DRAG_DEAD) x += dx / DRAG_RANGE;')],
-  ['the reachable-box clamp removed on x', (s) =>
-    s.replace('this.dragX = Math.max(this.dragXMin, Math.min(this.dragXMax, this.dragX));', 'this.dragX = this.dragX;')],
-  ['the station clamped at the FRONT too, deleting the rail tow', (s) =>
-    s.replace('this.dragStation = Math.min(this.dragStationMax, this.dragStation);',
-      'this.dragStation = Math.max(this.shipStation, Math.min(this.dragStationMax, this.dragStation));')],
-  ['pressPointer stops re-basing', (s) =>
-    s.replace('    this.dragX = this.shipX;\n    this.dragStation = this.shipStation;\n    if (touch) {',
-      '    this.dragX ??= this.shipX;\n    this.dragStation ??= this.shipStation;\n    if (touch) {')],
+  ['the clamp removed on the x offset', (s) =>
+    s.replace('x += Math.max(-1, Math.min(1, this.dragDX / DRAG_RANGE));', 'x += this.dragDX / DRAG_RANGE;')],
+  /*
+   * THE ONE THAT MATTERS. A stick that is CONSUMED on read is a displacement
+   * model wearing a stick's clothes: it answers once and then centres itself,
+   * which is exactly the maximum-travel-per-drag defect the owner reported
+   * twice. Only the hold assertion can see it — every ratio check in C3 samples
+   * the first step and would stay green.
+   */
+  ['the offset is consumed on read (the stick decays)', (s) =>
+    s.replace('      if (Math.abs(this.dragDY) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, this.dragDY / DRAG_RANGE));' + NL + '    }',
+      '      if (Math.abs(this.dragDY) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, this.dragDY / DRAG_RANGE));' + NL + '      this.dragDX = 0;' + NL + '      this.dragDY = 0;' + NL + '    }')],
+  ['pressPointer stops re-basing the origin', (s) =>
+    s.replace('    this.dragOriginX = viewX;' + NL + '    this.dragOriginY = viewY;' + NL + '    this.dragDX = 0;' + NL + '    this.dragDY = 0;' + NL + '    if (touch) {',
+      '    this.dragDX = 0;' + NL + '    this.dragDY = 0;' + NL + '    if (touch) {')],
   ['rebaseDrag made a no-op', (s) =>
-    s.replace('  rebaseDrag(viewX: number, viewY: number): void {\n    if (!this.pointerDown) return;',
-      '  rebaseDrag(viewX: number, viewY: number): void {\n    if (this.pointerDown) return;')],
-  ['releasing clears the target again, truncating the stroke', (s) =>
-    s.replace('    this.pointerDown = false;' + String.fromCharCode(10) + '    this.pointerFiring = false;',
-      '    this.pointerDown = false;' + String.fromCharCode(10) + '    this.dragX = null;' + String.fromCharCode(10) + '    this.dragStation = null;' + String.fromCharCode(10) + '    this.pointerFiring = false;')],
+    s.replace('  rebaseDrag(viewX: number, viewY: number): void {' + NL + '    if (!this.pointerDown) return;',
+      '  rebaseDrag(viewX: number, viewY: number): void {' + NL + '    if (this.pointerDown) return;')],
+  ['the pointerDown guard removed from sample()', (s) =>
+    s.replace('    if (this.pointerDown) {' + NL + '      if (Math.abs(this.dragDX)',
+      '    if (true) {' + NL + '      if (Math.abs(this.dragDX)')],
   ['the mouse path sets touchActive', (s) =>
-    s.replace('    if (touch) {\n      this.touchActive = true;', '    if (true) {\n      this.touchActive = true;')],
+    s.replace('    if (touch) {' + NL + '      this.touchActive = true;', '    if (true) {' + NL + '      this.touchActive = true;')],
   ['warpLever published as ?? 0', (s) =>
     s.replace('this.state.warpLever = this.warpLever;', 'this.state.warpLever = this.warpLever ?? 0;')],
   ['resetPointer leaves the lever', (s) =>
-    s.replace('    this.releasePointer();\n    this.warpLever = null;', '    this.releasePointer();')],
+    s.replace('    this.releasePointer();' + NL + '    this.warpLever = null;', '    this.releasePointer();')],
 ];
 
 const reds = (out) =>

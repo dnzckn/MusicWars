@@ -13,9 +13,10 @@ to your home screen for a full-screen launch.
 
 The ship never stops — you only steer it.
 
-- **Drag anywhere to fly.** The ship moves by how far you drag, not toward
-  where you point, so your thumb can rest anywhere. A press that doesn't move
-  does nothing, and a tap is the handbrake.
+- **Drag anywhere to fly.** Where you hold your thumb relative to where you
+  pressed is the stick: the direction is the heading, the distance is the
+  speed, and it keeps steering that way until you let go. Your thumb can rest
+  anywhere, and a press that doesn't move does nothing.
 - **Pull the lever at the right edge up to WARP** — the stage spawns 50% faster
   until you pull it back down. It is the difficulty dial, mid-run.
 - Firing is automatic.

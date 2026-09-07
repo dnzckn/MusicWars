@@ -70,7 +70,7 @@ import { abilityLevels } from './game/progression';
 import { instrumentDef, labelOf } from './game/weapons';
 import { Renderer } from './render/renderer';
 import { World } from './game/world';
-import { PLAYFIELD_W, setView, stageBox, viewForStage } from './game/field';
+import { setView, stageBox, viewForStage } from './game/field';
 import { TOTAL_WAVES } from './game/waves';
 
 const playfield = document.getElementById('playfield') as HTMLCanvasElement;
@@ -1324,20 +1324,12 @@ const loop = new Loop({
     // Pointer steering needs the ship's x to steer beside it — only x, since
     // the finger no longer pulls in y — and the mouse cursor is held in view
     // space, so it also needs the camera.
-    input.shipX = world.player.x;
-    // The ship's station in the track window — see `Input.shipStation`. The
-    // un-shaken `viewY` for the same reason `toWorld` uses it: screenshake
-    // must not reach the steer.
-    input.shipStation = world.player.y - world.camera.viewY;
     /*
-     * The box the drag target may hold, in the same two spaces the target is
-     * kept in. The walls are the ship's own; the back of the track window is
-     * converted to a station the same way `shipStation` is. The front is left
-     * at Infinity because it is not a bound — pushing past it tows the window.
+     * Nothing about the ship is fed to `Input` any more. The drag is a held
+     * offset, so the steer is a pure function of the pointer — see the
+     * tombstone on `shipX` there for what used to be here and why five numbers
+     * a frame, including one derived from the camera, are gone.
      */
-    input.dragXMin = 12;
-    input.dragXMax = PLAYFIELD_W - 12;
-    input.dragStationMax = world.trackBack - world.camera.viewY;
     const state = injected ?? input.sample();
     /*
      * THE ONE INBOUND EDGE OF THE GAME/MUSIC BOUNDARY.

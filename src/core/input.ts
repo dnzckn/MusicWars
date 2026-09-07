@@ -103,26 +103,29 @@ export interface InputState {
 export const WARP_STICK = 0.92;
 
 /**
- * THE DRAG BAND: how far the ship must still travel, in view px, for the
- * stick to reach full lock.
+ * THE THROW: how far from where you pressed, in view px, is full lock.
  *
- * The pointer no longer says where the ship should BE (that was
- * `pointerTargetX` and the cursor steer, both tombstoned above); it says how
- * far the player has dragged it from where it was. Inside this band the stick
- * eases off so the ship settles onto the target instead of arriving at full
- * lateral speed and stopping dead — the same easing the absolute steer had
- * over its last 46 px, kept for the same reason.
+ * The drag is a stick and this is its travel. Inside it the ship is
+ * proportionally slower, which is what makes fine positioning possible at all
+ * — a stick that is either off or flat out is a d-pad, and this game is dodged
+ * through gaps.
  *
- * CHOSEN, NOT MEASURED, and deliberately SMALL. The band is not the gain:
- * the gain is 1:1 by construction, because a drag of N view px moves the
- * target N view px and the ship chases the target at up to `PLAYER_SPEED`,
- * which is far quicker than a thumb. The band only decides the last few
- * pixels. At 40 view px it is about 21 CSS px on a 390-wide phone — under a
- * fingertip, so a player never feels it as lag — and wide enough that the
- * ship is not bang-bang against a target the thumb is jittering around.
- * Larger and the ship lags a fast stroke; smaller and it hunts.
+ * It was 40 when the drag was a DISPLACEMENT, where this number meant
+ * something else entirely (how much gap was left to the target) and where a
+ * short value was right because it only governed the last few pixels of an
+ * arrival. As a throw, 40 view px is about 19 CSS px on a phone — under a
+ * fingertip, so the ship would be at full speed before the thumb had visibly
+ * moved, and there would be no proportional band a player could actually sit
+ * in.
+ *
+ * CHOSEN, NOT MEASURED: 90 view px is about 42 CSS px on a 390-wide phone,
+ * which is the throw a physical thumbstick gets on a controller and roughly
+ * what mobile shooters use for an on-screen one. Big enough that half-speed is
+ * a place you can hold, small enough that full speed is one comfortable push
+ * from centre. This and `DRAG_DEAD` are the two numbers to move when the feel
+ * is reported from the phone.
  */
-export const DRAG_RANGE = 40;
+export const DRAG_RANGE = 90;
 
 /**
  * Movement under this many view px of gap steers nothing.
@@ -219,49 +222,53 @@ const FOCUS_KEYS = new Set(['ShiftLeft', 'ShiftRight', 'KeyL']);
 
 export class Input {
   /**
-   * THE POINTER MOVES THE SHIP BY HOW FAR IT DRAGS, NOT BY WHERE IT IS.
+   * THE DRAG IS A STICK YOU HOLD, NOT A DISTANCE YOU TRAVEL.
    *
-   * The owner, playing on a phone: "clicking on the screen moves the ship
-   * forward it shouldn't do that, only dragging moves the ship". Asked
-   * whether the ship should follow the finger's POSITION or only its
-   * MOVEMENT, they chose movement — "a tap that doesn't move does nothing".
+   * The offset of the pointer from where the press began IS the stick: its
+   * direction is the heading and its length is the speed, and it stays that
+   * way for as long as the contact lasts. Let go and it is zero.
    *
-   * TOMBSTONE — `pointerTargetX`, the absolute steer this replaces. It held
-   * the finger's world x and the ship swam toward it, which is the convention
-   * most mobile shmups use, and it had two faults the owner met in one
-   * session: a tap anywhere teleported the ship's intent to that column (a
-   * still press 30 px from the left wall walked the ship 336 px, measured),
-   * and the thumb had to sit ON the ship's line to fly straight, which is
-   * where the arrivals land. Relative drag lets the thumb rest anywhere.
+   * THE OWNER HAS NOW ASKED FOR THIS TWICE, and the second time named the
+   * defect exactly: "still unable to click and drag and hold that drag to keep
+   * moving in that direction, seems there's a maximum amount of movement per
+   * drag, there shouldn't be: eg if i drag i should continue to be steering in
+   * that direction until i let go".
    *
-   * A RE-BASING VIRTUAL TARGET, NOT A POSITION DELTA, and that distinction is
-   * the whole design. Writing the drag straight onto `player.x` would bypass
-   * the flight model, and four things downstream read VELOCITY rather than
-   * the stick: the bank (`player.ts`), the camera's lookahead (`camera.ts`),
-   * the gauge/starfield/plume off `player.vy` (`renderer.ts`), and the facing,
-   * which is gated on `push > FACING_DEADZONE` — a 200 px stroke over half a
-   * second is 3.3 px per step, so a raw delta would never clear that gate and
-   * the nose would stop turning. A delta is also EDGE-shaped, and `sample()`
-   * runs up to `MAX_STEPS` times per frame: it would apply 4x at 30 Hz and 0x
-   * on a spare frame, which is the multi-step bug this file already documents
-   * on `pressed`. A target is a POSITION, so `sample()` stays idempotent and
-   * every downstream reader keeps getting a real stick.
+   * TOMBSTONE — THE VIRTUAL TARGET, `dragX`/`dragStation`, which this replaces.
+   * That model read the drag as a DISPLACEMENT: the ship was steered toward a
+   * point that the drag had moved, so a stroke of N pixels moved the ship N
+   * pixels and then it stopped, having arrived. It satisfied the letter of
+   * "the ship follows only its movement" and was measured doing it — a 120 css
+   * px stroke moved the ship 243 view px against 241 asked for, 1:1 — and it
+   * was still wrong, because a stroke is bounded by the glass. There is only
+   * so much thumb travel available, so a displacement model has a maximum
+   * movement per drag BY CONSTRUCTION, and the only way to keep going was to
+   * lift and stroke again. Nothing about tuning it (a leash, a gain, keeping
+   * the target alive past the lift — all three were tried) removes that
+   * ceiling; the model has it.
    *
-   * TWO SPACES, ON PURPOSE. `dragX` is a WORLD x, because view px and world px
-   * are the same size and the arena's walls are the only clamp x needs — so
-   * nothing about the camera enters the lateral steer. `dragStation` is a
-   * VIEW y, because the fore-and-aft axis is a place in a track window that
-   * SLIDES FORWARD at the rail speed: a world-space y target would be
-   * overtaken by the window every step and a resting thumb would read as
-   * "brake". Station is the only frame in which "hold what I have" is
-   * stationary. It is also the one place the camera reaches the simulation;
-   * see `shipStation`.
+   * A HELD OFFSET HAS NO CEILING. The thumb sits still, the ship keeps flying,
+   * and a wall is the only thing that stops it.
+   *
+   * What survives from the old model is the part that was right: the gesture
+   * is RELATIVE. The origin is wherever the press landed, so the thumb can
+   * rest anywhere and a press that never moves is still worth exactly nothing.
+   * That was the owner's first complaint — "clicking on the screen moves the
+   * ship forward it shouldn't do that" — and it is preserved here by
+   * construction rather than by argument: a zero offset is a zero stick.
+   *
+   * NO SHIP FEEDBACK AT ALL, which is the other thing this buys. The target
+   * model had to be told where the ship was every step (`shipX`, `shipStation`)
+   * and had to be clamped into the box the ship could reach, and the station
+   * had to be kept in VIEW space because the track window slides — so the
+   * camera reached into the steer. An offset needs none of it. `sample()` is
+   * a pure function of the pointer again.
    */
-  private dragX: number | null = null;
-  private dragStation: number | null = null;
-  /** Where the pointer was last seen, in view px, so a move becomes a delta. */
-  private dragLastX = 0;
-  private dragLastY = 0;
+  private dragOriginX = 0;
+  private dragOriginY = 0;
+  /** The live offset from the origin, in view px. Zero unless something is down. */
+  private dragDX = 0;
+  private dragDY = 0;
   private pointerFiring = false;
   /** True once any touch has been seen, so the UI can adapt. */
   touchActive = false;
@@ -374,10 +381,10 @@ export class Input {
    */
   pressPointer(viewX: number, viewY: number, touch = false): void {
     this.pointerDown = true;
-    this.dragLastX = viewX;
-    this.dragLastY = viewY;
-    this.dragX = this.shipX;
-    this.dragStation = this.shipStation;
+    this.dragOriginX = viewX;
+    this.dragOriginY = viewY;
+    this.dragDX = 0;
+    this.dragDY = 0;
     if (touch) {
       this.touchActive = true;
       this.pointerFiring = true;
@@ -392,36 +399,30 @@ export class Input {
    * the cursor as well as of the thumb.
    */
   dragPointer(viewX: number, viewY: number): void {
-    if (!this.pointerDown || this.dragX === null || this.dragStation === null) return;
-    this.dragX += viewX - this.dragLastX;
-    this.dragStation += viewY - this.dragLastY;
-    this.dragLastX = viewX;
-    this.dragLastY = viewY;
+    if (!this.pointerDown) return;
+    this.dragDX = viewX - this.dragOriginX;
+    this.dragDY = viewY - this.dragOriginY;
   }
 
   /**
-   * The finger lifted or the button let go. THE TARGET STAYS.
+   * The finger lifted or the button let go: the stick returns to centre.
    *
-   * It used to be cleared here, and that is the second half of the owner's
-   * report — "i can only travel so far before i need to click again". A thumb
-   * moves several times faster than the ship can fly, so at the moment of the
-   * lift the ship is still some way short of where the stroke asked it to go.
-   * Clearing the target threw that remainder away, which made a fast flick
-   * deliver less than a third of its distance (31%, measured) while a slow
-   * drag delivered all of it. The gesture was quietly rewarding people for
-   * moving their thumb slowly.
+   * TOMBSTONE — for one revision this deliberately KEPT the drag alive past
+   * the lift, so that a stroke the ship had not finished travelling would go
+   * on being delivered. That was a repair to the displacement model, which
+   * threw away whatever the ship had not caught up with at the moment of the
+   * lift; it is meaningless here, because a held stick has nothing in flight.
+   * Letting go means stop asking, and the flight model's damping does the
+   * rest.
    *
-   * So the contact ends and the INTENT does not: the ship coasts the rest of
-   * the way and stops, because the target is a position and it arrives. It
-   * cannot run away — the target is clamped into the reachable box every step,
-   * so "the rest of the way" is always a real place on the field.
-   *
-   * This does not bring back the recentre spring `player.ts` tombstones. That
-   * pulled the ship somewhere it was never asked to go; this takes it exactly
-   * where it was asked to go, and then it holds the place the player left it
-   * in, which is the same rule as before. A player who wants to stop early
-   * presses again — a press re-bases the target onto the ship, so a tap is a
-   * handbrake.
+   * THE OFFSET IS NOT ZEROED HERE, DELIBERATELY. `sample()` reads it only
+   * inside `if (this.pointerDown)`, so ending the contact IS centring the
+   * stick, and a second mechanism would be a lock nobody can test: with both
+   * in place, removing either one alone changes no behaviour, so neither is
+   * covered by anything. Fail-testing found exactly that — the redundant clear
+   * was mutated away and nothing went red. The guard is the load-bearing one,
+   * because it also answers "nothing has ever been pressed", so it is the one
+   * that stayed and `tools/inputmutate.mjs` removes IT.
    */
   releasePointer(): void {
     this.pointerDown = false;
@@ -439,10 +440,10 @@ export class Input {
    */
   rebaseDrag(viewX: number, viewY: number): void {
     if (!this.pointerDown) return;
-    this.dragLastX = viewX;
-    this.dragLastY = viewY;
-    this.dragX = this.shipX;
-    this.dragStation = this.shipStation;
+    this.dragOriginX = viewX;
+    this.dragOriginY = viewY;
+    this.dragDX = 0;
+    this.dragDY = 0;
   }
 
   /**
@@ -546,51 +547,24 @@ export class Input {
   pointerReroll = false;
   pointerSkip = false;
 
-  /**
-   * The ship's world x, so the drag target knows where to re-base and how far
-   * it still has to pull. Set by `main.ts` every step.
-   */
-  shipX = 450;
-  /**
-   * The ship's y IN THE VIEW — its station in the track window, not its world
-   * y. Set by `main.ts` every step as `player.y - camera.viewY`.
-   *
-   * A `shipY` was deleted from here once, with the note that "a field nobody
-   * reads is a promise nobody keeps". This is not that field coming back: the
-   * old one was a WORLD y for an absolute steer, and the reason the vertical
-   * steer was removed is that a thumb resting below the ship read as a pull
-   * backwards. Station is a different quantity and it exists for a stated
-   * reason — see `dragStation`, which cannot be expressed in world space
-   * because the window it lives in slides forward every step.
-   *
-   * THIS IS THE ONE PLACE THE CAMERA REACHES THE SIMULATION, and `camera.ts`
-   * records that the camera is meant to be strictly downstream — `arena.mjs`
-   * producing bit-identical output is what established it. That property is
-   * intact where it is measured: every bot harness drives `World.update` with
-   * an input literal and never calls `sample()` at all, so no balance
-   * measurement can see this. If a bot is ever taught to steer through
-   * `Input`, this is the line to suspect first.
-   */
-  shipStation = 0;
-
   /*
-   * THE REACHABLE BOX, fed by `main.ts` every step beside `shipX`.
+   * TOMBSTONE — `shipX`, `shipStation`, `dragXMin`, `dragXMax`,
+   * `dragStationMax`: the whole ship-feedback loop.
    *
-   * The drag target is clamped into this and nowhere else, which is what makes
-   * the control always answer: every point it can hold is a point the ship can
-   * actually get to, so there is never a hidden distance to drag back before
-   * anything moves. `dragXMin`/`dragXMax` are the arena walls the ship is
-   * already clamped to; `dragStationMax` is the BACK of the track window in
-   * view px. There is no minimum station on purpose — see the note in
-   * `sample()`; the front of the window is not a bound.
+   * The displacement model steered toward a POINT, so it had to be told where
+   * the ship was every step in order to know how far was left, and the point
+   * had to be clamped into the box the ship could reach or a drag into a wall
+   * wound up unrecoverably. `shipStation` in particular had to be kept in VIEW
+   * space, because the track window slides forward every step and a world-space
+   * y would be overtaken by it — which meant the CAMERA reached into the steer,
+   * the one place this project deliberately keeps strictly downstream.
    *
-   * The defaults are deliberately wide rather than zero: a harness that never
-   * sets them gets an unclamped drag, which is the old behaviour and not a
-   * ship pinned to x = 0.
+   * A held stick needs none of it. `sample()` is a pure function of the
+   * pointer and the keys again, the camera is back out of the simulation, and
+   * `main.ts` stopped feeding five numbers a frame. Deleted rather than left
+   * populated: a field nobody reads is a promise nobody keeps, and
+   * `tools/session.mjs` counts inert controls.
    */
-  dragXMin = -Infinity;
-  dragXMax = Infinity;
-  dragStationMax = Infinity;
 
   /**
    * The warp lever's travel, 0 (down, out) to 1 (up, engaged) — or NULL while
@@ -689,55 +663,32 @@ export class Input {
     }
 
     /*
-     * THE DRAG, ON BOTH AXES, AS A SATURATING CONTROLLER ON A LEASHED TARGET.
+     * THE DRAG, ON BOTH AXES: THE OFFSET IS THE STICK.
      *
-     * `dragX` and `dragStation` are where the player has dragged the ship TO;
-     * the stick is how far that still is, over `DRAG_RANGE`, clamped. Under
-     * `DRAG_RANGE` of the target the ship eases in instead of arriving at
-     * full lateral speed and stopping dead, which is the same easing the
-     * absolute steer had over its last 46 px and for the same reason.
+     * Direction is the heading, length is the speed, over `DRAG_RANGE` and
+     * clamped. It is held for as long as the contact is, which is the whole
+     * point — "if i drag i should continue to be steering in that direction
+     * until i let go" — so there is no maximum travel per gesture and no
+     * arriving. A thumb parked 90 px right of where it landed is a thumb
+     * holding full right, and it keeps meaning that until it moves or lifts.
      *
-     * THE LEASH IS APPLIED HERE, EVERY STEP, AGAINST THE SHIP'S LIVE
-     * POSITION — not at the moment of the drag. Two things need it. A target
-     * driven into a wall would otherwise wind up arbitrarily far outside the
-     * arena, and coming back would need hundreds of px of drag against a
-     * ship that had not moved; and the whole sustained-boost gesture depends
-     * on the target being ALLOWED to sit ahead of a ship that cannot reach
-     * it. Once the ship pins at the front of the track window it stops
-     * closing the gap, the leash holds the target `DRAG_LEASH` ahead of it,
-     * the stick stays saturated at -1, and the ship goes on towing the rail —
-     * which is what "hold forward and the stage comes at you faster" is made
-     * of. A target clamped into the window instead would zero the stick at
-     * the front edge and quietly delete that.
+     * NO SHIP IN THIS BLOCK, and that is the measure of how much simpler the
+     * held stick is than the target it replaced. No feedback, no clamp into a
+     * reachable box, no camera, and nothing to wind up: the offset is bounded
+     * by the glass the thumb is on.
      *
      * KEYS AND PAD ADD TO THE SAME AXES AND THE SUM IS CLAMPED. The clamp
      * cannot be left to the normalise below: the normalise scales x and y
      * together, so D held on top of a full-lock drag would push x to 2 and
      * come out of the hypot as a MORE lateral heading than full lock. The
-     * steer is a position, not a sum. There is no longer a keys-beat-pointer
-     * override — with both clamped into the same axis, holding W while
-     * dragging forward is already full forward, and holding W while dragging
-     * back is a player asking for two opposite things and getting neither.
+     * steer is a position, not a sum. There is no keys-beat-pointer override —
+     * holding W while dragging forward is already full forward, and holding W
+     * while dragging back is a player asking for two opposite things and
+     * getting neither.
      */
-    if (this.dragX !== null) {
-      // Into the arena, whose walls the ship is clamped to anyway. A target
-      // outside them is a distance the player would have to drag back before
-      // the ship answered again.
-      this.dragX = Math.max(this.dragXMin, Math.min(this.dragXMax, this.dragX));
-      const dx = this.dragX - this.shipX;
-      if (Math.abs(dx) > DRAG_DEAD) x += Math.max(-1, Math.min(1, dx / DRAG_RANGE));
-    }
-    if (this.dragStation !== null) {
-      /*
-       * ONE-SIDED. The back of the track window is a wall and is clamped; the
-       * front is not a wall at all — pushing past it tows the window forward
-       * — so the target is left free to run ahead and the stick stays
-       * saturated for as long as the player keeps asking. Clamping this end
-       * too would silently delete "drag forward and the stage comes at you".
-       */
-      this.dragStation = Math.min(this.dragStationMax, this.dragStation);
-      const dy = this.dragStation - this.shipStation;
-      if (Math.abs(dy) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, dy / DRAG_RANGE));
+    if (this.pointerDown) {
+      if (Math.abs(this.dragDX) > DRAG_DEAD) x += Math.max(-1, Math.min(1, this.dragDX / DRAG_RANGE));
+      if (Math.abs(this.dragDY) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, this.dragDY / DRAG_RANGE));
     }
     x = Math.max(-1, Math.min(1, x));
 

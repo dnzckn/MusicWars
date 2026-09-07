@@ -16,25 +16,35 @@ const FILES = ['src/core/input.ts', 'src/main.ts'];
 const raw = Object.fromEntries(FILES.map((f) => [f, readFileSync(f, 'utf8')]));
 const original = Object.fromEntries(FILES.map((f) => [f, raw[f].split('\r\n').join('\n')]));
 
+const CHR10 = String.fromCharCode(10);
+
 const MUTATIONS = [
   [
     'a press is a boost again (input.ts)',
     'src/core/input.ts',
     (s) =>
       s.replace(
-        '    if (this.dragStation !== null) {',
-        '    if (this.pointerDown) dragY -= 1;\n    if (this.dragStation !== null) {',
+        '    if (this.pointerDown) {' + CHR10 + '      if (Math.abs(this.dragDX)',
+        '    if (this.pointerDown) dragY -= 1;' + CHR10 + '    if (this.pointerDown) {' + CHR10 + '      if (Math.abs(this.dragDX)',
       ),
   ],
   [
-    'the drag gain is halved (input.ts)',
+    'the stick is consumed on read, so it decays (input.ts)',
     'src/core/input.ts',
     (s) =>
       s.replace(
-        '    this.dragX += viewX - this.dragLastX;',
-        '    this.dragX += (viewX - this.dragLastX) * 0.5;',
+        '      if (Math.abs(this.dragDY) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, this.dragDY / DRAG_RANGE));' + CHR10 + '    }',
+        '      if (Math.abs(this.dragDY) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, this.dragDY / DRAG_RANGE));' + CHR10 + '      this.dragDX = 0;' + CHR10 + '      this.dragDY = 0;' + CHR10 + '    }',
       ),
   ],
+  /*
+   * NOT HERE: doubling DRAG_RANGE. Fail-testing showed touchcheck cannot see
+   * it, and correctly so — halving the speed halves both measurement windows
+   * equally, so their ratio is unchanged and the floor is still cleared. The
+   * throw is pinned by `inputcheck`'s literal "a 90 px offset is full lock,
+   * 45 is half", which is where a number belongs. A row here that proves
+   * nothing is worse than no row.
+   */
   [
     'the lever stops stopping propagation (main.ts)',
     'src/main.ts',
