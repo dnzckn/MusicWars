@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      `maximum-scale=1` is the Android half of "no pinch zoom on the touch
+      buttons"; iOS has ignored it since iOS 10 and is covered by the
+      `touch-action` rules in style.css instead. A zoomed page has no way back
+      on a phone — measured computed styles in the platform audit: every
+      `.screen` and the touch row allowed pinch and double-tap zoom.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>MusicWars</title>
+    <meta name="description" content="A bullet hell whose soundtrack is generated live from the fight." />
+    <meta name="theme-color" content="#05060c" />
+    <!--
+      ADD TO HOME SCREEN. The majority audience plays on the phone, and a
+      browser tab is the one part of that experience the game cannot style:
+      the URL bar takes 56px on Android and about 100 on iOS, and the page
+      never scrolls, so neither ever collapses. Installed, the game gets the
+      whole screen, its own icon and a launch that does not look like a
+      website.
+
+      Every path is RELATIVE, for the reason `vite.config.ts` sets
+      `base: "./"`: Pages serves this under /MusicWars/, and a root-absolute
+      href would ask the domain root and get the 404 page. The manifest's own
+      `start_url` and `scope` are "./" too, and resolve against the manifest's
+      URL, so the installed app opens the same subpath.
+
+      Both spellings of the capable flag: Chrome deprecated the `apple-`
+      prefixed one in 2024 and iOS still reads only that one. iOS also ignores
+      the manifest's icons and reads `apple-touch-icon` instead, which is why
+      that link exists beside a manifest that already lists three.
+    -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="MusicWars" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      Both sample origins are first contacted only after START (`bootAudio`
+      begins the kit and font loads), so on cellular the DNS+TLS to two cold
+      hosts — 0.3-1 s each — sits between the tap and the first sample byte;
+      `samples.ts` records 2.96 s cold. Warming both while the title screen
+      is read costs nothing and needs no gesture.
+    -->
+    <link rel="preconnect" href="https://strudel.b-cdn.net" crossorigin />
+    <link rel="preconnect" href="https://felixroos.github.io" crossorigin />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305060c'/%3E%3Cpath d='M16 4 L26 26 L16 21 L6 26 Z' fill='%2335e6ff'/%3E%3Ccircle cx='16' cy='18' r='3' fill='%23ff2e6e'/%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-DUiAPTec.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BXopLEE-.css">
+  </head>
+  <body>
+    <div id="app">
+      <main id="stage">
+        <!--
+          900x1120 is the VIEW, not the world — and it is only the STARTING
+          view.
+
+          The simulation is 3000x3000 (`src/game/field.ts`) and the camera
+          shows one view-sized rectangle of it. These two attributes are the
+          initial backing-store size of the canvases; `main.ts` derives the
+          real view from the window on the first layout pass and `renderer.ts`
+          resizes the backing stores to `VIEW_W/VIEW_H * devicePixelRatio`, so
+          these numbers survive for exactly one frame. They must still track
+          `VIEW_W`/`VIEW_H` rather than `PLAYFIELD_W`/`PLAYFIELD_H`: setting
+          them from the field would allocate a 3000x3000 bitmap per canvas,
+          11x the pixels, to draw one screen into.
+
+          `#stage` used to carry `aspect-ratio: 900 / 1120` in `src/style.css`
+          and that rule is gone. The stage is the window now and the VIEW is
+          derived from the stage, which is the same guarantee — that the two
+          rectangles are the same shape — reached from the other end.
+        -->
+        <canvas id="playfield" width="900" height="1120"></canvas>
+        <canvas id="overlay" width="900" height="1120"></canvas>
+
+        <!--
+          THE HUD, over the playfield.
+
+          This replaces a 460px sidebar that took 30% of a 1512px window while
+          another 150px sat empty beside a portrait playfield: 48.7% of the
+          screen was the game. The rule for what lives here is what a player
+          ACTS ON mid-fight — how hurt they are, what they are holding and at
+          what level, how close the next level-up is, and how the run is going.
+          Everything else the sidebar carried is diagnostic and is behind the
+          gear or on the pause screen.
+
+          `pointer-events: none` on the container and `auto` on the one button,
+          so nothing here can eat a tap meant for the ship. The whole thing is
+          `hidden` until the run starts.
+        -->
+        <div id="hud" class="hud hidden">
+          <div class="hud-tl">
+            <!--
+              Vitals first, because they are the only thing here that is ever
+              urgent. Three rows of pips, unlabelled: shape and colour carry it
+              — green squares are the health bar, half-lit for half a unit; the
+              other two rows are empty and kept: the cyan LIVES circles went
+              when the second health stock did, and the gold/violet consumable
+              squares went when bombs and black holes stopped being things a
+              player collects or presses. The sidebar this replaced spent 48px
+              on the words SHIELD, LIVES and BOMB / WELL.
+            -->
+            <b id="ui-hp" class="pips"></b>
+            <b id="ui-lives" class="pips"></b>
+            <b id="ui-stock" class="pips"></b>
+            <!--
+              The band, as tiles rather than as name chips.
+
+              Four instruments and four rig items is eight labels of up to
+              fourteen characters — STRING SECTION, HEARTSWALLOWER — and a row
+              of those over the playfield is a paragraph. A tile carries the
+              two things that are actually actionable in a fight: WHICH of your
+              four this is (monogram plus the ability's own character hue, the
+              same hue the offer card uses) and WHAT LEVEL it is at, which is
+              the number that decides where the next pick goes. The full name is
+              on the tile's title and on the pause screen.
+            -->
+            <ul id="ui-players" class="slots"></ul>
+            <ul id="ui-rig" class="slots rig"></ul>
+            <!-- Field-dropped surges. They EXPIRE, which is why they are here
+                 and not behind the gear: a thing with a clock on it is a thing
+                 the player is timing. -->
+            <ul id="ui-powerups" class="powerups"></ul>
+            <!-- The wave's standing rule, for as long as it holds. The banner
+                 that announces one is gone in 2.4 seconds. -->
+            <p class="movement hidden" id="ui-movement"></p>
+            <!--
+              A combination already assembled, or one step away.
+
+              MOVED HERE FROM THE FOOT, and the reason is the treadmill. The
+              foot is the bottom edge of the screen, which under the old arena
+              was "the emptiest part of a survivor screen"; `spawnring` now
+              measures 96.4% of arrivals ASTERN, so the bottom band is the one
+              the enemies come through and this line was being printed across
+              them. Photographed at wave 23 with a body drawn through the word
+              STEP.
+
+              It belongs beside the slot tiles anyway: it names two of them and
+              tells you which to feed. Same glance, no travel.
+            -->
+            <p class="fusion-ready hidden" id="ui-fusion"></p>
+          </div>
+
+          <div class="hud-tr">
+            <!--
+              The gear, and now a pause button beside it.
+
+              A phone has no P key. The platform audit's critical row was that
+              a run backgrounded by one notification could never be resumed by
+              touch; the other half of that is that a run could never be
+              PAUSED by touch either — the only deliberate pause was a key.
+              Both are 44 px on a coarse pointer (`.gear` in style.css), the
+              gear having measured 34x34 against Apple's 44 pt minimum.
+            -->
+            <div class="hud-buttons">
+              <button id="ui-pause" class="gear" type="button" title="Pause (P)" aria-label="Pause">&#10074;&#10074;</button>
+              <button id="ui-gear" class="gear" type="button" title="Settings and diagnostics" aria-label="Settings">&#9881;</button>
+            </div>
+            <p class="hud-score"><b id="ui-score">0</b></p>
+            <p class="hud-mult" id="ui-combo">x1</p>
+            <p class="hud-run"><span>WAVE <b id="ui-wave">1</b></span><span id="ui-timer">0:00</span></p>
+            <!--
+              Level and progress toward the next one. It was bottom-centre with
+              the bar; see the fusion line's note for why the bottom band is no
+              longer empty ground.
+
+              The BAR stays on the bottom edge — five pixels flush to an edge
+              is not a widget and covers nothing — but the TEXT is a readout
+              and readouts belong with the other three (score, multiplier,
+              wave), which is the corner a player already glances at to ask how
+              the run is going. The banked-level-up prompt that shares this
+              element is now also drawn on the ship itself, where it cannot be
+              missed; this remains the precise count.
+            -->
+            <p class="xpline"><b id="ui-level">LV 1</b><span id="ui-xpnum">0 / 6</span></p>
+          </div>
+
+          <div class="hud-foot">
+            <!--
+              THE ONE DIAGNOSTIC THAT IS ACTIONABLE.
+
+              Everything else the sidebar reported went behind the gear, and
+              `#ui-audio` went with it — which broke a real promise rather than
+              a readout: on a phone the audio context suspends and the ONLY way
+              a player learns to tap is being told. `tools/mobileaudio.mjs`
+              asserts exactly that string reaches the screen, and it was right
+              to fail. This mirrors it into the HUD and is hidden whenever the
+              audio is fine, so it costs nothing the rest of the time.
+            -->
+            <p class="resume hidden" id="ui-resume"></p>
+            <!--
+              The bar, and NOW THE ONLY THING DOWN HERE.
+
+              `docs/progression.md`'s spec still holds — "thin, along an edge,
+              not a widget" — and five flush pixels is the one form of readout
+              that survives the geometry change: the enemies arrive through
+              this band and everything with a bounding box has left it. The
+              level number and the fusion telegraph that used to sit above it
+              are in the two top corners now; see their notes.
+            -->
+            <div class="xp"><i id="ui-xp"></i></div>
+          </div>
+        </div>
+
+        <!--
+          THE WARP LEVER — the only DRAGGABLE control in the game.
+
+          The owner: "let's just make a side bar the user can drag instead,
+          make it look cool but small, so pulling it up turns on warp then
+          pulling it down turns it off". Warp used to be the throttle held at
+          its forward stop, which meant every press on the glass was also a
+          bid to change mode. Now it is a thing you take hold of.
+
+          DOM AND NOT CANVAS, decided by a measurement this project already
+          paid for: the level-up offer's levers were drawn on the canvas, came
+          out at ~14 CSS px on a phone, could not be hit by a thumb, and were
+          replaced by DOM buttons. `tools/touchcheck.mjs` asserts a 44 CSS px
+          floor on touch targets because of it. The canvas throttle gauge four
+          pixels to the left of this is 12 CSS px wide on an iPhone 14 — fine
+          to LOOK at, impossible to GRAB.
+
+          INSIDE #stage, not beside it. The touch row is a flow sibling and
+          revealing it re-lays-out and re-zooms the playfield; a control that
+          appears when a run starts must not be able to do that under the
+          player's thumb. So this is absolutely positioned over the field like
+          the HUD, and `main.ts` stops its pointer events from reaching the
+          stage underneath — without that it would drag the lever and fly the
+          ship at the same time.
+
+          Small, per the ask: the visible bar is 16 CSS px wide. The BOX is 46,
+          transparent either side, because that is the part a thumb has to hit.
+        -->
+        <div id="warp-lever" class="warp hidden" role="slider" aria-label="Warp"
+             aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" tabindex="-1">
+          <div class="warp-track">
+            <i class="warp-fill"></i>
+            <i class="warp-knob"></i>
+          </div>
+          <span class="warp-cap">WARP</span>
+        </div>
+
+        <!--
+          Behind the gear.
+
+          Everything here was on the sidebar and none of it is acted on while
+          dodging: the mix readout is the product's own evidence rather than a
+          control, the enemy census repeats what is on screen, and the frame
+          counter is for whoever is measuring. Volume is the exception and the
+          reason this panel exists at all — the owner asked for it by name.
+        -->
+        <div id="settings" class="settings hidden" role="dialog" aria-label="Settings">
+          <header>
+            <span class="mark">MUSIC<b>WARS</b></span>
+            <button id="ui-gear-close" class="gear" type="button" aria-label="Close settings">&times;</button>
+          </header>
+
+          <section>
+            <h3>VOLUME</h3>
+            <div class="vol">
+              <button id="ui-mute" type="button" title="Mute (M)" aria-label="Mute">&#9835;</button>
+              <input id="ui-volume" type="range" min="0" max="100" value="75" aria-label="Master volume" />
+              <b id="ui-volnum">75</b>
+            </div>
+          </section>
+
+          <section>
+            <h3>UPGRADES</h3>
+            <label class="opt" for="ui-autopick">
+              <input id="ui-autopick" type="checkbox" />
+              <span>Pick upgrades for me, at random<br /><small>The card screen never appears. Levels are spent the moment they are earned.</small></span>
+            </label>
+          </section>
+
+          <section>
+            <h3>MIX<b class="live"><i></i><span id="ui-section">intro</span></b></h3>
+            <p class="nowline"><b id="ui-key">A aeolian</b><em>&middot;</em><b id="ui-feel">four-to-the-floor</b><em>&middot;</em><b id="ui-bpm">128</b></p>
+            <p class="reason" id="ui-reason"></p>
+            <div class="meter" title="what the arrangement is running on: danger or progress, whichever is higher">
+              <label>ENERGY <em id="ui-driver"></em></label>
+              <div class="bar"><i id="ui-tension"></i></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>ON STAGE</h3>
+            <ul id="ui-ensemble" class="ensemble"><li class="empty">empty stage</li></ul>
+          </section>
+
+          <section>
+            <h3>DIAGNOSTICS</h3>
+            <p class="diag">
+              <span><b id="ui-fps">--</b>fps</span>
+              <span><b id="ui-bodies">0</b>bodies</span>
+              <span><b id="ui-best">0</b>best</span>
+              <span class="audio"><b id="ui-audio">idle</b></span>
+            </p>
+          </section>
+
+          <p class="sub">press <kbd>P</kbd> to pause &middot; <kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd> for volume</p>
+        </div>
+
+        <!--
+          The opening.
+
+          There are about four bars between START and the first enemy while the
+          arrangement assembles itself — deliberate, and the reason the game
+          exists — but the playfield was empty for all of it and an empty
+          playfield reads as a broken game to anyone who does not already know
+          the premise. This says what the wait is: the band is arriving, and you
+          can watch each player take the stage.
+
+          It lives under the .screen overlays (z-index 5 against their 10) and is
+          only ever shown while the field is provably empty, so it can never
+          cover a bullet. The HUD fills the list.
+        -->
+        <div id="opening" class="opener hidden" aria-hidden="true">
+          <p class="opener-title">TUNING UP</p>
+          <p class="opener-sub">the band takes the stage before the fight does</p>
+          <!--
+            THE ONE THING ABOUT THIS GAME NOBODY CAN GUESS.
+
+            The ship flies on its own and the enemies arrive from ASTERN —
+            `spawnring` measures 96.4% of arrivals inside a cone centred on the
+            stern — so a new player's first instinct, which is to fly toward
+            the trouble, is the one move the controls will not perform. The
+            title screen's key list now says the forward axis is a throttle;
+            this says WHY it matters, and it says it in the one window where
+            the field is provably empty and there is nothing else to read.
+
+            Four bars of empty playfield were being spent entirely on the
+            premise of the soundtrack. That premise is worth the first line;
+            it is not worth all four bars.
+          -->
+          <!-- The shape of the run, in one line, filled by `Hud` from the
+               constants in `waves.ts` so it cannot drift from the schedule.
+               The run has an end and nothing on this screen said so. -->
+          <p class="opener-rule"><b>they come from behind you</b><span>the ship never stops &mdash; <kbd>W</kbd><kbd>S</kbd> only choose how fast</span><span class="shape" id="opening-shape"></span></p>
+          <ul id="opening-list" class="opener-list"></ul>
+          <p class="opener-foot">nothing you are about to hear was recorded in advance</p>
+        </div>
+
+        <div id="title-screen" class="screen">
+          <div class="hero">
+            <p class="eyebrow"><i></i>GENERATED LIVE &middot; NOTHING PRE-RECORDED</p>
+            <h1>MUSIC<span>WARS</span></h1>
+            <p class="tagline">A bullet hell scored in real time. Every musician on stage plays their part &mdash; the mix <em>is</em> the battlefield.</p>
+          </div>
+          <!-- The opening choice. Every run used to start with the same gun, so
+               the first real decision arrived minutes in. Three openers that
+               measured as viable AND play least alike; see `prog.STARTERS`. -->
+          <fieldset class="starters">
+            <legend>OPEN WITH</legend>
+            <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
+          </fieldset>
+          <!--
+            TWO DOORS INTO A RUN, AND THEY DIFFER ONLY IN WHO SPENDS THE
+            LEVELS. Asked for: "when the game starts should be menu that says,
+            let me pick my powerups, pick for me / then in small text shoudl
+            stay that you can change the setting sint he setting smenu".
+
+            It is two buttons rather than a menu IN FRONT of the start button,
+            for the reason the block below already records: `#start-button`
+            must keep beginning a run immediately, because 128 files in
+            `tools/` click it and then measure a running game. So the choice
+            is offered ALONGSIDE it — the primary button keeps its id, its
+            position and its behaviour, and simply says which of the two it
+            is. Both write the same preference the settings checkbox writes,
+            so the small line under them is true rather than decorative.
+          -->
+          <div class="start-choice">
+            <button id="start-button" type="button">I'LL PICK MY POWERUPS</button>
+            <button id="start-autopick" type="button">PICK FOR ME</button>
+          </div>
+          <p class="start-note">You can change this any time in the settings menu.</p>
+          <!--
+            WHICH STAGE THIS BUTTON WILL START, and why the button itself is
+            untouched.
+
+            `#start-button` begins a run IMMEDIATELY, at whatever stage is
+            selected, exactly as it always has. That is not a UX preference, it
+            is a hard constraint: 128 files in `tools/` do
+            `await p.click('#start-button')` and then measure a running game.
+            Making it open a menu would have taken the entire browser suite red
+            in one edit, and every one of those failures would have looked like
+            a game bug.
+
+            So the set list is a SECOND door rather than a gate in front of the
+            first. A new player presses the big button and plays; a returning
+            one has somewhere to spend their points. This line is the only thing
+            that changes about the primary path.
+          -->
+          <p class="best-line" id="title-stage"></p>
+          <button id="setlist-button" type="button" class="ghost">SET LIST &amp; SHOP</button>
+          <p class="best-line" id="title-best"></p>
+          <!-- What has ever been made, across runs. The fusion tree used to
+               vanish with the run; this is the only thing in the game that
+               persists past one.
+
+               A native <details> so the grid is one line until asked for: the
+               title screen already carries a hero, a tagline, three openers, a
+               start button and a control list, and a fourteen-row table
+               unfurled by default would bury all of it. Collapsed also means
+               no JS toggle to get wrong. See `game/discovery.ts`. -->
+          <details class="codex">
+            <summary class="discovered" id="title-discovered"></summary>
+            <ul class="codex-grid" id="codex-grid"></ul>
+          </details>
+          <!--
+            THE CONTROL LIST DESCRIBED A GAME THAT NO LONGER EXISTS.
+
+            Two things were wrong and both cost a first-time player their first
+            run. "Move / WASD" is not what the stick does any more: commit
+            7f867d7 made the ship auto-advance and turned the forward axis into
+            a THROTTLE — `wantY = -CRUISE_SPEED + input.y * trimTop`, with the
+            trim capped at the cruise so no stick position stops or reverses
+            it. A player told "move" and handed a ship that will not stop
+            concludes the controls are broken.
+
+            And SPACE — the key that spends banked level-ups, and therefore the
+            only way to get stronger at all — was in NEITHER control list, on
+            this screen or the pause screen. `input.ts` has had
+            `OPEN_OFFER_KEYS = new Set(['Space'])` since offers stopped
+            interrupting; nothing on any screen said so. A run photographed at
+            wave 23 was sitting on eight unspent levels.
+          -->
+          <dl class="controls">
+            <div><dt>Throttle</dt><dd><kbd>W</kbd><kbd>S</kbd><em>you never stop &mdash; only faster or slower</em></dd></div>
+            <!--
+              WARP IS ON THIS LIST BECAUSE IT IS A MODE, AND A MODE NOBODY IS
+              TOLD ABOUT IS A KEY NOBODY PRESSES. It is the one control here
+              that is not a verb you discover by pressing it: holding W is
+              already what a player does to run away, so without this line the
+              first warp anyone entered would arrive unexplained in the middle
+              of a dodge. The gauge shows the hold filling and the banner names
+              it, but both of those happen after the decision.
+            -->
+            <div><dt>Warp</dt><dd><em>pull the right-edge lever UP &mdash; the stage floods. Down to leave, or hold</em> <kbd>W</kbd><kbd>S</kbd></dd></div>
+            <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
+            <div><dt>Level up</dt><dd><kbd>Space</kbd><em>spend the levels you have banked</em></dd></div>
+            <div><dt>Focus</dt><dd><kbd>Shift</kbd></dd></div>
+            <div><dt>Bomb</dt><dd><kbd>X</kbd></dd></div>
+            <div><dt>Black hole</dt><dd><kbd>C</kbd></dd></div>
+            <div><dt>Pause</dt><dd><kbd>P</kbd><kbd>Esc</kbd></dd></div>
+            <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
+            <!--
+              THE MOUSE, in one line, and it is now the SAME line the thumb
+              gets: press and drag. The owner, after a session on a phone:
+              "clicking on the screen moves the ship forward it shouldn't do
+              that, only dragging moves the ship" — and, asked whether the ship
+              should follow the pointer's position or only its movement, chose
+              movement. So a click on its own does nothing at all, and the ship
+              answers the distance dragged. Inert until the first click on the
+              field in a run.
+
+              LAST, not beside Steer, and the reason is the fold: this list is
+              exactly one grid line from clipping at 1280x720 (see `.controls`
+              in `style.css`), so a row added here would push a line under it.
+              REWRITTEN IN PLACE for that reason rather than given a row of its
+              own. Measured with `_fits`.
+            -->
+            <div><dt>Mouse</dt><dd><em>press and drag to fly &mdash; hold the offset and it keeps going; the further from where you pressed, the faster</em></dd></div>
+          </dl>
+          <p class="touch-hint">On a touchscreen: drag and hold to keep flying that way &mdash; rest your thumb where you like. Pull the right-edge lever up to warp.</p>
+          <p class="warning">Headphones recommended. Nothing is pre-recorded &mdash; the track is generated live from the fight.</p>
+        </div>
+
+        <!--
+          THE SET LIST — the between-runs menu the owner asked for.
+
+          > "that way we have a continue, new game, and weapon shop menu before
+          >  starting up another round, then progressively rounds become
+          >  harder, but the user is selecting which round they would like to
+          >  attempt"
+
+          CONTINUE is the stage grid itself rather than a button. A CONTINUE
+          button would have to mean one of two things — resume the deepest
+          stage, or resume the last one played — and both are guesses about
+          which the player wants, in a menu whose entire purpose is that they
+          choose. The grid IS continuing: the save is loaded, the points are
+          spent, and every stage the player has earned is on it, with the one
+          they last played marked.
+
+          The reward multiplier is printed on every tile because the risk and
+          the reward have to be visible AT THE POINT THE DECISION IS MADE. A
+          set list that showed only which stages were open would be asking the
+          player to gamble without telling them the odds.
+        -->
+        <div id="menu-screen" class="screen hidden">
+          <h2>THE SET LIST</h2>
+          <p class="wallet"><b id="menu-points">0</b><span>POINTS</span><em id="menu-cleared"></em></p>
+
+          <!-- The same three openers as the title screen, rendered by the same
+               function into every `.starter-row` on the page. Two copies of the
+               markup, one copy of the state and one copy of the code — see
+               `paintOpeners` in main.ts. -->
+          <fieldset class="starters" id="menu-starters">
+            <legend>OPEN WITH</legend>
+            <div class="starter-row" role="radiogroup" aria-label="Starting instrument"></div>
+          </fieldset>
+
+          <ul class="stages" id="stage-grid"></ul>
+          <p class="sub" id="stage-hint"></p>
+
+          <div class="menu-actions">
+            <button id="shop-button" type="button" class="ghost">WEAPON SHOP</button>
+            <button id="menu-back" type="button" class="ghost">BACK</button>
+            <button id="newgame-button" type="button" class="ghost danger">NEW GAME</button>
+          </div>
+
+          <!--
+            NEW GAME IS DESTRUCTIVE AND SAYS SO BEFORE IT HAPPENS.
+
+            It discards every unlock the shop sold and every point banked, which
+            is the only irreversible button in the game. The confirmation names
+            what is lost in the player's own units — the count of weapons and
+            the balance — rather than saying "are you sure", because "are you
+            sure" is a question nobody reads.
+          -->
+          <div class="confirm hidden" id="newgame-confirm">
+            <p id="newgame-warning"></p>
+            <button id="newgame-yes" type="button" class="ghost danger">ERASE EVERYTHING</button>
+            <button id="newgame-no" type="button" class="ghost">KEEP MY SET</button>
+          </div>
+        </div>
+
+        <!--
+          THE WEAPON SHOP.
+
+          Every row shows what the thing DOES before it is bought, and the words
+          are the same words the level-up card will use when it is offered —
+          `stepNote(id, 1)`, the exact string `availableOptions` puts on a new
+          card. `docs/plan-meta.md` §3 asks for that and `tools/roster8.mjs`
+          asserts it row by row, because a shop description written separately
+          is a second copy of a string, and this repository has watched two
+          copies of one string drift three separate times.
+        -->
+        <div id="shop-screen" class="screen hidden">
+          <h2>WEAPON SHOP</h2>
+          <p class="wallet"><b id="shop-points">0</b><span>POINTS</span><em id="shop-next"></em></p>
+          <!-- The way out sits ABOVE the list, not under it. Twenty-six rows is
+               two and a half screens; a back button at the bottom is a back button
+               you have to scroll past everything to reach. -->
+          <button id="shop-back" type="button" class="ghost">BACK TO THE SET LIST</button>
+          <ul class="shop-grid" id="shop-grid"></ul>
+        </div>
+
+        <!--
+          THE PAUSE SCREEN IS TAPPABLE.
+
+          It was keyboard-only: "press P to resume", and `visibilitychange`
+          puts a phone here on every notification, lock and app switch — the
+          platform audit measured the screen staying up through taps on the
+          field and on the heading, with the sim frozen. RESUME is the primary
+          action and the backdrop resumes too (main.ts); SET LIST quits the run
+          through the same `run:over` path a death takes; SETTINGS opens the
+          gear's panel, which the pause overlay otherwise covers.
+        -->
+        <div id="pause-screen" class="screen hidden">
+          <h2>PAUSED</h2>
+          <div class="pause-actions">
+            <button id="pause-resume" type="button">RESUME</button>
+            <button id="pause-settings" type="button" class="ghost">SETTINGS</button>
+            <button id="pause-setlist" type="button" class="ghost danger">SET LIST</button>
+          </div>
+          <dl class="runstats">
+            <div><dt>SCORE</dt><dd id="pause-score">0</dd></div>
+            <div><dt>WAVE</dt><dd id="pause-wave">1</dd></div>
+            <div><dt>MULTIPLIER</dt><dd id="pause-mult">x1</dd></div>
+            <div><dt>NOTES</dt><dd id="pause-notes">0</dd></div>
+          </dl>
+          <!-- Where the run is: ACT a OF 4 · WAVE w OF 16 · b BOSSES DOWN. A
+               pause is the one moment a player can read anything, and the
+               screen said nothing about the run's shape. Filled in main.ts. -->
+          <p class="runline" id="pause-run"></p>
+          <p class="nowplaying" id="pause-music"></p>
+
+          <!-- The build plan. The HUD's one-line banner shows only the most
+               urgent combination, which is right mid-fight and useless for
+               planning; this is the same data in full, and a pause is the one
+               moment it can be read. Populated from `combinationPlan`. -->
+          <section class="workbench">
+            <h3>WORKBENCH</h3>
+            <ul class="combos" id="pause-combos"></ul>
+            <p class="sub" id="pause-combos-none">nothing in reach yet — take an instrument to its ceiling</p>
+          </section>
+
+          <!-- Same two corrections as the title screen's list: the forward
+               axis is a throttle, and SPACE is what spends a banked level. -->
+          <dl class="controls">
+            <div><dt>Throttle</dt><dd><kbd>W</kbd><kbd>S</kbd><em>faster or slower &mdash; the ship never stops</em></dd></div>
+            <div><dt>Warp</dt><dd><em>hold</em> <kbd>W</kbd><em>1.4s &mdash; the stage floods and the boss comes fast. Hold</em> <kbd>S</kbd><em>to drop out</em></dd></div>
+            <div><dt>Steer</dt><dd><kbd>A</kbd><kbd>D</kbd><em>or arrows</em></dd></div>
+            <div><dt>Fire</dt><dd><em>automatic &mdash; your band plays on its own</em></dd></div>
+            <div><dt>Focus</dt><dd><kbd>Shift</kbd><em>tighter, harder</em></dd></div>
+            <div><dt>Bomb</dt><dd><kbd>X</kbd><em>clears the screen</em></dd></div>
+            <div><dt>Black hole</dt><dd><kbd>C</kbd><em>drags the crowd in and crushes it</em></dd></div>
+            <div><dt>Volume</dt><dd><kbd>&minus;</kbd><kbd>+</kbd><kbd>M</kbd></dd></div>
+            <div><dt>Level up</dt><dd><kbd>Space</kbd><em>open</em> <kbd>1</kbd>&ndash;<kbd>4</kbd><em>pick</em> <kbd>R</kbd><em>reroll</em> <kbd>Shift</kbd>+<kbd>1</kbd>&ndash;<kbd>4</kbd><em>banish</em> <kbd>Q</kbd><em>skip</em></dd></div>
+          </dl>
+          <p class="sub keys-only">press <kbd>P</kbd> to resume</p>
+          <!--
+            The two-line touch rule, shown INSTEAD of the keycap legend on a
+            coarse pointer: that legend is a two-column grid of eleven rows
+            and on a 390 px screen it ran off both edges — photographed on
+            the iPhone 14 profile with "Fire" and "Bomb" clipped at the right
+            and the left column starting mid-word.
+          -->
+          <p class="touch-rule">drag and HOLD to keep going &middot; further from where you pressed is faster &middot; drag the right-edge lever up to warp<br />LEVEL UP is the button under the field</p>
+        </div>
+
+        <!--
+          ONE SCREEN, TWO ENDINGS.
+
+          A win gets `.won` on this element and a different heading, rather than
+          a second `<div>` beside it. The reason is the wiring, not the markup:
+          everything below the heading — score, wave, the four run stats, what
+          you heard, the band you built — is the same readout either way, and a
+          duplicate screen would have meant a duplicate copy of the sixty lines
+          in `main.ts` that fill it, plus `#final-notes-2` and friends for
+          `domwiring` to find. It would also have quietly broken three browser
+          gates (`retry`, `summarycheck`, `ending`) that reach for
+          `#gameover-screen` and `#retry-button` by id.
+
+          What makes it read as a win is `#final-outcome` above the score and
+          the `.won` rules in style.css — gold instead of red, and a heading
+          that says the set was played rather than that the run stopped.
+        -->
+        <div id="gameover-screen" class="screen hidden">
+          <h2 id="final-title">RUN OVER</h2>
+          <!-- Empty on a loss; the victory line on a win. Populated in main.ts. -->
+          <p class="outcome" id="final-outcome"></p>
+          <p class="stat"><span id="final-score">0</span></p>
+          <!-- `#final-wave` stays a bare number: `tools/_finaleshots.mjs`
+               reads it. The bosses-down count on a loss is its own node. -->
+          <p class="sub">reached wave <span id="final-wave">1</span><span id="final-bosses"></span></p>
+          <p class="sub" id="final-best">best 0</p>
+          <dl class="runstats">
+            <div><dt>NOTES</dt><dd id="final-notes">0</dd></div>
+            <div><dt>BEST MULT</dt><dd id="final-mult">x1</dd></div>
+            <div><dt>FLAWLESS</dt><dd id="final-flawless">0</dd></div>
+            <div><dt>GRAZES</dt><dd id="final-grazes">0</dd></div>
+          </dl>
+          <p class="heard" id="final-heard"></p>
+          <!-- What you BUILT, and what you nearly built. The end screen is
+               where a run's build story lands and where the next run is
+               decided; it showed the music you heard and nothing about the
+               band you assembled. Populated from `combinationPlan`. -->
+          <p class="band" id="final-band"></p>
+          <!--
+            WHAT THE RUN PAID, broken down.
+
+            The four terms are printed rather than summed because the breakdown
+            is the whole teaching: a player who cannot see that depth and speed
+            were worth points separately has no reason to attempt a deeper stage
+            or to finish a faster one. It is the only place the economy explains
+            itself.
+          -->
+          <p class="payout" id="final-points"></p>
+          <div class="endbuttons">
+            <button id="retry-button" type="button">AGAIN</button>
+            <button id="gameover-menu" type="button" class="ghost">SET LIST &amp; SHOP</button>
+          </div>
+        </div>
+      </main>
+
+      <!-- No aria-hidden: `.touch.hidden { display: none }` already keeps this out
+     of the accessibility tree while it is hidden, and the attribute made three
+     LIVE buttons unreachable to a screen reader on the phones that show them. -->
+        <!--
+          THE ROW HAS TWO FACES, and `main.ts` chooses between them each frame.
+
+          In play: FOCUS, BOMB, WELL and — whenever a level-up is banked — a
+          gold LEVEL UP button, the widest and tallest thing here, because
+          spending levels is the only way to get stronger and on touch there
+          was no way to do it at all. While the offer is open the same row
+          shows REROLL, BANISH and SKIP instead: the canvas draws those levers
+          at 14 CSS px tall on a phone, and a thumb cannot hit that. Both
+          faces live in one row so the stage never re-lays out between them;
+          `.touch` reserves the height of its tallest button.
+        -->
+        <div id="touch-controls" class="touch hidden">
+        <button id="touch-levelup" type="button" class="hidden">LEVEL UP</button>
+        <button id="touch-reroll" type="button" class="lever hidden">REROLL</button>
+        <button id="touch-banish" type="button" class="lever hidden">BANISH</button>
+        <button id="touch-skip" type="button" class="lever hidden">SKIP</button>
+      </div>
+
+
+    </div>
+  </body>
+</html>
