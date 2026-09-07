@@ -506,7 +506,7 @@ console.log('\nC2. the throttle axis survives the diagonal normalise');
 // ---------------------------------------------------------------------------
 console.log('\nC3. the pointer is a relative drag; it never writes the throttle; warp is a lever');
 {
-  const { DRAG_RANGE, DRAG_DEAD, DRAG_LEASH, WARP_STICK } = await import('../src/core/input.ts');
+  const { DRAG_RANGE, DRAG_DEAD, WARP_STICK } = await import('../src/core/input.ts');
   const SAMPLES = 240;
   /** Samples on which `pred` held, over SAMPLES steps at 4 per frame. */
   const run = (input, pred) => {
@@ -686,20 +686,57 @@ console.log('\nC3. the pointer is a relative drag; it never writes the throttle;
   check(arrived === SAMPLES, `the ship reaches the point it was dragged to: steer back to 0 on ${arrived}/${SAMPLES} (a drag is a distance, not a direction held)`);
   input.shipX = base;
   /*
-   * THE LEASH. A drag ten leashes long is clamped to one, so a ship that
-   * travels one leash has ARRIVED. Without the clamp it would still be nine
-   * leashes short and the control would go on pulling — which is the wind-up
-   * that makes a ship dragged into a wall stop answering.
+   * THE REACHABLE BOX, REPLACING THE LEASH.
+   *
+   * The leash held the target within a fixed distance of the SHIP, and the
+   * owner felt what that cost: "i can only travel so far before i need to
+   * click again and start a new drag". A thumb moves several times faster
+   * than the ship flies, so on a quick stroke the ship falls behind, the
+   * leash truncated the target, and the rest of the gesture was thrown away —
+   * 31% of a fast 300 px stroke arrived, against 101% of a slow one.
+   *
+   * The wind-up it was really there to stop is a property of the WALLS, not
+   * of the ship, so the target is clamped into the box the ship can reach.
+   * Asserted the only way it is observable from here: park the ship ON the
+   * clamp and the gap must be gone. An unclamped target is still nine
+   * box-widths further out and the steer is still pinned.
    */
-  drag(DRAG_LEASH * 10, 0);
-  input.sample(); // the clamp is applied in sample(), against the live ship
-  input.shipX = base + DRAG_LEASH;
-  const leashed = run(input, (st) => zero(st.x));
+  input.dragXMin = base - 200;
+  input.dragXMax = base + 200;
+  drag(4000, 0);
+  input.sample(); // the clamp is applied in sample()
+  input.shipX = base + 200;
+  const boxed = run(input, (st) => zero(st.x));
   check(
-    leashed === SAMPLES,
-    `leash: after a ${DRAG_LEASH * 10} px drag the ship catches the target in ${DRAG_LEASH} px, steer 0 on ${leashed}/${SAMPLES} (unleashed it is still at +1)`,
+    boxed === SAMPLES,
+    `reachable box: a 4000 px drag stops at the wall 200 px away, steer 0 on ${boxed}/${SAMPLES} (unclamped the ship is 3800 px short and still pulling)`,
   );
   input.shipX = base;
+  input.dragXMin = -Infinity;
+  input.dragXMax = Infinity;
+  /*
+   * AND THE STATION CLAMP IS ONE-SIDED. The back of the track window is a
+   * wall; the front is not one — `World.update` drags the window forward to
+   * follow a ship that passes it. Clamping the forward end too would zero the
+   * stick at the front edge and silently delete "drag forward and the stage
+   * comes at you faster", which is the whole of the sustained-boost gesture.
+   */
+  const sBase = input.shipStation;
+  input.dragStationMax = sBase + 100;
+  drag(0, 4000); // dragged BACKWARD, into the wall
+  input.sample();
+  input.shipStation = sBase + 100;
+  const backWall = run(input, (st) => zero(st.y));
+  check(backWall === SAMPLES, `station: a 4000 px drag backward stops at the window's back edge, y 0 on ${backWall}/${SAMPLES}`);
+  input.shipStation = sBase;
+  drag(0, -4000); // dragged FORWARD, where there is no wall
+  const noFrontWall = run(input, (st) => near(st.y, -1));
+  check(
+    noFrontWall === SAMPLES,
+    `station: a 4000 px drag FORWARD is not clamped — y stays -1 on ${noFrontWall}/${SAMPLES} (the front of the window is not a bound; the ship tows it)`,
+  );
+  input.dragStationMax = Infinity;
+  input.releasePointer();
 
   // ---- 6. Re-basing: on press, on demand, and on release. -----------------
   drag(DRAG_RANGE, 0);
@@ -715,11 +752,31 @@ console.log('\nC3. the pointer is a relative drag; it never writes the throttle;
     offerRebase === SAMPLES,
     `rebase under an open offer: steer 0 on ${offerRebase}/${SAMPLES} (a thumb that wandered across the cards must not be applied as one jump when they close)`,
   );
-  drag(DRAG_RANGE, DRAG_RANGE);
+  /*
+   * LIFTING KEEPS THE TARGET, and that is a deliberate reversal.
+   *
+   * It used to clear it, and the assertion here was "lifted: x 0, y 0". That
+   * threw away the part of the stroke the ship had not caught up with yet,
+   * which is the second half of what the owner reported. So the contract is
+   * now: the contact ends, the intent does not — the ship coasts the rest of
+   * the way and stops when it ARRIVES, not when the thumb leaves the glass.
+   * Firing does stop, because that is about the finger and not the ship.
+   */
+  drag(DRAG_RANGE * 4, 0);
   input.sample();
   input.releasePointer();
-  const lifted = run(input, (st) => zero(st.x) && zero(st.y) && !st.shoot);
-  check(lifted === SAMPLES, `lifted: x 0, y 0, not firing on ${lifted}/${SAMPLES} (a target that outlived the contact would keep steering)`);
+  const coasting = run(input, (st) => near(st.x, 1) && !st.shoot);
+  check(
+    coasting === SAMPLES,
+    `lifted mid-stroke: the ship keeps going to where it was dragged, steer +1 on ${coasting}/${SAMPLES}, and firing has stopped (clearing the target here is what lost 69% of a fast stroke)`,
+  );
+  // Moving the pointer after the lift must add nothing: the contact is over.
+  input.dragPointer(PX + 9999, PY);
+  const afterLift = run(input, (st) => near(st.x, 1));
+  check(afterLift === SAMPLES, `a move after the lift adds nothing on ${afterLift}/${SAMPLES} (the gesture ended; only its result is still in flight)`);
+  input.shipX = input.shipX + DRAG_RANGE * 4; // the ship arrives
+  const settled = run(input, (st) => zero(st.x));
+  check(settled === SAMPLES, `and when it arrives it stops: steer 0 on ${settled}/${SAMPLES} (it holds the place the player left it in — this is not the recentre spring coming back)`);
 
   // ---- 7. The warp lever. -------------------------------------------------
   const untouched = run(input, (st) => st.warpLever === null);
@@ -750,8 +807,13 @@ console.log('\nC3. the pointer is a relative drag; it never writes the throttle;
   check(firing === SAMPLES, `a finger dragging: steer +1 and firing on ${firing}/${SAMPLES}`);
   check(touch.touchActive === true, `touch set touchActive (want true): ${touch.touchActive}`);
   touch.releasePointer();
-  const touchLifted = run(touch, (st) => zero(st.x) && !st.shoot);
-  check(touchLifted === SAMPLES, `finger lifted: x 0, not firing on ${touchLifted}/${SAMPLES}`);
+  // Same contract as the mouse above: the finger's INTENT outlives the
+  // contact, its trigger does not.
+  const touchLifted = run(touch, (st) => near(st.x, 1) && !st.shoot);
+  check(touchLifted === SAMPLES, `finger lifted mid-stroke: still steering to where it was dragged, not firing, on ${touchLifted}/${SAMPLES}`);
+  touch.shipX = touch.shipX + DRAG_RANGE;
+  const touchSettled = run(touch, (st) => zero(st.x));
+  check(touchSettled === SAMPLES, `and it stops on arrival: x 0 on ${touchSettled}/${SAMPLES}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -135,33 +135,30 @@ export const DRAG_RANGE = 40;
  */
 export const DRAG_DEAD = 3;
 
-/**
- * How far ahead of the ship the drag target may sit, in view px.
+/*
+ * TOMBSTONE — `DRAG_LEASH` (420 view px), which held the drag target within a
+ * fixed distance of the ship.
  *
- * TWO JOBS, and the second one is easy to delete by accident.
+ * It had two jobs and did the second one by breaking the control. Preventing
+ * WIND-UP at a wall was real, and is now done properly by clamping the target
+ * to the ship's own reachable box (`dragXMin`/`dragXMax`/`dragStationMax`) —
+ * a target that is always reachable can never need un-winding. Preserving the
+ * rail TOW at the front of the window turned out to need nothing at all: the
+ * window's front edge is not a bound. `World.update` does
+ * `trackY = min(trackY, player.y - VIEW_H * TRACK_AHEAD)`, so a ship pushing
+ * forward DRAGS THE WINDOW WITH IT and `trackBounds().y0` is -Infinity. Only
+ * the back edge and the two arena walls are real.
  *
- * WIND-UP. `player.ts` clamps the ship to the arena walls. A target dragged
- * into a wall would otherwise accumulate arbitrarily far outside the field,
- * and the player would then have to drag hundreds of px back before the ship
- * moved at all — a control that has stopped answering. The leash is applied
- * every step against the ship's LIVE position, so the target can never get
- * further than this from a ship that is not moving.
- *
- * THE SUSTAINED BOOST. Once the ship reaches the front of the track window it
- * stops closing on the target and TOWS THE RAIL instead — that is what
- * "forward" means at the front edge, and it is how the stage is made to come
- * at you faster. The leash holds the target this far ahead of the pinned
- * ship, the gap never closes, the stick stays saturated at -1, and the tow
- * continues. A target clamped into the window instead of leashed to the ship
- * would zero the stick at the front edge and silently delete the gesture.
- *
- * CHOSEN, NOT MEASURED. It has to be bigger than any single thumb stroke or
- * long drags would be truncated and stop being 1:1 — a comfortable stroke is
- * 120-200 CSS px, which is 220-370 view px on a phone — and small enough that
- * one stroke recovers from a wall. 420 covers both. This and `DRAG_RANGE` are
- * the two numbers to move when the owner reports the feel from the phone.
+ * And the leash was actively eating strokes, which is what the owner felt:
+ * "when dragging the ship to navigate i can only travel so far before i need
+ * to click again and start a new drag". Measured on the phone profile before
+ * this change, delivery of one stroke against the distance the finger asked
+ * for — slow 150 css px: 101%. Fast 150: 53%. Slow 300: 101%. Fast 300: 31%.
+ * A thumb moves several times faster than `PLAYER_SPEED`, so on a quick flick
+ * the ship falls behind, the leash truncates the target to 420 px ahead, and
+ * the rest of the gesture is thrown away. Slow strokes were fine, which is why
+ * the first measurements looked right.
  */
-export const DRAG_LEASH = 420;
 
 /*
  * TOMBSTONE — `MOUSE_STEER_RANGE` (120) and `MOUSE_DEAD_ZONE` (10).
@@ -403,17 +400,31 @@ export class Input {
   }
 
   /**
-   * The finger lifted or the button let go.
+   * The finger lifted or the button let go. THE TARGET STAYS.
    *
-   * The targets go with it, so the ship holds the place in the window the
-   * player left it in and the stick falls to zero — the same "no settle, no
-   * recentre" rule `player.ts` records. A target that outlived the contact
-   * would keep steering after the thumb was gone.
+   * It used to be cleared here, and that is the second half of the owner's
+   * report — "i can only travel so far before i need to click again". A thumb
+   * moves several times faster than the ship can fly, so at the moment of the
+   * lift the ship is still some way short of where the stroke asked it to go.
+   * Clearing the target threw that remainder away, which made a fast flick
+   * deliver less than a third of its distance (31%, measured) while a slow
+   * drag delivered all of it. The gesture was quietly rewarding people for
+   * moving their thumb slowly.
+   *
+   * So the contact ends and the INTENT does not: the ship coasts the rest of
+   * the way and stops, because the target is a position and it arrives. It
+   * cannot run away — the target is clamped into the reachable box every step,
+   * so "the rest of the way" is always a real place on the field.
+   *
+   * This does not bring back the recentre spring `player.ts` tombstones. That
+   * pulled the ship somewhere it was never asked to go; this takes it exactly
+   * where it was asked to go, and then it holds the place the player left it
+   * in, which is the same rule as before. A player who wants to stop early
+   * presses again — a press re-bases the target onto the ship, so a tap is a
+   * handbrake.
    */
   releasePointer(): void {
     this.pointerDown = false;
-    this.dragX = null;
-    this.dragStation = null;
     this.pointerFiring = false;
   }
 
@@ -562,6 +573,25 @@ export class Input {
    */
   shipStation = 0;
 
+  /*
+   * THE REACHABLE BOX, fed by `main.ts` every step beside `shipX`.
+   *
+   * The drag target is clamped into this and nowhere else, which is what makes
+   * the control always answer: every point it can hold is a point the ship can
+   * actually get to, so there is never a hidden distance to drag back before
+   * anything moves. `dragXMin`/`dragXMax` are the arena walls the ship is
+   * already clamped to; `dragStationMax` is the BACK of the track window in
+   * view px. There is no minimum station on purpose — see the note in
+   * `sample()`; the front of the window is not a bound.
+   *
+   * The defaults are deliberately wide rather than zero: a harness that never
+   * sets them gets an unclamped drag, which is the old behaviour and not a
+   * ship pinned to x = 0.
+   */
+  dragXMin = -Infinity;
+  dragXMax = Infinity;
+  dragStationMax = Infinity;
+
   /**
    * The warp lever's travel, 0 (down, out) to 1 (up, engaged) — or NULL while
    * nobody is touching it, which means "no opinion" rather than "zero".
@@ -690,14 +720,23 @@ export class Input {
      * back is a player asking for two opposite things and getting neither.
      */
     if (this.dragX !== null) {
-      this.dragX = Math.max(this.shipX - DRAG_LEASH, Math.min(this.shipX + DRAG_LEASH, this.dragX));
+      // Into the arena, whose walls the ship is clamped to anyway. A target
+      // outside them is a distance the player would have to drag back before
+      // the ship answered again.
+      this.dragX = Math.max(this.dragXMin, Math.min(this.dragXMax, this.dragX));
       const dx = this.dragX - this.shipX;
       if (Math.abs(dx) > DRAG_DEAD) x += Math.max(-1, Math.min(1, dx / DRAG_RANGE));
     }
     if (this.dragStation !== null) {
-      const s = this.shipStation;
-      this.dragStation = Math.max(s - DRAG_LEASH, Math.min(s + DRAG_LEASH, this.dragStation));
-      const dy = this.dragStation - s;
+      /*
+       * ONE-SIDED. The back of the track window is a wall and is clamped; the
+       * front is not a wall at all — pushing past it tows the window forward
+       * — so the target is left free to run ahead and the stick stays
+       * saturated for as long as the player keeps asking. Clamping this end
+       * too would silently delete "drag forward and the stage comes at you".
+       */
+      this.dragStation = Math.min(this.dragStationMax, this.dragStation);
+      const dy = this.dragStation - this.shipStation;
       if (Math.abs(dy) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, dy / DRAG_RANGE));
     }
     x = Math.max(-1, Math.min(1, x));

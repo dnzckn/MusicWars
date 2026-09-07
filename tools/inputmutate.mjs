@@ -32,17 +32,20 @@ const MUTATIONS = [
   ['outer clamp removed on x', (s) =>
     s.replace('if (Math.abs(dx) > DRAG_DEAD) x += Math.max(-1, Math.min(1, dx / DRAG_RANGE));',
       'if (Math.abs(dx) > DRAG_DEAD) x += dx / DRAG_RANGE;')],
-  ['leash clamp removed on x', (s) =>
-    s.replace('      this.dragX = Math.max(this.shipX - DRAG_LEASH, Math.min(this.shipX + DRAG_LEASH, this.dragX));\n', '')],
+  ['the reachable-box clamp removed on x', (s) =>
+    s.replace('this.dragX = Math.max(this.dragXMin, Math.min(this.dragXMax, this.dragX));', 'this.dragX = this.dragX;')],
+  ['the station clamped at the FRONT too, deleting the rail tow', (s) =>
+    s.replace('this.dragStation = Math.min(this.dragStationMax, this.dragStation);',
+      'this.dragStation = Math.max(this.shipStation, Math.min(this.dragStationMax, this.dragStation));')],
   ['pressPointer stops re-basing', (s) =>
     s.replace('    this.dragX = this.shipX;\n    this.dragStation = this.shipStation;\n    if (touch) {',
       '    this.dragX ??= this.shipX;\n    this.dragStation ??= this.shipStation;\n    if (touch) {')],
   ['rebaseDrag made a no-op', (s) =>
     s.replace('  rebaseDrag(viewX: number, viewY: number): void {\n    if (!this.pointerDown) return;',
       '  rebaseDrag(viewX: number, viewY: number): void {\n    if (this.pointerDown) return;')],
-  ['releasePointer leaves the targets', (s) =>
-    s.replace('    this.pointerDown = false;\n    this.dragX = null;\n    this.dragStation = null;',
-      '    this.pointerDown = false;')],
+  ['releasing clears the target again, truncating the stroke', (s) =>
+    s.replace('    this.pointerDown = false;' + String.fromCharCode(10) + '    this.pointerFiring = false;',
+      '    this.pointerDown = false;' + String.fromCharCode(10) + '    this.dragX = null;' + String.fromCharCode(10) + '    this.dragStation = null;' + String.fromCharCode(10) + '    this.pointerFiring = false;')],
   ['the mouse path sets touchActive', (s) =>
     s.replace('    if (touch) {\n      this.touchActive = true;', '    if (true) {\n      this.touchActive = true;')],
   ['warpLever published as ?? 0', (s) =>
@@ -70,6 +73,7 @@ try {
     const mutated = mutate(original);
     if (mutated === original) {
       console.log(`!! ${name}: MUTATION DID NOT APPLY — the anchor moved, this row proves nothing`);
+      clean++; // a row that proves nothing is not a row that caught something
       continue;
     }
     writeFileSync(SRC, mutated);

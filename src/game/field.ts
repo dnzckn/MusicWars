@@ -103,8 +103,46 @@ export const PLAYFIELD_H = Infinity;
  *                  threat or the game is played in the strip of screen nobody
  *                  is looking at.
  *   TRACK_AHEAD    the front of the window, 0.16.
- *   TRACK_BEHIND   the back of the window, 0.56. Symmetric about the anchor,
- *                  so the two halves of the stick cost the same to travel.
+ *   TRACK_BEHIND   the back of the window, 0.75 — a quarter of the view left
+ *                  below the ship, which is the owner's number: "maybe make the
+ *                  user able to go down to 25 instead of 56".
+ *
+ *                  IT WAS 0.56, AND SYMMETRIC ABOUT THE ANCHOR, so that the
+ *                  two halves of the stick cost the same to travel. The owner,
+ *                  playing the drag scheme: "looks like i can't travel to the
+ *                  bottom, eg stuck around half way, i should be able to pull
+ *                  back near the bottom". Measured — six full downward strokes
+ *                  parked the ship at 55.7% of the view, which is the bound
+ *                  doing exactly what it said, and 0.56 of a portrait phone
+ *                  screen IS about half way down it.
+ *
+ *                  The symmetry is deliberately given up. It was an argument
+ *                  about a THROTTLE, where the two directions are the same
+ *                  kind of act and should cost the same. Under relative drag
+ *                  the axis is a place you put the ship, and the two
+ *                  directions are no longer the same act: forward is a
+ *                  commitment that tows the whole stage at you, backward is a
+ *                  retreat. A retreat that stops at the middle of the screen
+ *                  is not one, and the owner has asked twice now for southward
+ *                  room — this and, of warp, "pulling back further does
+ *                  nothing other than help you maneuver around since you can
+ *                  move your ship south".
+ *
+ *                  The cost, stated: the band is now 0.59 of the view rather
+ *                  than 0.40, so crossing it takes about 2.0 s at TRIM_SPEED
+ *                  rather than 0.8. That is a retreat and not a dodge, which
+ *                  is the right shape for it — sideways is still 430 px/s and
+ *                  is where dodging lives. The other cost is that a ship at
+ *                  0.80 has very little screen behind it, and arrivals come
+ *                  from behind: that is the player's trade to make, and it is
+ *                  the same trade warp offers.
+ *
+ *                  ONE STEP AT A TIME, on purpose: 0.80 was tried first and
+ *                  0.75 is the owner's own figure. If the ship still feels
+ *                  fenced in, this is the single number to move, and the only
+ *                  thing that scales with it is `snapshot.playerHeight`, which
+ *                  `events.ts` records as already replaced as the music's
+ *                  danger proxy and which nothing now reads.
  *
  * The band is 0.40 of the view — 448 px at 1120 — and at `TRIM_SPEED` either
  * end is 0.8 s away. Deliberately quick: with the crowd travelling WITH the
@@ -123,7 +161,7 @@ export const PLAYFIELD_H = Infinity;
  */
 export const TRACK_ANCHOR = 0.34;
 export const TRACK_AHEAD = 0.16;
-export const TRACK_BEHIND = 0.56;
+export const TRACK_BEHIND = 0.75;
 
 /*
  * WHAT THE CANVAS SHOWS, as opposed to what the simulation contains.
