@@ -141,6 +141,39 @@ doing, but it is worth doing carefully and with somewhere to fall back to.
   the layout pass had filed as height: BOMB and WELL were 40.8 px WIDE, because
   the row shrank to fit its content and `flex: 1` had nothing to grow into.
 
+- `inputcheck` C3 / `touchcheck` / `inputmutate` / `touchmutate`, the control
+  rework (2026-09-06). The owner, from the phone: "clicking on the screen moves
+  the ship forward it shouldn't do that, only dragging moves the ship", and
+  then, for warp, "let's just make a side bar the user can drag instead". The
+  measurement that opened it: on an iPhone 14 profile a press whose finger
+  NEVER MOVED ran the ship 1729 px in 2 s against 828 px cruising, and carried
+  `warpCharge` to 1.00 — so touching the glass to steer boosted and warped
+  without being asked. Both gates encoded the old rule and about half their
+  assertions inverted; they were REPLACED rather than relaxed, and the
+  replacements are stronger, because neither old block could have caught a
+  press that flew the ship — they required one.
+
+  The two mutation harnesses exist because the first replacements were not
+  evidence. `inputmutate` runs twelve mutations of `src/core/input.ts` against
+  `inputcheck`; three of them originally reddened NOTHING, and what they
+  exposed is the reusable lesson: an assertion that imports the constant it is
+  checking measures a RATIO, not a number. Dragging `DRAG_RANGE` px and
+  expecting full lock is true of every `DRAG_RANGE`. The fix was to state the
+  two numbers a player can feel in literal pixels — a 40 px gap is full lock, a
+  250 px drag is answered by 250 px of ship — so they are pinned independently
+  of the source. The third was subtler still: removing the clamp on the drag
+  term reddened nothing because BOTH the clamp at the end of the steering block
+  AND the diagonal normalise hide an over-range term on their own; only a key
+  pulling the other way separates them.
+
+  `touchmutate` runs four against `touchcheck` through a real browser, and one
+  of them corrected a wrong prediction. Removing the lever's `stopPropagation`
+  was expected to make the lever warp AND fly the ship at once; what actually
+  happens is that `#stage`'s pointerdown calls `setPointerCapture` on the
+  stage, which RETARGETS the contact away from the lever, so the lever stops
+  working altogether. The stage does not merely also hear a gesture aimed at
+  its children — it takes it.
+
 - `variety` / `tensionprobe` — what a player hears over an uninterrupted run.
   Found tension never exceeding 0.5 across 1132 samples: the master musical
   signal, which drives mode selection, section choice and every stem fader, only

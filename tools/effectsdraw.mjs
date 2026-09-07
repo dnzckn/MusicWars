@@ -82,7 +82,21 @@ const { CRUISE_SPEED } = await import('../src/game/player.ts');
  * `renderer.ts` imports both modules itself, so nothing new enters the graph;
  * `runmap.ts` is DOM-free and `waves.ts` imports only the rng and a type.
  */
-const { BOSS_COUNT, TOTAL_WAVES } = await import('../src/game/waves.ts');
+const { BOSS_COUNT, TOTAL_WAVES, BOSS_EVERY } = await import('../src/game/waves.ts');
+/*
+ * The second line under the bar, DERIVED rather than spelled out.
+ *
+ * It was the literal string `BOSS IN 2`, and it went stale the day BOSS_EVERY
+ * became 2: at the stub's wave index 5 the run map now says something else
+ * entirely, and this check failed for a reason that had nothing to do with
+ * drawing. The tool's job here is "the renderer drew the line the run map
+ * computed", not "the cadence is four" — so the expectation is computed the
+ * same way `runmap.ts` computes it and cannot go stale again. If the frame
+ * draws nothing matching, every text under the bar is printed, because the
+ * first version of this failure said only `false`.
+ */
+const STUB_WAVE_INDEX = 5;
+const EXPECT_LINE2 = `BOSS IN ${BOSS_EVERY - 1 - (STUB_WAVE_INDEX % BOSS_EVERY)}`;
 const { RUN_BAR } = await import('../src/game/runmap.ts');
 
 let Renderer;
@@ -703,7 +717,8 @@ console.log('\nTHE RUN BAR IS DRAWN');
   const texts = ops.filter((o) => o.op === 'fillText');
   const under = (s) => texts.find((o) => o.text === s && o.a[0] < RUN_BAR.x && o.a[1] > VIEW_H * RUN_BAR.bot);
   const line1 = under(`WAVE 6 OF ${TOTAL_WAVES}`);
-  const line2 = under('BOSS IN 2');
+  const line2 = under(EXPECT_LINE2);
+  if (!line2) console.log(`    texts under the bar: ${texts.filter((o) => o.a[0] < RUN_BAR.x && o.a[1] > VIEW_H * RUN_BAR.bot).map((o) => JSON.stringify(o.text)).join(', ') || '(none)'}`);
   console.log(
     `    fillRect ops with x in [${RUN_BAR.x - 6}, ${RUN_BAR.x + 6}]: ${inTrack(ops).length}, ` +
       `of which ${bar.length} in the bar's inks   fillText ops in the frame: ${texts.length}`,

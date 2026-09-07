@@ -163,6 +163,8 @@
     "discovery": "node --experimental-transform-types tools/discovery.mjs",
     "domwiring": "node tools/domwiring.mjs",
     "inputcheck": "node --experimental-transform-types tools/inputcheck.mjs",
+    "inputmutate": "node tools/inputmutate.mjs",
+    "touchmutate": "node tools/touchmutate.mjs",
     "sfxcheck": "node tools/sfxcheck.mjs",
     "aimcheck": "node --experimental-transform-types tools/aimcheck.mjs",
     "offerchurn": "node --experimental-transform-types tools/offerchurn.mjs",

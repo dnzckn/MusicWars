@@ -2345,7 +2345,18 @@ export class Renderer {
     // the stick before anything is shooting at the player.
     if (w.choosing || w.isOver || w.snapshot.time <= 0.05) return;
     const H = 96;
-    const cx = w.viewW - 26;
+    /*
+     * INSET IN CSS PIXELS, CONVERTED, because what it has to clear is a DOM
+     * element. The warp lever is a 46 CSS px box pinned to the right edge, and
+     * a gauge placed at a fixed VIEW offset would clear it on a desktop window
+     * (1 view px per CSS px) and sit underneath it on a phone, where a view px
+     * is roughly half a CSS px. 66 CSS px puts the gauge's centre just inside
+     * the lever's box with a few px of air.
+     *
+     * The gauge kept the right edge and the warp lever took it, which is the
+     * right way round: warp is now a control and this is only a readout.
+     */
+    const cx = w.viewW - 66 * this.viewPerCss;
     const cy = w.viewH * TRACK_ANCHOR;
     const top = cy - H / 2;
     // Signed distance from cruise: -1 dead slow, 0 cruise, +1 flat out.
@@ -2401,51 +2412,24 @@ export class Renderer {
     g.fill();
 
     /*
-     * WARP LIVES ON THE THROTTLE, because warp IS the throttle held at its stop
-     * and a mode belongs on the control that produces it. Three states, drawn
-     * on the same 96px track so the eye never has to look anywhere else:
+     * TOMBSTONE — THE WARP SLEEVE, the breathing box and the WARP caption, all
+     * of which were drawn on this gauge.
      *
-     *   ARMING     a magenta sleeve grows up the outside of the track as the
-     *              1.4s hold accumulates. This is the only warning the player
-     *              gets before a mode change, and `WARP_ARM` is chosen on the
-     *              assumption that it is drawn — see the constant.
-     *   ENGAGED    the sleeve is full, breathing, and captioned WARP. A mode
-     *              with no persistent indicator is a mode you can forget you
-     *              are in, which for this one means forgetting why the screen
-     *              is full.
-     *   RELEASING  the sleeve DRAINS as the aft stop is held, so the way out is
-     *              as visible as the way in was.
+     * The header they were written under said "warp IS the throttle held at
+     * its stop and a mode belongs on the control that produces it". That
+     * argument is still right and it is exactly why they are gone: the
+     * throttle no longer produces warp. The lever does, so the fill, the glow
+     * and the caption are on the lever (`#warp-lever` in `index.html`, painted
+     * by `paintWarpLever` in `main.ts`), where the same three states still
+     * read — the bar fills as the charge builds, lights and breathes while
+     * engaged, and drains as it is pulled down.
      *
-     * A SLEEVE RATHER THAN A SECOND BAR. The track already carries a length
-     * (the stick) and a datum (cruise); a second length inside it would be two
-     * numbers in one shape. The sleeve is outside the track and reads as a
-     * property OF it.
+     * `warpCharge`'s own docstring notes that `WARP_ARM` was chosen on the
+     * assumption the charge is DRAWN. It still is; it moved 66 px right.
+     *
+     * The full-screen warp treatment — the starfield streak and the magenta
+     * vignette — is untouched and still keyed off `warping`.
      */
-    const charge = w.warpCharge;
-    if (charge > 0.001) {
-      const lit = w.warping ? 1 - w.warpRelease : charge;
-      const h = (H + 6) * clamp01(lit);
-      // Breathing only while engaged: an arming sleeve must read as filling,
-      // and a pulse on top of a fill makes the fill harder to judge.
-      const pulse = w.warping ? 0.78 + Math.sin(w.snapshot.time * 5.4) * 0.18 : 0.9;
-      g.fillStyle = `hsla(305, 100%, 66%, ${pulse})`;
-      g.fillRect(cx + 6, top + 3 + (H + 6 - h), 3, h);
-      g.fillRect(cx - 9, top + 3 + (H + 6 - h), 3, h);
-    }
-    if (w.warping) {
-      g.strokeStyle = `hsla(305, 100%, 72%, ${0.55 + Math.sin(w.snapshot.time * 5.4) * 0.25})`;
-      g.lineWidth = 1;
-      g.strokeRect(cx - 9.5, top - 3.5, 19, H + 7);
-      // A mode caption, read mid-fight: the fight floor, in CSS px
-      // (`render/type.ts`). It was 9 view px — 5 CSS px on the phone, under
-      // the one gauge that says which mode the ship is in.
-      const u = this.viewPerCss;
-      g.font = font(700, 10, u, FIGHT_FLOOR);
-      g.textAlign = 'center';
-      g.textBaseline = 'alphabetic';
-      g.fillStyle = 'hsl(305, 100%, 84%)';
-      g.fillText('WARP', cx - 1, top - 9 * u);
-    }
 
     g.restore();
   }

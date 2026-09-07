@@ -140,10 +140,13 @@ const moved = await p.evaluate(async () => {
   const el = document.getElementById('stage');
   const r = document.getElementById('playfield').getBoundingClientRect();
   const send = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
-  send('pointerdown', r.left + r.width * 0.2, r.top + r.height * 0.6);
+  const settle = (ms) => new Promise((res) => setTimeout(res, ms));
+  const x0 = r.left + r.width * 0.2;
+  const y0 = r.top + r.height * 0.6;
+
   /*
-   * The bullet count is a HIGH-WATER MARK over the whole drag, not the value at
-   * the instant the drag ends.
+   * The bullet count is a HIGH-WATER MARK over the whole gesture, not the
+   * value at the instant it ends.
    *
    * It was the instant, and that made this check flaky in a way that looked
    * like a real failure: instruments are beat-locked, so `playerBullets.count`
@@ -151,44 +154,110 @@ const moved = await p.evaluate(async () => {
    * reported "touch controls incomplete" on a game that was firing perfectly.
    * Measured 3 passes and 1 failure across four consecutive runs with no code
    * change between them.
-   *
-   * "Did the ship fire while the finger was down" is the question the check
-   * means to ask, and a maximum over the second the finger was down answers it
-   * without depending on where in the bar the shutter fell.
    */
   let firing = 0;
-  // The throttle over the hold, min and max: binary means both read 1.
-  let thrMin = Infinity;
-  let thrMax = -Infinity;
-  let minVy = Infinity;
+
+  // ---- PART 1: A STILL PRESS. Down, sixty moves to the SAME point, up. ----
+  const stillFrom = { x: mw.world.player.x, vy: mw.world.player.vy };
+  let stillThrMax = -Infinity;
+  let stillVyMin = Infinity;
+  let stillCharge = 0;
+  send('pointerdown', x0, y0);
   for (let i = 0; i < 60; i++) {
-    send('pointermove', r.left + r.width * 0.2, r.top + r.height * 0.6);
+    send('pointermove', x0, y0);
     // Sample AFTER the wait: a read in the same tick as the pointerdown sees
-    // the world before any simulation step has looked at the finger, and
-    // reported the pre-touch throttle as the hold's minimum (-0 on the first
-    // run of this assertion). The harness being early, not the game being
-    // slow.
-    await new Promise((res) => setTimeout(res, 16));
+    // the world before any simulation step has looked at the finger.
+    await settle(16);
     firing = Math.max(firing, mw.world.playerBullets.count);
-    thrMin = Math.min(thrMin, mw.world.throttle);
-    thrMax = Math.max(thrMax, mw.world.throttle);
-    minVy = Math.min(minVy, mw.world.player.vy);
+    stillThrMax = Math.max(stillThrMax, Math.abs(mw.world.throttle));
+    stillVyMin = Math.min(stillVyMin, mw.world.player.vy);
+    stillCharge = Math.max(stillCharge, mw.world.warpCharge);
   }
-  const pos = { x: mw.world.player.x, y: mw.world.player.y };
-  send('pointerup', r.left + r.width * 0.2, r.top + r.height * 0.6);
-  // Long enough for several simulation steps; the release is level state, not an edge.
-  await new Promise((res) => setTimeout(res, 150));
-  const after = mw.world.throttle;
+  const stillDx = mw.world.player.x - stillFrom.x;
+  send('pointerup', x0, y0);
+  await settle(150);
+
+  // ---- PART 2: A REAL DRAG. The finger actually travels. ------------------
+  /*
+   * THE DRAG IS 120 CSS px OF ACTUAL TRAVEL, and the ship is expected to
+   * answer with the same distance in VIEW px. The two are different units:
+   * `cssPerView` is about 0.54 on this profile, so 120 CSS px is ~223 view px
+   * of ship. The check converts rather than assuming, because a hard-coded
+   * view figure would silently stop meaning "the same distance the thumb
+   * went" the moment the view zoom changed.
+   */
+  const cssPerView = r.width / mw.world.viewW;
+  const DRAG_CSS = 120;
+  const dragFrom = { x: mw.world.player.x, vy: mw.world.player.vy };
+  send('pointerdown', x0, y0);
+  for (let i = 1; i <= 40; i++) {
+    send('pointermove', x0 + (DRAG_CSS * i) / 40, y0);
+    await settle(16);
+    firing = Math.max(firing, mw.world.playerBullets.count);
+  }
+  await settle(120); // let the ship finish closing the last few px
+  const dragDx = mw.world.player.x - dragFrom.x;
+  send('pointerup', x0 + DRAG_CSS, y0);
+  await settle(150);
+  const afterThrottle = mw.world.throttle;
+
   return {
-    pos,
+    stillDx,
+    stillThrMax,
+    stillVyMin,
+    stillVyBefore: dragFrom.vy,
+    stillCharge,
+    dragDx,
+    dragWant: DRAG_CSS / cssPerView,
     firing,
-    thrMin,
-    thrMax,
-    minVy,
-    after,
+    afterThrottle,
     controlsVisible: !document.getElementById('touch-controls').classList.contains('hidden'),
   };
 });
+
+/*
+ * THE WARP LEVER, through real Playwright touch.
+ *
+ * Three things, and the third is the one nothing else in this repo would
+ * catch: the lever must not ALSO fly the ship. `main.ts`'s stage pointerdown
+ * has no onField guard, so any DOM child of #stage that does not stop
+ * propagation opens a drag on the play field as well — a thumb pulling the
+ * lever would warp and steer at once, and the steer would be invisible in
+ * every existing check because they all press the field on purpose.
+ */
+const leverBox = await p.locator('#warp-lever').boundingBox();
+const trackBox = await p.locator('#warp-lever .warp-track').boundingBox();
+const lever = await (async () => {
+  const lx = leverBox.x + leverBox.width / 2;
+  const bottom = trackBox.y + trackBox.height - 6;
+  const shipBefore = await p.evaluate(() => window.__musicwars.world.player.x);
+  await p.touchscreen.tap(lx, bottom); // a TAP on the lever must do nothing
+  await p.waitForTimeout(200);
+  const afterTap = await p.evaluate(() => window.__musicwars.world.warping);
+  // Now a real upward stroke, the length of the track.
+  const client = await p.context().newCDPSession(p);
+  const touch = (type, x, y) =>
+    client.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] });
+  await touch('touchStart', lx, bottom);
+  for (let i = 1; i <= 24; i++) await touch('touchMove', lx, bottom - (trackBox.height * i) / 24);
+  await p.waitForTimeout(200);
+  const engaged = await p.evaluate(() => window.__musicwars.world.warping);
+  await touch('touchEnd', lx, bottom - trackBox.height);
+  await p.waitForTimeout(400);
+  const state = await p.evaluate(() => ({
+    latched: window.__musicwars.world.warping,
+    shipX: window.__musicwars.world.player.x,
+  }));
+  // And back down again.
+  const top = trackBox.y + 6;
+  await touch('touchStart', lx, top);
+  for (let i = 1; i <= 24; i++) await touch('touchMove', lx, top + (trackBox.height * i) / 24);
+  await p.waitForTimeout(200);
+  await touch('touchEnd', lx, top + trackBox.height);
+  await p.waitForTimeout(400);
+  const dropped = await p.evaluate(() => window.__musicwars.world.warping);
+  return { afterTap, engaged, latched: state.latched, dropped, steered: Math.abs(state.shipX - shipBefore) };
+})();
 /*
  * WHAT THE ROW HOLDS — replacing the bomb-button tap, which had no button left
  * to tap.
@@ -522,19 +591,75 @@ await p.screenshot({ path: 'tools/shot-mobile.png' });
 if (__reloads() > 0) console.log(`WARNING: page reloaded ${__reloads()}x mid-run — these numbers span more than one build`);
 await b.close();
 console.log('\nship before drag:', JSON.stringify(before));
-console.log('ship after drag :', JSON.stringify({ x: Math.round(moved.pos.x), y: Math.round(moved.pos.y) }));
+console.log('STILL PRESS     : ship moved', Math.round(moved.stillDx), 'px (want under 5), |throttle| max', moved.stillThrMax.toFixed(2), '(want 0), vy', Math.round(moved.stillVyMin), 'vs cruise', Math.round(moved.stillVyBefore), '(want no faster), warpCharge', moved.stillCharge.toFixed(2), '(want 0)');
+console.log('REAL DRAG       : ship moved', Math.round(moved.dragDx), 'px for a 120 css px stroke =', Math.round(moved.dragWant), 'view px (want within 15%)');
 console.log('auto-firing     :', moved.firing > 0, ' controls visible:', moved.controlsVisible);
-console.log('throttle held   : min', moved.thrMin, 'max', moved.thrMax, '(want 1, 1 — a held finger is the boost, wherever it landed)');
-console.log('vy during hold  : min', Math.round(moved.minVy), 'vs cruise before', Math.round(before.vy), '(want at least 200 past it)');
-console.log('after the lift  : throttle', moved.after, '(want 0 — cruise, not -1)');
+console.log('after the lift  : throttle', moved.afterThrottle, '(want 0)');
+console.log('warp lever      : box', Math.round(leverBox.width), 'x', Math.round(leverBox.height), 'css px (want w>=44); a tap alone warped:', lever.afterTap, '(want false); stroke up engaged:', lever.engaged, '; latched after release:', lever.latched, '; stroke down dropped out:', !lever.dropped, '; ship dragged by the lever:', Math.round(lever.steered), 'px (want 0)');
 console.log('touch row holds :', rowIds.present.join(', ') || '(nothing)', rowStray.length ? `STRAY: ${rowStray.join(', ')}` : '');
 console.log('removed buttons :', rowIds.removed.length ? `STILL IN THE DOM: ${rowIds.removed.join(', ')}` : 'focus/bomb/well absent');
 console.log('page errors     :', errs.length ? errs.slice(0, 2) : 'none');
-const throttleOk = moved.thrMin === 1 && moved.thrMax === 1 && moved.minVy < before.vy - 200 && moved.after === 0;
+/*
+ * THE CONTROL CONTRACT, REPLACING THE BINARY THROTTLE.
+ *
+ * What stood here asserted that a STILL press pushed the ship at least 200
+ * px/s past cruise, that the throttle read exactly +1 throughout, and that a
+ * finger held at 20% of the field width dragged the ship more than 60 px
+ * toward itself. All three were correct for the scheme they were written for,
+ * and all three are now the OPPOSITE of the rule. They are not relaxed here;
+ * they are inverted and tightened. A still press must move the ship less than
+ * 5 px and leave the throttle, the speed and the warp charge alone, and a real
+ * 120 px stroke must move the ship the same distance the thumb went, within
+ * 15%. The old block could not have caught a press that flew the ship, because
+ * it required one.
+ *
+ * This is the second of AGENTS.md section 3's two cases: a gate that encoded
+ * an assumption being deliberately changed, on the owner's word — "clicking on
+ * the screen moves the ship forward it shouldn't do that, only dragging moves
+ * the ship".
+ *
+ * FAIL-TESTED by `tools/touchmutate.mjs`, four mutations, all four caught:
+ *   - a press writes the forward axis again: STILL PRESS reads vy -703
+ *     against a cruise of -430, which is the exact number the old contract
+ *     DEMANDED and the new one forbids.
+ *   - the drag gain halved: REAL DRAG reads 121 px of ship for a 241 view px
+ *     stroke. Nothing else in the repo measures the gain.
+ *   - the lever stops calling `stopPropagation`: the lever stops working
+ *     ALTOGETHER — "stroke up engaged: false". Predicted as "it warps and
+ *     steers at once"; what actually happens is that `#stage`'s pointerdown
+ *     handler calls `setPointerCapture` on the stage, which RETARGETS the
+ *     contact away from the lever, so the lever never sees its own moves.
+ *     Either way it is caught, and the real mechanism is worth knowing: the
+ *     stage does not merely also hear the gesture, it takes it.
+ *   - letting go of the lever reports 0 rather than null: "latched after
+ *     release: false" — the player is dropped out of warp the instant they
+ *     lift their thumb, which is the difference between a lever and a button.
+ */
+const stillOk =
+  Math.abs(moved.stillDx) < 5 &&
+  moved.stillThrMax < 1e-6 &&
+  moved.stillVyMin > moved.stillVyBefore - 20 &&
+  moved.stillCharge < 1e-6;
+const dragOk = Math.abs(Math.abs(moved.dragDx) - moved.dragWant) < moved.dragWant * 0.15;
+/*
+ * `steered` is the term the lever had to be driven a second way to establish:
+ * a lever that does not stop propagation warps AND flies the ship at once, and
+ * every other check in this file presses the play field on purpose, so not one
+ * of them would ever see it.
+ */
+const warpLeverOk =
+  leverBox.width >= 44 &&
+  lever.afterTap === false &&
+  lever.engaged === true &&
+  lever.latched === true &&
+  lever.dropped === false &&
+  lever.steered < 1;
 const ok =
-  Math.abs(moved.pos.x - before.x) > 60 &&
+  stillOk &&
+  dragOk &&
+  warpLeverOk &&
   moved.firing > 0 &&
-  throttleOk &&
+  moved.afterThrottle === 0 &&
   moved.controlsVisible &&
   rowStray.length === 0 &&
   rowIds.removed.length === 0 &&

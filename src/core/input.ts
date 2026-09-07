@@ -75,6 +75,17 @@ export interface InputState {
    * keyboard-only feature by accident.
    */
   throttle: number;
+
+  /**
+   * The warp lever's travel, 0 (down) to 1 (up), or null while untouched.
+   *
+   * Warp's second and now primary way in, beside the throttle stop above:
+   * "let's just make a side bar the user can drag instead... pulling it up
+   * turns on warp then pulling it down turns it off". A number is an
+   * instruction and null is silence — see `Input.warpLever` for why the
+   * difference is the whole latch, and `World.updateWarp` for what reads it.
+   */
+  warpLever: number | null;
 }
 
 /**
@@ -92,113 +103,91 @@ export interface InputState {
 export const WARP_STICK = 0.92;
 
 /**
- * The mouse scheme's steering range: the cursor's horizontal offset from the
- * ship, in VIEW pixels, at which the steer reaches full lock.
+ * THE DRAG BAND: how far the ship must still travel, in view px, for the
+ * stick to reach full lock.
  *
- * The owner's ask, verbatim: "clicking should boost, not clicking should
- * decelerate then holding left or right to turn wth mouse". So the button is
- * the throttle (see `BRAKE_DRAG_ENGAGE` for what it became a day later) and
- * the cursor's side of the ship is the steer, proportional up to this range
- * and clamped past it.
+ * The pointer no longer says where the ship should BE (that was
+ * `pointerTargetX` and the cursor steer, both tombstoned above); it says how
+ * far the player has dragged it from where it was. Inside this band the stick
+ * eases off so the ship settles onto the target instead of arriving at full
+ * lateral speed and stopping dead — the same easing the absolute steer had
+ * over its last 46 px, kept for the same reason.
  *
- * CHOSEN, NOT MEASURED, and here is the arithmetic it was chosen on. The
- * cursor sits still while the ship moves toward it, so the steer is a
- * proportional controller on the gap: lateral speed is `PLAYER_SPEED *
- * dx / MOUSE_STEER_RANGE`, which closes the gap with a time constant of
- * `MOUSE_STEER_RANGE / PLAYER_SPEED` = 120/430 = 0.28 s, on top of the flight
- * model's 35 ms acceleration half-life. That is an order of magnitude slower
- * than the velocity damping, so the ship settles under the cursor rather than
- * hunting around it, and fast enough that a cursor flicked to the far side of
- * the ship is answered inside a third of a second. A range under the touch
- * layer's 46 px ramp would make the mouse bang-bang — full lock for any
- * cursor not on the ship — which is a keyboard with worse ergonomics; a range
- * over ~250 would leave the ship lagging a cursor a quarter-screen away at
- * half speed. Nobody has flown it by hand yet; when someone does, this is the
- * number to move.
- *
- * VIEW pixels, and the cursor is kept in view space too — not world space
- * like the touch target — for a reason that was measured rather than
- * foreseen. The camera FOLLOWS the ship across the track (`camera.ts`,
- * `follow`), so a cursor converted to world space at its last `pointermove`
- * goes stale the moment the ship moves and the camera pans after it; a still
- * mouse sends no further events. The first draft stored world x and the ship
- * stopped 19 px short of a cursor 200 px to its right after a 2 s hold — the
- * camera had panned 11 px and the ship was inside the dead zone of a point
- * that was no longer under the pointer. In view space the cursor's offset is
- * `mouseX - (shipX - viewX)`, re-evaluated every step against wherever the
- * camera is now, and `main.ts` hands `viewX` over beside `shipX`. View rather
- * than screen pixels so the feel does not change with the window; `main.ts`
- * converts through the same `toView` the offer's hit test uses.
+ * CHOSEN, NOT MEASURED, and deliberately SMALL. The band is not the gain:
+ * the gain is 1:1 by construction, because a drag of N view px moves the
+ * target N view px and the ship chases the target at up to `PLAYER_SPEED`,
+ * which is far quicker than a thumb. The band only decides the last few
+ * pixels. At 40 view px it is about 21 CSS px on a 390-wide phone — under a
+ * fingertip, so a player never feels it as lag — and wide enough that the
+ * ship is not bang-bang against a target the thumb is jittering around.
+ * Larger and the ship lags a fast stroke; smaller and it hunts.
  */
-export const MOUSE_STEER_RANGE = 120;
+export const DRAG_RANGE = 40;
 
 /**
- * Cursor offsets smaller than this steer nothing, in view pixels.
+ * Movement under this many view px of gap steers nothing.
  *
- * A hand resting on a mouse is not still to the pixel, and without a dead
- * zone the ship would twitch a pixel left and right for as long as the cursor
- * sat on it. 10 view px is about 10 screen px at a 1440-wide window
- * (`viewForStage` gives zoom 1 there) — under the width of a cursor arrow,
- * over any tremor. Kept well under the range so the proportional band still
- * covers 92% of its travel.
+ * A thumb resting on glass is not still to the pixel, and a capacitive screen
+ * reports drift on a finger that has not moved. Without a dead zone the ship
+ * would twitch for as long as a thumb sat on it. 3 view px is the same floor
+ * the absolute finger steer used, and it is well inside `DRAG_RANGE` so the
+ * proportional band keeps almost all of its travel.
  */
-export const MOUSE_DEAD_ZONE = 10;
+export const DRAG_DEAD = 3;
 
 /**
- * THE POINTER THROTTLE IS BINARY, and the brake is a DRAG, not a place.
+ * How far ahead of the ship the drag target may sit, in view px.
  *
- * The owner, after playing on a phone, verbatim: "clicking on the screen
- * makes the ship slow down (if the click is behind the ship), should
- * literally be binary, click to go faster or youre decelerating so a little
- * like flappy bird in a sense, but letting go shouldnt slow down the ship but
- * go back to base line speed, so to slow dowh the ship you need to click and
- * drag backwards".
+ * TWO JOBS, and the second one is easy to delete by accident.
  *
- * Three positions on the one axis `World` reads warp from, for the finger and
- * the mouse button alike:
+ * WIND-UP. `player.ts` clamps the ship to the arena walls. A target dragged
+ * into a wall would otherwise accumulate arbitrarily far outside the field,
+ * and the player would then have to drag hundreds of px back before the ship
+ * moved at all — a control that has stopped answering. The leash is applied
+ * every step against the ship's LIVE position, so the target can never get
+ * further than this from a ship that is not moving.
  *
- *   pressed                → +1, the forward stop (hold `WARP_ARM` to warp)
- *   released               →  0, cruise — the baseline, NOT the back stop
- *   pressed + dragged back → -1, the back stop (hold `WARP_DROP` to leave warp)
+ * THE SUSTAINED BOOST. Once the ship reaches the front of the track window it
+ * stops closing on the target and TOWS THE RAIL instead — that is what
+ * "forward" means at the front edge, and it is how the stage is made to come
+ * at you faster. The leash holds the target this far ahead of the pinned
+ * ship, the gap never closes, the stick stays saturated at -1, and the tow
+ * continues. A target clamped into the window instead of leashed to the ship
+ * would zero the stick at the front edge and silently delete the gesture.
  *
- * "Dragged back" is measured from where the PRESS STARTED, in view px, along
- * the screen's y — the ship flies up the screen, so backwards is +y. Where
- * the press landed relative to the ship is irrelevant: a press behind the
- * ship is a boost like any other press. That is the whole of the phone bug —
- * the touch layer steered toward the finger in y as well as x, so a thumb
- * resting below the ship (where a thumb rests) was read as "pull back", and a
- * player who had never been told the ship could slow down found it slowing
- * down whenever they touched the screen.
- *
- * TWO LINES, NOT ONE. A finger held near a single threshold crosses it every
- * few frames — a thumb is not still to the pixel — and the throttle would
- * chatter between +1 and -1, which zeroes BOTH warp timers on every crossing
- * (`updateWarp` spends the charge whenever the stop is left). So the brake
- * engages past ENGAGE and only lets go under RELEASE: a 20 px band the
- * gesture has to be deliberately reversed across. Dragging forward again past
- * RELEASE returns to boost while still pressed; lifting returns to cruise.
- *
- * CHOSEN, NOT MEASURED — the phone is in the owner's hand, not on this desk.
- * 40 view px is about 40 screen px at a 1440-wide window (`viewForStage` gives
- * zoom 1 there) and around 6 mm on a phone: past any tremor, past the wobble
- * of a thumb pressing harder, and under the ~80 px a thumb covers in a
- * deliberate flick. RELEASE at half of it so the band is wide enough that
- * hunting on the line is impossible and narrow enough that "drag back a bit
- * less" still reads as "stop braking". View px rather than screen px so the
- * feel does not change with the window, the same reasoning as
- * `MOUSE_STEER_RANGE`; `main.ts` hands both devices the y from the same
- * `toView` the offer's hit test uses. When someone flies it and reports the
- * brake as too eager or too far, these are the two numbers to move.
- *
- * REJECTED: a brake ZONE — "the bottom fifth of the screen brakes". It reads
- * position, and position is exactly what the owner said should not matter;
- * a thumb that lives at the bottom of a phone screen would brake by default.
- * REJECTED: a velocity gesture (a fast flick back). A hold is a state a
- * player can see on the gauge; a flick is an edge they have to have noticed.
+ * CHOSEN, NOT MEASURED. It has to be bigger than any single thumb stroke or
+ * long drags would be truncated and stop being 1:1 — a comfortable stroke is
+ * 120-200 CSS px, which is 220-370 view px on a phone — and small enough that
+ * one stroke recovers from a wall. 420 covers both. This and `DRAG_RANGE` are
+ * the two numbers to move when the owner reports the feel from the phone.
  */
-export const BRAKE_DRAG_ENGAGE = 40;
-/** See `BRAKE_DRAG_ENGAGE`: the drag, in view px, under which the brake lets go. */
-export const BRAKE_DRAG_RELEASE = 20;
+export const DRAG_LEASH = 420;
+
+/*
+ * TOMBSTONE — `MOUSE_STEER_RANGE` (120) and `MOUSE_DEAD_ZONE` (10).
+ *
+ * The cursor's horizontal offset from the ship, proportional to full lock over
+ * 120 view px, live without a button. From "clicking should boost, not
+ * clicking should decelerate then holding left or right to turn wth mouse".
+ * Deleted with the cursor steer itself: asked whether the ship should follow
+ * the pointer's position or only its movement, the owner chose movement, and
+ * a position steer for the mouse alone would have meant the two devices
+ * disagreed about what a pointer means. See the tombstone on `mouseEngaged`.
+ *
+ * TOMBSTONE — `BRAKE_DRAG_ENGAGE` (40) and `BRAKE_DRAG_RELEASE` (20), the
+ * binary throttle's brake gesture, with its 20 px hysteresis band.
+ *
+ * They existed because a press was a boost and something had to be able to
+ * say "slower" without letting go: "to slow dowh the ship you need to click
+ * and drag backwards". A press is no longer a boost, so there is nothing to
+ * back off from — dragging back now simply drags the ship back, on the same
+ * axis and with the same gain as dragging it forward, and the hysteresis that
+ * kept a thumb from chattering across one threshold has no threshold left to
+ * guard. The two rejections recorded with them still stand and should not be
+ * retried: a brake ZONE ("the bottom fifth of the screen brakes") reads
+ * position, which is what must not matter; and a velocity flick is an edge a
+ * player has to have noticed rather than a state they can see.
+ */
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
@@ -233,39 +222,52 @@ const FOCUS_KEYS = new Set(['ShiftLeft', 'ShiftRight', 'KeyL']);
 
 export class Input {
   /**
-   * Touch steering: the finger's WORLD x, or null while no finger is down.
+   * THE POINTER MOVES THE SHIP BY HOW FAR IT DRAGS, NOT BY WHERE IT IS.
    *
-   * The game is shared as a link, and a link opened on a phone was completely
-   * unplayable — there is no keyboard. Dragging anywhere on the playfield
-   * steers the ship toward the finger, which is the convention every mobile
-   * shmup uses because it keeps the ship visible instead of under your thumb.
+   * The owner, playing on a phone: "clicking on the screen moves the ship
+   * forward it shouldn't do that, only dragging moves the ship". Asked
+   * whether the ship should follow the finger's POSITION or only its
+   * MOVEMENT, they chose movement — "a tap that doesn't move does nothing".
    *
-   * X ONLY. This was a point, `{x, y}`, and the ship was steered toward it in
-   * both axes — so a thumb resting below the ship, which is where a thumb
-   * rests, pulled the ship backwards, and that is the bug the owner reported
-   * from a phone ("clicking on the screen makes the ship slow down (if the
-   * click is behind the ship)"). The fore-and-aft axis now belongs to the
-   * pointer throttle below, for the finger and the mouse alike; the finger's
-   * vertical position steers nothing. World space, compared with `shipX`,
-   * exactly as before: the finger sends a `pointermove` whenever it moves,
-   * unlike a still mouse, so the camera-pan staleness that pushed the cursor
-   * into view space (`MOUSE_STEER_RANGE`) has not been measured here.
+   * TOMBSTONE — `pointerTargetX`, the absolute steer this replaces. It held
+   * the finger's world x and the ship swam toward it, which is the convention
+   * most mobile shmups use, and it had two faults the owner met in one
+   * session: a tap anywhere teleported the ship's intent to that column (a
+   * still press 30 px from the left wall walked the ship 336 px, measured),
+   * and the thumb had to sit ON the ship's line to fly straight, which is
+   * where the arrivals land. Relative drag lets the thumb rest anywhere.
+   *
+   * A RE-BASING VIRTUAL TARGET, NOT A POSITION DELTA, and that distinction is
+   * the whole design. Writing the drag straight onto `player.x` would bypass
+   * the flight model, and four things downstream read VELOCITY rather than
+   * the stick: the bank (`player.ts`), the camera's lookahead (`camera.ts`),
+   * the gauge/starfield/plume off `player.vy` (`renderer.ts`), and the facing,
+   * which is gated on `push > FACING_DEADZONE` — a 200 px stroke over half a
+   * second is 3.3 px per step, so a raw delta would never clear that gate and
+   * the nose would stop turning. A delta is also EDGE-shaped, and `sample()`
+   * runs up to `MAX_STEPS` times per frame: it would apply 4x at 30 Hz and 0x
+   * on a spare frame, which is the multi-step bug this file already documents
+   * on `pressed`. A target is a POSITION, so `sample()` stays idempotent and
+   * every downstream reader keeps getting a real stick.
+   *
+   * TWO SPACES, ON PURPOSE. `dragX` is a WORLD x, because view px and world px
+   * are the same size and the arena's walls are the only clamp x needs — so
+   * nothing about the camera enters the lateral steer. `dragStation` is a
+   * VIEW y, because the fore-and-aft axis is a place in a track window that
+   * SLIDES FORWARD at the rail speed: a world-space y target would be
+   * overtaken by the window every step and a resting thumb would read as
+   * "brake". Station is the only frame in which "hold what I have" is
+   * stationary. It is also the one place the camera reaches the simulation;
+   * see `shipStation`.
    */
-  private pointerTargetX: number | null = null;
+  private dragX: number | null = null;
+  private dragStation: number | null = null;
+  /** Where the pointer was last seen, in view px, so a move becomes a delta. */
+  private dragLastX = 0;
+  private dragLastY = 0;
   private pointerFiring = false;
   /** True once any touch has been seen, so the UI can adapt. */
   touchActive = false;
-
-  setPointerTarget(x: number | null): void {
-    if (x === null) {
-      this.pointerTargetX = null;
-      this.pointerFiring = false;
-      return;
-    }
-    this.touchActive = true;
-    this.pointerTargetX = x;
-    this.pointerFiring = true;
-  }
 
   /*
    * TOMBSTONE — `touchBomb`, `touchWell`, `touchFocus`.
@@ -293,80 +295,63 @@ export class Input {
   pointerOpenOffers = false;
 
   /*
-   * THE MOUSE STEER. "holding left or right to turn wth mouse."
+   * THE MOUSE IS THE SAME GESTURE AS THE THUMB NOW: press and drag.
    *
-   * Two pieces of state, both written by `main.ts`'s pointer handlers and
-   * READ here in `sample()` — the same shape as `pointerTargetX`, so the
-   * per-step contract on `sample()` (idempotent for held state) holds for the
-   * mouse for free: nothing here is an edge.
+   * TOMBSTONE — the CURSOR STEER, `mouseX` and `MOUSE_STEER_RANGE`. The
+   * cursor's horizontal offset from the ship was the steer, proportional over
+   * 120 view px, live whenever the mouse was engaged and the button was not
+   * needed for it. It came from "holding left or right to turn wth mouse" and
+   * it is exactly the scheme the owner voted against a session later, when
+   * asked whether the ship should follow the pointer's POSITION or only its
+   * MOVEMENT: only its movement. Keeping it for the mouse alone would have
+   * meant the two devices disagreed about what the pointer means, and the
+   * cursor-position steer is the one the owner has now rejected twice — once
+   * for the finger ("only dragging moves the ship") and once by choosing
+   * movement over position. The drag path serves both devices.
    *
-   * ENGAGED is the piece that keeps this from being a regression for everyone
-   * else. Before the first mouse-button press on the field during a run the
-   * mouse is exactly as inert as it was — a keyboard player who never clicks
-   * never meets this, and a mouse resting on the desk cannot steer. Once
-   * engaged it stays engaged for the run: `main.ts` only forwards the button
-   * to the pointer throttle below while engaged, and the cursor only steers
-   * while engaged, so the one decision is made once, on the deliberate click.
-   * `main.ts` resets it in `startRun`.
-   *
-   * X is the cursor in VIEW space (see `MOUSE_STEER_RANGE` for why not world
-   * space), or null while it is off the stage. Only the horizontal offset
-   * from the ship is read ("holding left or right to turn"); the vertical is
-   * the brake gesture's axis and belongs to the pointer throttle.
-   *
-   * There used to be a HELD here — the button as a two-position throttle,
-   * down the forward stop and UP THE BACK STOP, on "not clicking should
-   * decelerate". It lasted a day. The owner, from a phone: "letting go
-   * shouldnt slow down the ship but go back to base line speed, so to slow
-   * dowh the ship you need to click and drag backwards". The button is now
-   * one pressure on the shared pointer throttle below, and the engagement
-   * argument that depended on the scheme having "no neutral" is gone with it:
-   * released IS the neutral.
+   * ENGAGED SURVIVES, and it is still the piece that keeps this from being a
+   * regression for keyboard players: before the first primary-button press on
+   * the field during a run the mouse is inert, and a mouse resting on the desk
+   * cannot steer. It is now nearly redundant — a drag needs a press anyway —
+   * but it still gates the FIRST press, so a click that lands on the field to
+   * dismiss something does not also grab the ship. `main.ts` resets it in
+   * `startRun`.
    */
   private mouseEngaged = false;
-  private mouseX: number | null = null;
 
   /** True once a mouse click on the field has taken the ship this run. */
   get mouseActive(): boolean {
     return this.mouseEngaged;
   }
 
-  /** The deliberate act: the first primary-button press on the field, at view x. */
-  engageMouse(viewX: number): void {
+  /** The deliberate act: the first primary-button press on the field. */
+  engageMouse(): void {
     this.mouseEngaged = true;
-    this.mouseX = viewX;
-  }
-
-  /** The cursor's view x, or null when it has left the stage. */
-  setMouseX(viewX: number | null): void {
-    this.mouseX = viewX;
   }
 
   /*
-   * THE POINTER THROTTLE — one state for the finger and the mouse button.
-   * See `BRAKE_DRAG_ENGAGE` for the rule and the owner's words.
+   * THE PRESS ITSELF DOES NOTHING. It only opens a drag.
    *
-   * Pressed is +1, released is 0, pressed-and-dragged-back is -1. `main.ts`
-   * feeds it from both device paths, in VIEW px along the screen's y (the
-   * mouse path already converted through `toView`; the touch path now does
-   * the same for this axis while its x steer stays in world space). The
-   * flags are LEVEL state, like a held key, and the brake's hysteresis is
-   * evaluated in `sample()` against the latest drag rather than in the
-   * setters — so it is decided at the same cadence as everything else that
-   * reads it, and a burst of `pointermove`s between two steps that crosses
-   * the line and comes back is read as where the finger IS, not as a brake
-   * that engaged and released unseen.
+   * TOMBSTONE — the BINARY POINTER THROTTLE, which lived here for two days.
+   * Pressed was +1, released was 0, and pressed-and-dragged-back past
+   * `BRAKE_DRAG_ENGAGE` was -1. It came from the owner's own words ("click to
+   * go faster or youre decelerating... a little like flappy bird") and it was
+   * replaced by the owner's own words a session later: "clicking on the
+   * screen moves the ship forward it shouldn't do that". Measured on the
+   * iPhone 14 profile before the change, a press whose finger NEVER MOVED ran
+   * the ship 1729 px in 2 s against 828 px cruising — 109% faster — and
+   * carried `warpCharge` to 1.00, so a player who touched the glass to steer
+   * was boosted and warped without asking for either.
+   *
+   * What is left is contact state: whether a pointer is down, and where it
+   * was last seen, so a move can be turned into a delta. The ship's velocity
+   * now comes only from `dragX`/`dragStation` above, and warp comes from the
+   * lever (`warpLever`) or from the keyboard's own fore/aft stop.
    *
    * Kept apart from `touchActive` on purpose: the mouse presses this and must
-   * never flip the UI's touch switch; only `setPointerTarget` does that.
+   * never flip the UI's touch switch.
    */
   private pointerDown = false;
-  /** View y where the current press began; the brake is measured from here. */
-  private pointerPressY = 0;
-  /** View y the pointer was last seen at during the current press. */
-  private pointerLatestY = 0;
-  /** The hysteresis state: true between crossing ENGAGE and re-crossing RELEASE. */
-  private pointerBraking = false;
 
   /** True while a finger or the primary button is down on the field. */
   get pointerPressed(): boolean {
@@ -374,38 +359,91 @@ export class Input {
   }
 
   /**
-   * A press begins at view y. A second press without a release in between (a
-   * second finger) RESTARTS the gesture from the new point: the newest
-   * contact owns the throttle, and its drag is measured from where it landed.
+   * A press begins at a view point, and RE-BASES the drag onto the ship.
+   *
+   * Re-basing is what makes the thumb able to rest anywhere: the target
+   * starts wherever the ship already is, so the first pixel of drag moves the
+   * ship one pixel from where it was rather than hauling it to the finger.
+   * It is also the recovery gesture — lift and press again and the target is
+   * back under the ship, which is how a stroke that ran out of glass is
+   * continued.
+   *
+   * A second press without a release in between (a second finger) re-bases
+   * again: the newest contact owns the ship, and `main.ts` gives it the
+   * pointer id so the older finger stops being heard.
+   *
+   * `touch` marks the contact as a finger rather than the mouse button. Only
+   * a finger sets `touchActive` and only a finger fires the guns.
    */
-  pressPointer(viewY: number): void {
+  pressPointer(viewX: number, viewY: number, touch = false): void {
     this.pointerDown = true;
-    this.pointerPressY = viewY;
-    this.pointerLatestY = viewY;
-    this.pointerBraking = false;
+    this.dragLastX = viewX;
+    this.dragLastY = viewY;
+    this.dragX = this.shipX;
+    this.dragStation = this.shipStation;
+    if (touch) {
+      this.touchActive = true;
+      this.pointerFiring = true;
+    }
   }
 
-  /** The pressed pointer moved to view y. Ignored when nothing is pressed. */
-  dragPointer(viewY: number): void {
-    if (this.pointerDown) this.pointerLatestY = viewY;
+  /**
+   * The pressed pointer moved to a view point: the delta goes onto the target.
+   *
+   * Ignored when nothing is pressed, so a mouse moving across the field with
+   * no button down steers nothing — "only dragging moves the ship" is true of
+   * the cursor as well as of the thumb.
+   */
+  dragPointer(viewX: number, viewY: number): void {
+    if (!this.pointerDown || this.dragX === null || this.dragStation === null) return;
+    this.dragX += viewX - this.dragLastX;
+    this.dragStation += viewY - this.dragLastY;
+    this.dragLastX = viewX;
+    this.dragLastY = viewY;
   }
 
-  /** The finger lifted or the button let go: back to cruise, brake forgotten. */
+  /**
+   * The finger lifted or the button let go.
+   *
+   * The targets go with it, so the ship holds the place in the window the
+   * player left it in and the stick falls to zero — the same "no settle, no
+   * recentre" rule `player.ts` records. A target that outlived the contact
+   * would keep steering after the thumb was gone.
+   */
   releasePointer(): void {
     this.pointerDown = false;
-    this.pointerBraking = false;
+    this.dragX = null;
+    this.dragStation = null;
+    this.pointerFiring = false;
+  }
+
+  /**
+   * Re-base the drag under the ship WITHOUT ending the contact.
+   *
+   * For the case where the pointer was doing something else for a while and
+   * is now steering again — the level-up offer is open over the field, and
+   * `main.ts` drops drag events while it is. Without this the thumb's wander
+   * across the cards would be applied as one jump the moment the offer
+   * closed.
+   */
+  rebaseDrag(viewX: number, viewY: number): void {
+    if (!this.pointerDown) return;
+    this.dragLastX = viewX;
+    this.dragLastY = viewY;
+    this.dragX = this.shipX;
+    this.dragStation = this.shipStation;
   }
 
   /**
    * A new run: the mouse is inert again until it is clicked, no pointer is
-   * pressed, and no finger is steering. `touchActive` is deliberately kept —
-   * it is the UI's memory that this is a touch device, not run state.
+   * pressed, no finger is steering, and the warp lever has no opinion.
+   * `touchActive` is deliberately kept — it is the UI's memory that this is a
+   * touch device, not run state.
    */
   resetPointer(): void {
     this.mouseEngaged = false;
-    this.mouseX = null;
     this.releasePointer();
-    this.setPointerTarget(null);
+    this.warpLever = null;
   }
 
   private down = new Set<string>();
@@ -488,6 +526,7 @@ export class Input {
     openOffers: false,
     autoPick: false,
     throttle: 0,
+    warpLever: null,
   };
 
   /** Set by the HUD when a card is clicked or tapped; drained by `sample()`. */
@@ -497,19 +536,52 @@ export class Input {
   pointerSkip = false;
 
   /**
-   * The ship's world x, so pointer steering knows where it is. There was a
-   * `shipY` beside it; it went with the touch layer's vertical steer, since
-   * nothing here reads the ship's y any more and a field nobody reads is a
-   * promise nobody keeps.
+   * The ship's world x, so the drag target knows where to re-base and how far
+   * it still has to pull. Set by `main.ts` every step.
    */
   shipX = 450;
   /**
-   * The camera's left edge, in world px, so the mouse cursor — held in VIEW
-   * space — can be compared with the ship, which is in world space. Set by
-   * `main.ts` every step beside `shipX`; the touch target does not need it
-   * because it is stored in world space and compared there.
+   * The ship's y IN THE VIEW — its station in the track window, not its world
+   * y. Set by `main.ts` every step as `player.y - camera.viewY`.
+   *
+   * A `shipY` was deleted from here once, with the note that "a field nobody
+   * reads is a promise nobody keeps". This is not that field coming back: the
+   * old one was a WORLD y for an absolute steer, and the reason the vertical
+   * steer was removed is that a thumb resting below the ship read as a pull
+   * backwards. Station is a different quantity and it exists for a stated
+   * reason — see `dragStation`, which cannot be expressed in world space
+   * because the window it lives in slides forward every step.
+   *
+   * THIS IS THE ONE PLACE THE CAMERA REACHES THE SIMULATION, and `camera.ts`
+   * records that the camera is meant to be strictly downstream — `arena.mjs`
+   * producing bit-identical output is what established it. That property is
+   * intact where it is measured: every bot harness drives `World.update` with
+   * an input literal and never calls `sample()` at all, so no balance
+   * measurement can see this. If a bot is ever taught to steer through
+   * `Input`, this is the line to suspect first.
    */
-  viewX = 0;
+  shipStation = 0;
+
+  /**
+   * The warp lever's travel, 0 (down, out) to 1 (up, engaged) — or NULL while
+   * nobody is touching it, which means "no opinion" rather than "zero".
+   *
+   * The owner: "let's just make a side bar the user can drag instead, make it
+   * look cool but small, so pulling it up turns on warp then pulling it down
+   * turns it off". So warp is no longer something the throttle does at its
+   * stop; it is a control of its own, at the right edge, dragged.
+   *
+   * NULL IS NOT 0, and the distinction is the whole latch. `World.updateWarp`
+   * treats a number as an instruction and null as silence: while the lever is
+   * held, its travel drives the charge directly; when it is let go the field
+   * goes back to null and the mode simply STAYS where the lever left it. A
+   * lever that reported 0 on release would drop the player out of warp the
+   * instant they took their thumb off, which is the opposite of a lever.
+   *
+   * The keyboard's fore/aft stop still arms and drops warp on its own timers,
+   * untouched — see `World.updateWarp`. Two ways in, one latch.
+   */
+  warpLever: number | null = null;
 
   constructor(target: EventTarget = window) {
     target.addEventListener('keydown', (e) => {
@@ -564,78 +636,71 @@ export class Input {
   sample(): InputState {
     let x = 0;
     let y = 0;
+    /**
+     * The DRAG's fore-and-aft term, held apart from `y` until the throttle has
+     * been read — which is the one line that keeps the owner's rule true.
+     *
+     * `throttle` is what `World.updateWarp` arms and drops warp on, and it is
+     * taken off `y` a few dozen lines below. If the drag were summed into `y`
+     * with the keys, then dragging the ship forward would pin the throttle at
+     * its forward stop and warp would engage 1.4 s later — which is precisely
+     * the "the press flies the ship AND warps it" coupling being removed, put
+     * back through the other axis. So the keys and the pad own `throttle`, the
+     * drag owns the ship, and the two meet only after the read.
+     */
+    let dragY = 0;
 
-    /** A fore-or-aft key is down, so the keyboard owns the throttle this step. */
-    let keyThrottle = false;
     for (const code of this.down) {
       const v = MOVE_KEYS[code];
       if (v) {
         x += v[0];
         y += v[1];
-        if (v[1] !== 0) keyThrottle = true;
       }
     }
 
     /*
-     * POINTER STEERING IS HORIZONTAL ONLY, for the finger and the cursor.
+     * THE DRAG, ON BOTH AXES, AS A SATURATING CONTROLLER ON A LEASHED TARGET.
      *
-     * The finger: toward its world x, easing off over the last 46 px so the
-     * ship settles under it instead of jittering around it, dead inside 3 px.
-     * This is the old two-axis steer with its y term deleted — "clicking on
-     * the screen makes the ship slow down (if the click is behind the ship)"
-     * was that y term, and nothing else. The cursor: proportional to the
-     * horizontal gap up to `MOUSE_STEER_RANGE`, dead inside `MOUSE_DEAD_ZONE`,
-     * and null — steer 0 — while it is off the stage: a pointer that has left
-     * the window is not pointing at anything, and the last x it was seen at
-     * is a guess about the player's intent that would keep the ship turning
-     * toward a wall. The cursor is compared against the ship's VIEW position
-     * so a panning camera cannot leave a still cursor pointing at a stale
-     * world x; the finger is compared in world space, see `pointerTargetX`.
+     * `dragX` and `dragStation` are where the player has dragged the ship TO;
+     * the stick is how far that still is, over `DRAG_RANGE`, clamped. Under
+     * `DRAG_RANGE` of the target the ship eases in instead of arriving at
+     * full lateral speed and stopping dead, which is the same easing the
+     * absolute steer had over its last 46 px and for the same reason.
      *
-     * A/D ADD to either and the sum is CLAMPED, before the normalise below.
-     * The normalise alone would not do: it scales x and y together, so D held
-     * on top of a full-lock cursor would push x to 2 and come out of the
-     * hypot as a MORE lateral heading than full lock — the steer is a
-     * position, not a sum, for the same reason the throttle is. The clamp is
-     * unconditional now that two pointer sources exist; for the keyboard
-     * alone it only ever touches ArrowLeft-plus-A, which read -2 and came out
-     * of the hypot at -1 anyway.
+     * THE LEASH IS APPLIED HERE, EVERY STEP, AGAINST THE SHIP'S LIVE
+     * POSITION — not at the moment of the drag. Two things need it. A target
+     * driven into a wall would otherwise wind up arbitrarily far outside the
+     * arena, and coming back would need hundreds of px of drag against a
+     * ship that had not moved; and the whole sustained-boost gesture depends
+     * on the target being ALLOWED to sit ahead of a ship that cannot reach
+     * it. Once the ship pins at the front of the track window it stops
+     * closing the gap, the leash holds the target `DRAG_LEASH` ahead of it,
+     * the stick stays saturated at -1, and the ship goes on towing the rail —
+     * which is what "hold forward and the stage comes at you faster" is made
+     * of. A target clamped into the window instead would zero the stick at
+     * the front edge and quietly delete that.
+     *
+     * KEYS AND PAD ADD TO THE SAME AXES AND THE SUM IS CLAMPED. The clamp
+     * cannot be left to the normalise below: the normalise scales x and y
+     * together, so D held on top of a full-lock drag would push x to 2 and
+     * come out of the hypot as a MORE lateral heading than full lock. The
+     * steer is a position, not a sum. There is no longer a keys-beat-pointer
+     * override — with both clamped into the same axis, holding W while
+     * dragging forward is already full forward, and holding W while dragging
+     * back is a player asking for two opposite things and getting neither.
      */
-    if (this.pointerTargetX !== null) {
-      const dx = this.pointerTargetX - this.shipX;
-      const d = Math.abs(dx);
-      if (d > 3) x += Math.sign(dx) * Math.min(1, d / 46);
+    if (this.dragX !== null) {
+      this.dragX = Math.max(this.shipX - DRAG_LEASH, Math.min(this.shipX + DRAG_LEASH, this.dragX));
+      const dx = this.dragX - this.shipX;
+      if (Math.abs(dx) > DRAG_DEAD) x += Math.max(-1, Math.min(1, dx / DRAG_RANGE));
     }
-    if (this.mouseEngaged && this.mouseX !== null) {
-      const dx = this.mouseX - (this.shipX - this.viewX);
-      if (Math.abs(dx) > MOUSE_DEAD_ZONE) x += Math.max(-1, Math.min(1, dx / MOUSE_STEER_RANGE));
+    if (this.dragStation !== null) {
+      const s = this.shipStation;
+      this.dragStation = Math.max(s - DRAG_LEASH, Math.min(s + DRAG_LEASH, this.dragStation));
+      const dy = this.dragStation - s;
+      if (Math.abs(dy) > DRAG_DEAD) dragY += Math.max(-1, Math.min(1, dy / DRAG_RANGE));
     }
     x = Math.max(-1, Math.min(1, x));
-
-    /*
-     * THE POINTER IS THE THROTTLE, and the keys win while one is down.
-     *
-     * Pressed is the forward stop, released is CRUISE, and pressed-and-
-     * dragged-back is the back stop — see `BRAKE_DRAG_ENGAGE` for the rule
-     * and the owner's words. The brake's hysteresis is decided here, once per
-     * step, on the drag since the press began: engage past ENGAGE, let go
-     * under RELEASE, hold the current answer in between. `main.ts` only feeds
-     * the mouse button in here while the mouse is engaged, so before the
-     * first click on the field the mouse is as inert as it ever was.
-     *
-     * W/S/arrows override the pointer for as long as they are held, so a
-     * player who reaches for the keyboard mid-fight gets the keyboard, and
-     * the pointer resumes the instant they let go. `y` is the screen axis
-     * here (-1 is up the screen, i.e. forward), which is why +1 on the
-     * throttle is `y -= 1`.
-     */
-    if (this.pointerDown) {
-      const drag = this.pointerLatestY - this.pointerPressY;
-      if (this.pointerBraking ? drag < BRAKE_DRAG_RELEASE : drag > BRAKE_DRAG_ENGAGE) {
-        this.pointerBraking = !this.pointerBraking;
-      }
-      if (!keyThrottle) y += this.pointerBraking ? 1 : -1;
-    }
 
     // Touch state first; the keyboard scan below ORs on top of it.
     let shoot = this.pointerFiring;
@@ -736,16 +801,24 @@ export class Input {
     }
 
     /*
-     * READ BEFORE THE NORMALISE, and that is the whole point of the field.
+     * READ BEFORE THE NORMALISE AND BEFORE THE DRAG, and both halves of that
+     * matter.
      *
-     * See `InputState.throttle`. Every source that can push the ship forward
-     * has added into `y` by this line — keys, d-pad, stick, and the pointer
-     * throttle — and none of them has been scaled down yet by a lateral
-     * component the player is also holding. Clamped, because two sources can
-     * push the same axis at once — a d-pad and a stick, or a key and a pad —
-     * and the throttle is a position, not a sum.
+     * Before the normalise: see `InputState.throttle`. Nothing that has added
+     * into `y` by this line has been scaled down yet by a lateral component
+     * the player is also holding, so the stop is a stop however the ship is
+     * turning. Clamped, because a d-pad and a stick can push the same axis at
+     * once and the throttle is a position, not a sum.
+     *
+     * Before the drag: `throttle` is the WARP axis, and only the keyboard and
+     * the pad may speak on it. See `dragY` at the top of this method — this
+     * is the line its comment is about, and the reason the two are separate
+     * quantities at all.
      */
     const throttle = Math.max(-1, Math.min(1, -y));
+
+    // Now the drag joins the ship's axis, clamped for the same reason x was.
+    y = Math.max(-1, Math.min(1, y + dragY));
 
     // Normalise so diagonals are not faster than cardinals.
     const len = Math.hypot(x, y);
@@ -757,6 +830,7 @@ export class Input {
     this.state.x = x;
     this.state.y = y;
     this.state.throttle = throttle;
+    this.state.warpLever = this.warpLever;
     this.state.shoot = shoot;
     this.state.bomb = bomb;
     this.state.focus = focus;

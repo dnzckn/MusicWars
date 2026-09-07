@@ -325,23 +325,23 @@ function toView(e: PointerEvent): { x: number; y: number } {
   };
 }
 
-/**
- * Which point in the world the pointer is over, in simulation coordinates.
+/*
+ * TOMBSTONE — `toWorld(e)`, screen -> view -> plus the camera's top-left.
  *
- * Screen -> view -> plus the camera's top-left -> world. The camera is at the
- * origin today so the last step adds zero, and it is written out anyway
- * because the alternative is a function that looks like a pointless alias of
- * `toView` and gets deleted by the next reader.
+ * Its only caller was the absolute finger steer, which took the pointer's
+ * WORLD x and had the ship swim toward it. Relative drag needs no world
+ * point: a drag is a difference, and a difference is the same number in view
+ * space and world space because the two differ only by an offset. The one
+ * place the camera still has to be added is the ship's station, and that is
+ * done once per step where the world is already in hand (`input.shipStation`)
+ * rather than per pointer event.
  *
- * `viewX`/`viewY` rather than the composed `camera.x`/`camera.y`: the composed
- * offset carries screenshake, and a steering target that jitters with every
- * explosion would make the ship twitch at exactly the moment the player most
- * needs it to go where they pointed.
+ * The rule it carried is still live and still worth knowing if a world-space
+ * hit test is ever needed again: use `camera.viewX`/`viewY`, never the
+ * composed `camera.x`/`camera.y`, because the composed offset carries
+ * screenshake and a target that jitters with every explosion makes the ship
+ * twitch exactly when the player most needs it to go where they pointed.
  */
-function toWorld(e: PointerEvent): { x: number; y: number } {
-  const v = toView(e);
-  return { x: v.x + world.camera.viewX, y: v.y + world.camera.viewY };
-}
 
 /**
  * A click or tap on the level-up offer.
@@ -504,10 +504,10 @@ let touchContactId: number | null = null;
  * nothing pressed is a press from here, down while pressed is a drag, up is a
  * release. Idempotent, so it can be fed from every move event.
  */
-function pointerContact(down: boolean, viewY: number): void {
+function pointerContact(down: boolean, viewX: number, viewY: number, touch = false): void {
   if (!down) input.releasePointer();
-  else if (input.pointerPressed) input.dragPointer(viewY);
-  else input.pressPointer(viewY);
+  else if (input.pointerPressed) input.dragPointer(viewX, viewY);
+  else input.pressPointer(viewX, viewY, touch);
 }
 
 function mousePointerDown(e: PointerEvent): void {
@@ -515,11 +515,9 @@ function mousePointerDown(e: PointerEvent): void {
   const v = toView(e);
   if (!input.mouseActive) {
     if (!mouseLive() || !onField(e)) return;
-    input.engageMouse(v.x);
-  } else {
-    input.setMouseX(v.x);
+    input.engageMouse();
   }
-  input.pressPointer(v.y);
+  input.pressPointer(v.x, v.y);
   if (onField(e)) e.preventDefault();
 }
 
@@ -547,10 +545,13 @@ stage.addEventListener('pointerdown', (e) => {
     // buttons are pushed off the bottom of the window on the very first touch.
     layout();
   }
-  // World x for the steer, view y for the brake gesture — see the note above.
-  input.setPointerTarget(toWorld(e).x);
+  // The press opens a drag and moves nothing: the ship answers the finger's
+  // MOVEMENT from here, not its position. See `Input.pressPointer`.
   touchContactId = e.pointerId;
-  input.pressPointer(toView(e).y);
+  {
+    const v = toView(e);
+    input.pressPointer(v.x, v.y, true);
+  }
   try {
     stage.setPointerCapture(e.pointerId);
   } catch {
@@ -563,10 +564,9 @@ stage.addEventListener('pointermove', (e) => {
   if (e.pointerType === 'mouse') {
     if (!input.mouseActive) return;
     const v = toView(e);
-    input.setMouseX(v.x);
     // The physical truth of the button, which `pointerup` alone cannot give:
     // a release over another window never reaches this page's listeners.
-    pointerContact((e.buttons & 1) !== 0, v.y);
+    pointerContact((e.buttons & 1) !== 0, v.x, v.y);
     return;
   }
   // Do not steer while an offer is open. The world is paused, so a drag across
@@ -575,7 +575,17 @@ stage.addEventListener('pointermove', (e) => {
   // choose to be. (This mattered more when the world merely slowed to 12% and
   // the ship actually crept across the arena while they read; it still matters,
   // because the input is live even while the simulation is not.)
-  if (world.choosing) return;
+  if (world.choosing) {
+    // RE-BASE rather than ignore. The contact is still down and the finger is
+    // wandering across the cards; if the drag were merely dropped, the whole
+    // wander would be applied as one jump the moment the offer closed and the
+    // ship would teleport. Re-basing every move keeps the origin under the
+    // finger and the target under the ship, so the gesture resumes from
+    // wherever the thumb happens to have ended up.
+    const v = toView(e);
+    input.rebaseDrag(v.x, v.y);
+    return;
+  }
   // Only the finger that pressed the FIELD steers or throttles. Touch
   // implicitly captures to the element a finger lands on, so a thumb wiggling
   // on FOCUS bubbles its moves through here too — and used to steer the ship
@@ -588,8 +598,10 @@ stage.addEventListener('pointermove', (e) => {
   // a mouse-style check would have read as sixty releases. Through
   // `pointerContact` rather than `dragPointer` so a press that `blur` let go
   // of while the finger stayed down is taken up again from where it is.
-  pointerContact(true, toView(e).y);
-  input.setPointerTarget(toWorld(e).x);
+  {
+    const v = toView(e);
+    pointerContact(true, v.x, v.y, true);
+  }
   e.preventDefault();
 });
 const releasePointer = (e: PointerEvent) => {
@@ -600,14 +612,9 @@ const releasePointer = (e: PointerEvent) => {
   if (touchContactId !== null && e.pointerId !== touchContactId) return;
   touchContactId = null;
   input.releasePointer();
-  input.setPointerTarget(null);
 };
 stage.addEventListener('pointerup', releasePointer);
 stage.addEventListener('pointercancel', releasePointer);
-// Off the stage, the cursor points at nothing: steer 0, throttle untouched.
-stage.addEventListener('pointerleave', (e) => {
-  if (e.pointerType === 'mouse') input.setMouseX(null);
-});
 // On `window`, not the stage: a button let go over the HUD, the page margin or
 // the browser chrome is still let go. Cheap enough to run unconditionally.
 const releaseMouse = (e: PointerEvent) => {
@@ -680,6 +687,107 @@ bindTouchButton('touch-levelup', () => {
 });
 bindTouchButton('touch-reroll', () => (input.pointerReroll = true));
 bindTouchButton('touch-skip', () => (input.pointerSkip = true));
+
+/*
+ * THE WARP LEVER, the game's one draggable control.
+ *
+ * The owner: "pulling it up turns on warp then pulling it down turns it off".
+ *
+ * RELATIVE, LIKE EVERY OTHER GESTURE NOW. The travel moves by the drag's
+ * DISTANCE, not to the point the thumb landed on. Absolute would mean a tap on
+ * the top of the track engages warp, and a mode you can enter by brushing the
+ * right edge of the screen is the accident `WARP_ARM`'s 1.4 s hold was bought
+ * to prevent — the deliberateness has to live somewhere, and here it lives in
+ * having to pull the thing a track's length.
+ *
+ * IT STARTS FROM WHERE THE MODE IS, not from zero: grabbing it while warping
+ * picks it up at the top, so dropping out is a full downward stroke. That is
+ * "dragging backwards for a while turns it off", and it means the control can
+ * never disagree with the mode it reports.
+ *
+ * THE STAGE MUST NOT SEE ANY OF THIS. `main.ts`'s stage pointerdown has no
+ * onField guard: without `stopPropagation` a thumb on the lever would ALSO
+ * open a drag on the play field and fly the ship while it warped. The capture
+ * is what keeps the gesture alive when the thumb wanders off a 46 px box
+ * mid-stroke, which on a phone it does.
+ */
+/*
+ * The lever follows the HUD's own visibility rather than re-deriving it.
+ * `Hud.update` already owns the question "is the player in a fight right now"
+ * — title gone, clock started, no offer, not paused, not dead — and answering
+ * it twice is how two answers start disagreeing. A class read is cheap.
+ */
+const hudElForLever = document.getElementById('hud')!;
+const hudHidden = (): boolean => hudElForLever.classList.contains('hidden');
+
+const warpEl = document.getElementById('warp-lever')!;
+const warpTrack = warpEl.querySelector('.warp-track') as HTMLElement;
+/** The contact dragging the lever, or null. Its own, never the field's. */
+let warpPointerId: number | null = null;
+let warpFromY = 0;
+let warpFromTravel = 0;
+
+const warpTravelNow = (): number => (world.warping ? 1 : world.warpCharge);
+
+warpEl.addEventListener('pointerdown', (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  warpPointerId = ev.pointerId;
+  warpFromY = ev.clientY;
+  warpFromTravel = warpTravelNow();
+  input.warpLever = warpFromTravel;
+  try {
+    warpEl.setPointerCapture(ev.pointerId);
+  } catch {
+    // A pointer id that is no longer active throws; the move handler still
+    // works while the thumb is over the box, which is the common case.
+  }
+});
+warpEl.addEventListener('pointermove', (ev) => {
+  if (warpPointerId !== ev.pointerId) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  /*
+   * The track's own height is the full stroke, so the knob stays under the
+   * thumb: pull the lever to the top of the bar and it IS at the top. Read
+   * from the live box rather than from a constant because the sheet may size
+   * it differently on another profile, and a hard-coded 116 would silently
+   * change the gearing there.
+   */
+  const span = warpTrack.getBoundingClientRect().height || 116;
+  const t = warpFromTravel + (warpFromY - ev.clientY) / span;
+  input.warpLever = Math.max(0, Math.min(1, t));
+});
+const warpRelease = (ev: PointerEvent) => {
+  if (warpPointerId !== ev.pointerId) return;
+  ev.stopPropagation();
+  warpPointerId = null;
+  /*
+   * NULL, NOT THE TRAVEL. Letting go of a lever does not move it — see
+   * `Input.warpLever`. The world stops hearing an instruction and the latch
+   * simply stays where the stroke left it.
+   */
+  input.warpLever = null;
+};
+warpEl.addEventListener('pointerup', warpRelease);
+warpEl.addEventListener('pointercancel', warpRelease);
+
+/**
+ * Paint the lever from the world, once a frame.
+ *
+ * The bar is a function of `warpCharge` whoever filled it, so the keyboard's
+ * 1.4 s hold at the forward stop drives the same picture the thumb drags. One
+ * control, one readout, two ways in.
+ */
+const paintWarpLever = (): void => {
+  const show = !hudHidden();
+  warpEl.classList.toggle('hidden', !show);
+  if (!show) return;
+  const t = warpTravelNow();
+  warpEl.style.setProperty('--warp', t.toFixed(3));
+  warpEl.classList.toggle('on', world.warping);
+  warpEl.setAttribute('aria-valuenow', t.toFixed(2));
+};
 bindTouchButton('touch-banish', () => {
   banishArmed = !banishArmed;
   paintTouchRow();
@@ -1217,7 +1325,10 @@ const loop = new Loop({
     // the finger no longer pulls in y — and the mouse cursor is held in view
     // space, so it also needs the camera.
     input.shipX = world.player.x;
-    input.viewX = world.camera.viewX;
+    // The ship's station in the track window — see `Input.shipStation`. The
+    // un-shaken `viewY` for the same reason `toWorld` uses it: screenshake
+    // must not reach the steer.
+    input.shipStation = world.player.y - world.camera.viewY;
     const state = injected ?? input.sample();
     /*
      * THE ONE INBOUND EDGE OF THE GAME/MUSIC BOUNDARY.
@@ -1287,6 +1398,7 @@ const loop = new Loop({
       world.transport.barPhase,
     );
     paintTouchRow();
+    paintWarpLever();
     /*
      * Nothing touches the input here any more. `input.endFrame()` used to be
      * this line, and it is the reason one tap of the black-hole key spent four

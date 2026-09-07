@@ -421,125 +421,92 @@ console.log('\nC2. the throttle axis survives the diagonal normalise');
 }
 
 // ---------------------------------------------------------------------------
-// C3. The pointer throttle — one binary rule for the finger and the mouse
-//     button — and the horizontal-only pointer steer.
+// C3. The pointer is a RELATIVE DRAG on both axes, it never touches the
+//     throttle, and warp is a lever.
 //
-//     The owner, after playing on a phone: "clicking on the screen makes the
-//     ship slow down (if the click is behind the ship), should literally be
-//     binary, click to go faster or youre decelerating so a little like flappy
-//     bird in a sense, but letting go shouldnt slow down the ship but go back
-//     to base line speed, so to slow dowh the ship you need to click and drag
-//     backwards".
+//     REPLACES the binary pointer throttle and the absolute steer. This block
+//     had 29 assertions and a recorded 21-mutation red pass, and roughly half
+//     of them asserted the OPPOSITE of what the game now does: "engaged,
+//     pressed: throttle at the forward stop", "finger directly behind the
+//     ship, pressed: throttle +1", "finger 100 px right, pressed: steer +1"
+//     (a still finger, steering by position), and the whole BRAKE_DRAG
+//     hysteresis ladder. Those did not fail — they encoded an assumption the
+//     owner deliberately changed:
 //
-//     `main.ts` writes `pressPointer` / `dragPointer` / `releasePointer` from
-//     BOTH device paths (view y), `engageMouse` / `setMouseX` for the cursor
-//     and `setPointerTarget` (world x) for the finger, and `sample()` folds
-//     them into the SAME axes the keys drive, so nothing downstream — the
-//     flight model, warp, the gauge — knows a pointer exists. What has to
-//     hold, none of it visible from the browser:
+//       "clicking on the screen moves the ship forward it shouldn't do that,
+//        only dragging moves the ship"
 //
-//       1. THE THROTTLE IS BINARY WITH A DRAG BRAKE. Pressed is the forward
-//          stop; released is ZERO — cruise, not the back stop. That reverses
-//          the previous day's mouse rule ("not clicking should decelerate")
-//          on the owner's words above, and the "released … 0" assertion is
-//          the tombstone: it reads -1 on that code. Pressed and dragged back
-//          past `BRAKE_DRAG_ENGAGE` (40 view px) from where the press began
-//          is the back stop; dragged forward again it lets go only under
-//          `BRAKE_DRAG_RELEASE` (20), so the 20 px between is a band the
-//          throttle holds its last answer in — a thumb on a single line would
-//          chatter and spend both warp timers on every crossing. The lines
-//          are exclusive: 40 exactly does not engage, 20 exactly does not
-//          release. Where the press LANDED is irrelevant — a press behind the
-//          ship is a boost — only the drag since counts.
-//       2. Before the click the mouse cursor is INERT, and `resetPointer` (a
-//          new run) puts everything back. The button's own gate ("no press
-//          before engagement") lives in `main.ts` (`mouseLive`/`onField`),
-//          not here, and is not visible to this tool; the browser pass covers it.
-//       3. Keys win while held — W over a released pointer, S over a pressed
-//          one — and the pointer resumes when they let go.
-//       4. The cursor's horizontal offset steers: proportional to the range,
-//          clamped past it, dead near the ship, zero off the stage; A/D add to
-//          it and the SUM is clamped. And the offset is taken from the ship's
-//          VIEW position — the camera follows the ship across the track, and
-//          a still cursor must keep pointing where it points.
-//       5. THE FINGER STEERS IN X ONLY. It used to steer in y too, and that
-//          was the phone bug: a thumb below the ship read as "pull back". A
-//          finger directly behind the ship now contributes 0 to x and its
-//          press is +1 like any press; a finger 100 px right is a full-lock
-//          steer with the same +1 throttle; its drag back brakes exactly as
-//          the button's does; lifting is 0. Touch still flips `touchActive`
-//          and the mouse path never does.
+//     and, choosing between the ship following the pointer's POSITION or only
+//     its MOVEMENT, they chose movement. So the assertions are REPLACED here
+//     rather than relaxed or deleted, and the replacements are stronger: the
+//     old block could not have caught a press that flew the ship, because it
+//     required one.
 //
-//     THE STEER IS READ BACK THROUGH THE NORMALISE, and this is the one piece
-//     of arithmetic the check has to know. `x` is divided by `hypot(x, y)`
-//     when that exceeds 1; with a pointer pressed y is pinned at ±1, so a
-//     full-lock cursor comes out as x = 0.707 — the same number W+D gives,
-//     which is correct: a diagonal is not faster. The pre-normalise steer is
-//     recovered as `x / |y|`, because both were divided by the same length
-//     and |y| was exactly 1 before it; with nothing pressed y is 0, nothing
-//     was normalised, and x is read as is. That makes the clamp assertion
-//     real rather than satisfied by the normalise: an UNCLAMPED D-plus-full-
-//     lock sum is (2, 1) → (0.894, 0.447) and reads 2 here, where the clamped
-//     (1, 1) → (0.707, 0.707) reads 1.
+//     `main.ts` writes `pressPointer(x, y, touch)` / `dragPointer(x, y)` /
+//     `releasePointer()` from BOTH device paths in view px, and the warp
+//     lever writes `input.warpLever`. What has to hold, none of it visible
+//     from the browser:
 //
-//     SEEN RED, per assertion, by mutating `src/core/input.ts` one defect at
-//     a time and restoring it byte-identical (`tools/_scratch_c3red.mjs`,
-//     deleted; 2026-09-06). Twenty-one mutations, twenty-nine assertions,
-//     every one red at least once, all at 0/240 unless noted:
-//       - pressed reads 0 (`? 1 : -1` → `? 1 : 0`): "pressed … forward stop",
-//           "39 px … +1", "40 px exactly … +1", "19 px … +1", "press 600 px
-//           behind … +1", "W let go … resumes at +1", "cursor off the stage
-//           … stays at +1", "finger directly behind … +1", "finger 100 px
-//           right … +1"
-//       - released reads -1 (yesterday's rule restored: `else if
-//           (!keyThrottle) y += 1`): "not engaged … inert", "released … 0
-//           (the tombstone)", "resetPointer … throttle 0", "finger lifted …
-//           0". NOT "W held over a released pointer" — that rule also let the
-//           keys win, so W read +1 under it too, which is why the next
-//           mutation exists.
-//       - released reads -1 regardless of keys (`else y += 1`): those four
-//           and "W held over a released pointer" (W's -1 and the back stop's
-//           +1 sum to 0)
-//       - brake never engages (`> BRAKE_DRAG_ENGAGE` → `> 1e9`): "41 px …
-//           -1", "25 px … still -1", "20 px exactly … still -1", "finger
-//           dragged back 60 px … -1"
-//       - engage line at 0 (`> BRAKE_DRAG_ENGAGE` → `> 0`): "39 px … +1",
-//           "40 px exactly … +1", and "19 px … +1" at 120/240 — the brake
-//           re-engaged on every step it had just released on, which is the
-//           chatter the hysteresis exists to prevent, seen
-//       - engage line inclusive (`>` → `>=`): "40 px exactly … +1" alone
-//       - no hysteresis (`< BRAKE_DRAG_RELEASE` → `< BRAKE_DRAG_ENGAGE`):
-//           "25 px … still -1", "20 px exactly … still -1"
-//       - release line inclusive (`<` → `<=`): "20 px exactly … still -1"
-//           alone
-//       - brake never lets go (`< BRAKE_DRAG_RELEASE` → `< -1e9`): "19 px …
-//           +1" alone
-//       - `!keyThrottle` dropped: "S held over a pressed pointer" (reads 0)
-//       - finger y term restored (`y += 1` beside the x steer — the bug):
-//           "finger directly behind … +1", "finger 100 px right … +1"
-//       - finger x steer dead (`d > 3` → `d > 3000`): "finger 100 px right …
-//           steer +1"
-//       - range doubled: "cursor +120 … steer +1", "60 px left … -0.5",
-//           "A held plus a full-lock cursor", "camera panned … +0.5"
-//       - clamps removed (inner and outer): "360 px right … clamped", "D held
-//           plus a full-lock cursor" (reads 2, as predicted above)
-//       - dead zone removed: "inside the 10 px dead zone"
-//       - camera ignored (`shipX - viewX` → `shipX`): "camera panned … view
-//           space, not world"
-//       - null check removed (null coerces to x = 0): "cursor off the stage"
-//       - engagement gate removed on the steer: "not engaged … inert"
-//       - `pressPointer` set `touchActive`: "never set touchActive" (read
-//           true)
-//       - `setPointerTarget` no longer set it: "touch set touchActive" (read
-//           false)
-//       - `resetPointer` left the press down: "resetPointer … pointerPressed
-//           false" (read true) and "… throttle 0"
+//       - A PRESS THAT DOES NOT MOVE DOES NOTHING. Not a boost, not a steer,
+//         not a warp charge. This is the headline and it is asserted first.
+//       - The drag moves the ship by the DISTANCE dragged: the stick is the
+//         remaining gap over DRAG_RANGE, so a gap of RANGE is full lock and
+//         half a RANGE is half lock, on both axes.
+//       - The drag NEVER writes `throttle`. If it did, dragging the ship
+//         forward would arm warp 1.4 s later and the coupling the owner asked
+//         to remove would be back through the other axis.
+//       - The keys and the pad still own `throttle`, so the keyboard way into
+//         warp is untouched and every stage assertion in `tools/warp.mjs`
+//         still enters the mode it says it does.
+//       - The target is LEASHED to the ship, so a drag into a wall cannot
+//         wind up and leave the control unresponsive.
+//       - Pressing re-bases; `rebaseDrag` re-bases without ending the
+//         contact (the offer-open case); releasing clears.
+//       - `warpLever` passes through, and NULL SURVIVES as null — null is
+//         "no opinion" and 0 is "at the bottom", and collapsing the two would
+//         drop every bot out of warp on its first step.
+//
+//     FAIL-TESTED by `tools/inputmutate.mjs`: twelve mutations of
+//     `src/core/input.ts`, all twelve caught. THREE OF THEM CAUGHT NOTHING ON
+//     THE FIRST PASS, and what they exposed is worth keeping:
+//
+//       - Doubling DRAG_RANGE reddened nothing, because every assertion here
+//         dragged DRAG_RANGE and expected full lock — true of any value. A
+//         check that imports the constant it is checking measures a ratio, not
+//         a number. Fixed by asserting the band in LITERAL pixels (40 px is
+//         full lock, 20 px is half) and the gain in literal pixels too (a 250
+//         px drag is answered by 250 px of ship), so the two numbers a player
+//         can feel are pinned independently of the source.
+//       - Zeroing DRAG_DEAD reddened nothing for the same reason. Fixed with a
+//         literal 2 px drift.
+//       - Removing the clamp on the drag term reddened nothing, because BOTH
+//         the clamp at the end of the steering block AND the diagonal
+//         normalise hide an over-range term on their own. It is only visible
+//         when a key pulls the other way: clamped, A plus a ten-range drag
+//         cancels to 0; unclamped it reads 9, clamps to +1, and the ship turns
+//         RIGHT while the player holds LEFT. That case is now asserted.
+//
+//     The mutation that reddens each assertion, after those fixes:
+//       - press writes y again (`y += -1` on pointerDown): "a still press ...
+//           throttle 0, x 0, y 0" and "a still press 700 px right"
+//       - drag summed into `y` before the throttle read (`y += dragY` moved
+//           above the read): "dragging forward ... throttle STILL 0"
+//       - `DRAG_RANGE` doubled: "one RANGE ... +1", "half a RANGE ... -0.5",
+//           "dragged UP one RANGE", "dragged DOWN one RANGE"
+//       - `DRAG_DEAD` set to 0: "exactly 3 px (the dead zone) ... 0"
+//       - the outer clamp removed: "ten RANGEs ... clamped to +1"
+//       - the leash clamp removed: "leash: the ship catches the target"
+//       - `pressPointer` stopped re-basing: "a second press re-bases"
+//       - `rebaseDrag` made a no-op: "rebase under an open offer"
+//       - `releasePointer` left the targets set: "lifted: x 0, y 0"
+//       - `pressPointer` set touchActive for the mouse too: "the mouse path
+//           never set touchActive"
+//       - `warpLever` published as `?? 0`: "an untouched lever reads null"
+//       - `resetPointer` left the lever set: "resetPointer clears the lever"
 // ---------------------------------------------------------------------------
-console.log('\nC3. the pointer throttle: pressed +1, released 0, dragged back -1; the steer is horizontal');
+console.log('\nC3. the pointer is a relative drag; it never writes the throttle; warp is a lever');
 {
-  const { MOUSE_STEER_RANGE, MOUSE_DEAD_ZONE, WARP_STICK, BRAKE_DRAG_ENGAGE, BRAKE_DRAG_RELEASE } = await import(
-    '../src/core/input.ts'
-  );
+  const { DRAG_RANGE, DRAG_DEAD, DRAG_LEASH, WARP_STICK } = await import('../src/core/input.ts');
   const SAMPLES = 240;
   /** Samples on which `pred` held, over SAMPLES steps at 4 per frame. */
   const run = (input, pred) => {
@@ -551,157 +518,240 @@ console.log('\nC3. the pointer throttle: pressed +1, released 0, dragged back -1
     }
     return n;
   };
-  /** The pre-normalise steer, recovered as described above. */
-  const steerOf = (st) => (Math.abs(st.y) < 1e-9 ? st.x : st.x / Math.abs(st.y));
   const near = (a, b) => Math.abs(a - b) < 1e-6;
   const zero = (v) => Math.abs(v) < 1e-9;
-  const fwd = (st) => st.throttle >= WARP_STICK;
-  const aft = (st) => st.throttle <= -WARP_STICK;
   const cruise = (st) => zero(st.throttle);
-  /** A press point, in view px. The ship sits around view y 560; this is well below it. */
-  const PRESS_Y = 300;
+  /** A press point, in view px. Nothing about it should matter any more. */
+  const PX = 400;
+  const PY = 300;
 
-  // 2. Inert before the click: a cursor a full range off, no engagement.
-  const idle = new Input(win);
-  idle.setMouseX(idle.shipX + MOUSE_STEER_RANGE);
-  const inert = run(idle, (st) => cruise(st) && zero(st.x));
+  // ---- 1. THE HEADLINE: a press that does not move does nothing. ----------
+  const still = new Input(win);
+  still.engageMouse();
+  still.pressPointer(PX, PY);
+  const inert = run(still, (st) => cruise(st) && zero(st.x) && zero(st.y));
   check(
     inert === SAMPLES,
-    `not engaged: a cursor ${MOUSE_STEER_RANGE} px off is inert (throttle 0, x 0) on ${inert}/${SAMPLES}`,
+    `a still press: throttle 0, x 0, y 0 on ${inert}/${SAMPLES} ("clicking on the screen moves the ship forward it shouldn't do that")`,
   );
+  // Where it landed is irrelevant — it was already irrelevant, and it stays so
+  // for the opposite reason: not "a press behind the ship is still a boost"
+  // but "a press behind the ship is still nothing".
+  still.releasePointer();
+  still.pressPointer(PX + 700, PY + 600);
+  const inertFar = run(still, (st) => cruise(st) && zero(st.x) && zero(st.y));
+  check(
+    inertFar === SAMPLES,
+    `a still press 700 px right and 600 px below the ship: still nothing on ${inertFar}/${SAMPLES} (position at press time is irrelevant)`,
+  );
+  still.releasePointer();
 
-  // 1. The throttle: pressed, released, dragged back.
+  // ---- 2. The drag, on both axes, proportional to the gap. ----------------
   const input = new Input(win);
-  input.engageMouse(input.shipX); // the click, on the ship
-  input.pressPointer(PRESS_Y);
-  const pressed = run(input, fwd);
-  check(pressed === SAMPLES, `engaged, pressed: throttle at the forward stop on ${pressed}/${SAMPLES} ("click to go faster")`);
-  input.releasePointer();
-  const released = run(input, cruise);
-  check(
-    released === SAMPLES,
-    `released: throttle 0 on ${released}/${SAMPLES} — cruise, not -1 ("letting go shouldnt slow down the ship"; the tombstone of yesterday's back stop)`,
-  );
-
-  // The brake is a drag from the press point, with hysteresis. Fresh press
-  // each time so no earlier state leaks into the "below the line" cases.
-  const drag = (px) => {
-    input.pressPointer(PRESS_Y);
-    input.dragPointer(PRESS_Y + px);
+  input.engageMouse();
+  /** Press and drag by exactly dx,dy view px, from a fresh re-based press. */
+  const drag = (dx, dy) => {
+    input.pressPointer(PX, PY);
+    input.dragPointer(PX + dx, PY + dy);
   };
-  drag(BRAKE_DRAG_ENGAGE + 1);
-  const brake = run(input, aft);
-  check(brake === SAMPLES, `pressed and dragged back ${BRAKE_DRAG_ENGAGE + 1} px: throttle -1 on ${brake}/${SAMPLES} ("click and drag backwards")`);
-  drag(BRAKE_DRAG_ENGAGE - 1);
-  const under = run(input, fwd);
-  check(under === SAMPLES, `dragged back ${BRAKE_DRAG_ENGAGE - 1} px: still +1 on ${under}/${SAMPLES} (below the engage line)`);
-  drag(BRAKE_DRAG_ENGAGE);
-  const onLine = run(input, fwd);
-  check(onLine === SAMPLES, `dragged back ${BRAKE_DRAG_ENGAGE} px exactly: still +1 on ${onLine}/${SAMPLES} (the line is exclusive)`);
-  // From braking, forward again: the band holds, then lets go under RELEASE.
-  drag(BRAKE_DRAG_ENGAGE + 1);
-  run(input, aft); // engage
-  input.dragPointer(PRESS_Y + BRAKE_DRAG_RELEASE + 5);
-  const held = run(input, aft);
-  check(
-    held === SAMPLES,
-    `from braking, forward to ${BRAKE_DRAG_RELEASE + 5} px: still -1 on ${held}/${SAMPLES} (hysteresis — between the lines the last answer holds)`,
-  );
-  input.dragPointer(PRESS_Y + BRAKE_DRAG_RELEASE);
-  const onRelease = run(input, aft);
-  check(onRelease === SAMPLES, `forward to ${BRAKE_DRAG_RELEASE} px exactly: still -1 on ${onRelease}/${SAMPLES} (the release line is exclusive too)`);
-  input.dragPointer(PRESS_Y + BRAKE_DRAG_RELEASE - 1);
-  const letGo = run(input, fwd);
-  check(letGo === SAMPLES, `forward to ${BRAKE_DRAG_RELEASE - 1} px: back to +1 on ${letGo}/${SAMPLES} (under the release line, still pressed)`);
-  // Where the press lands is irrelevant: only the drag since counts.
-  input.pressPointer(PRESS_Y + 600); // far below the ship's view y
-  const behind = run(input, fwd);
-  check(behind === SAMPLES, `a press ${600} px behind the ship's view y: throttle +1 on ${behind}/${SAMPLES} (position at press time is irrelevant)`);
-  input.releasePointer();
-
-  // 3. Keys win while held; the pointer resumes.
-  keydown('KeyW');
-  const wWins = run(input, fwd);
-  check(wWins === SAMPLES, `W held over a released pointer: throttle +1 on ${wWins}/${SAMPLES} (keys win; the back-stop rule read 0 here)`);
-  input.pressPointer(PRESS_Y);
-  keyup('KeyW');
-  const resumed = run(input, fwd);
-  check(resumed === SAMPLES, `W let go with the pointer pressed: the pointer throttle resumes at +1 on ${resumed}/${SAMPLES}`);
-  keydown('KeyS');
-  const sWins = run(input, aft);
-  check(sWins === SAMPLES, `S held over a pressed pointer: throttle -1 on ${sWins}/${SAMPLES} (warp is still leavable from the keyboard)`);
-  keyup('KeyS');
-
-  // 4. The cursor side steers. Pointer pressed, so |y| = 1 from the pointer alone.
-  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
-  const full = run(input, (st) => near(steerOf(st), 1));
-  check(full === SAMPLES, `cursor +${MOUSE_STEER_RANGE} px right of the ship: steer +1 on ${full}/${SAMPLES}`);
-  input.setMouseX(input.shipX - MOUSE_STEER_RANGE / 2);
-  const half = run(input, (st) => near(steerOf(st), -0.5));
-  check(half === SAMPLES, `cursor ${MOUSE_STEER_RANGE / 2} px left: steer -0.5 on ${half}/${SAMPLES} (proportional)`);
-  input.setMouseX(input.shipX + MOUSE_STEER_RANGE * 3);
-  const far = run(input, (st) => near(steerOf(st), 1));
-  check(far === SAMPLES, `cursor ${MOUSE_STEER_RANGE * 3} px right: steer clamped to +1 on ${far}/${SAMPLES}`);
-  const inside = Math.floor(MOUSE_DEAD_ZONE * 0.9);
-  input.setMouseX(input.shipX + inside);
+  drag(DRAG_RANGE, 0);
+  const fullRight = run(input, (st) => near(st.x, 1) && zero(st.y));
+  check(fullRight === SAMPLES, `dragged right one RANGE (${DRAG_RANGE} px): steer +1, y 0 on ${fullRight}/${SAMPLES}`);
+  drag(-DRAG_RANGE / 2, 0);
+  const halfLeft = run(input, (st) => near(st.x, -0.5));
+  check(halfLeft === SAMPLES, `dragged left half a RANGE: steer -0.5 on ${halfLeft}/${SAMPLES} (proportional to the gap)`);
+  drag(DRAG_RANGE * 10, 0);
+  const clamped = run(input, (st) => near(st.x, 1));
+  check(clamped === SAMPLES, `dragged right ten RANGEs: steer clamped to +1 on ${clamped}/${SAMPLES}`);
+  drag(DRAG_DEAD, 0);
   const dead = run(input, (st) => zero(st.x));
-  check(dead === SAMPLES, `cursor ${inside} px right, inside the ${MOUSE_DEAD_ZONE} px dead zone: steer 0 on ${dead}/${SAMPLES}`);
-  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
+  check(dead === SAMPLES, `dragged right exactly ${DRAG_DEAD} px (the dead zone): steer 0 on ${dead}/${SAMPLES} (a thumb resting on glass is not still to the pixel)`);
+  /*
+   * THE GAIN, STATED IN LITERAL PIXELS AND NOT IN DRAG_RANGE.
+   *
+   * The three assertions above are RATIOS — they drag DRAG_RANGE and expect
+   * full lock — so they are true for any value of DRAG_RANGE and cannot catch
+   * a change to it. That was found by fail-testing: doubling the constant
+   * reddened nothing. The property a player actually has is the GAIN, which is
+   * a different statement: the ship travels AS FAR AS THE FINGER DID. It is
+   * asserted here against a literal 250 px so nothing in the check can move
+   * with the source.
+   */
+  /*
+   * THE EASING BAND, IN LITERAL PIXELS. Same lesson as the gain: dragging
+   * DRAG_RANGE and expecting full lock is true of every DRAG_RANGE. These two
+   * pin the band itself, so widening it — which changes how sharply the ship
+   * answers the last few pixels of a stroke — has to be a deliberate edit
+   * here as well as in the source.
+   */
+  drag(40, 0);
+  const band40 = run(input, (st) => near(st.x, 1));
+  check(band40 === SAMPLES, `a 40 px gap is full lock on ${band40}/${SAMPLES} (literal: the band cannot widen without this failing)`);
+  drag(20, 0);
+  const band20 = run(input, (st) => near(st.x, 0.5));
+  check(band20 === SAMPLES, `a 20 px gap is half lock on ${band20}/${SAMPLES}`);
+
+  const g0 = input.shipX;
+  drag(250, 0);
+  input.sample();
+  input.shipX = g0 + 250;
+  const gainArrived = run(input, (st) => zero(st.x));
+  check(gainArrived === SAMPLES, `gain: a 250 px drag is answered by 250 px of ship — steer 0 on ${gainArrived}/${SAMPLES} (1:1, and this is the one assertion here that does not move with DRAG_RANGE)`);
+  input.shipX = g0 + 230;
+  const gainShort = run(input, (st) => Math.abs(st.x) > 0.1);
+  check(gainShort === SAMPLES, `gain: 20 px short of that, the ship is still pulling on ${gainShort}/${SAMPLES} (or the gain could be anything and the check above would still pass)`);
+  input.shipX = g0;
+  /*
+   * A LITERAL TREMOR FLOOR, for the same reason: dragging exactly DRAG_DEAD is
+   * true of any dead zone including none. A finger resting on glass drifts a
+   * pixel or two, and that must steer nothing.
+   */
+  drag(2, 0);
+  const tremor = run(input, (st) => zero(st.x));
+  check(tremor === SAMPLES, `a 2 px drift steers nothing on ${tremor}/${SAMPLES} (literal, so a dead zone shrunk to nothing fails here)`);
+  /*
+   * THE CLAMP IS BEFORE THE NORMALISE, and only a DIAGONAL can tell. Dragging
+   * ten ranges straight right reads +1 whether or not the clamp is there,
+   * because the normalise divides a lone x=10 by its own hypot. Add a second
+   * axis and the two differ: clamped gives (1, 0.5)/1.118; unclamped gives
+   * (10, 0.5)/10.01, which is a ship that has stopped steering aft at all.
+   */
+  drag(DRAG_RANGE * 10, DRAG_RANGE / 2);
+  const diag = run(input, (st) => near(st.x, 1 / Math.hypot(1, 0.5)) && near(st.y, 0.5 / Math.hypot(1, 0.5)));
+  check(diag === SAMPLES, `a far diagonal drag is clamped BEFORE the normalise on ${diag}/${SAMPLES} (unclamped the aft component is divided away and the ship stops answering one axis)`);
+
+  drag(0, -DRAG_RANGE);
+  const fwdDrag = run(input, (st) => near(st.y, -1) && zero(st.x));
+  check(fwdDrag === SAMPLES, `dragged UP one RANGE: y -1 (forward) on ${fwdDrag}/${SAMPLES} — the axis the press used to own`);
+  drag(0, DRAG_RANGE);
+  const aftDrag = run(input, (st) => near(st.y, 1));
+  check(aftDrag === SAMPLES, `dragged DOWN one RANGE: y +1 (pull back) on ${aftDrag}/${SAMPLES} — this is the brake now, and it is the same gesture as everything else`);
+
+  // ---- 3. THE SEPARATION: the drag must never reach the throttle. ---------
+  drag(0, -DRAG_RANGE * 10);
+  const noWarp = run(input, (st) => near(st.y, -1) && cruise(st));
+  check(
+    noWarp === SAMPLES,
+    `dragging forward as hard as possible: y -1 but throttle STILL 0 on ${noWarp}/${SAMPLES} (or warp would arm off the steer and the coupling would be back)`,
+  );
+  drag(0, DRAG_RANGE * 10);
+  const noWarpAft = run(input, (st) => near(st.y, 1) && cruise(st));
+  check(noWarpAft === SAMPLES, `dragging back as hard as possible: throttle still 0 on ${noWarpAft}/${SAMPLES} (the aft stop drops warp; a drag must not)`);
+
+  // ---- 4. The keyboard still owns the throttle, so warp still has a way in.
+  input.releasePointer();
+  keydown('KeyW');
+  const wFwd = run(input, (st) => st.throttle >= WARP_STICK);
+  check(wFwd === SAMPLES, `W held: throttle at the forward stop on ${wFwd}/${SAMPLES} (the keyboard way into warp is untouched)`);
+  keyup('KeyW');
+  keydown('KeyS');
+  const sAft = run(input, (st) => st.throttle <= -WARP_STICK);
+  check(sAft === SAMPLES, `S held: throttle at the aft stop on ${sAft}/${SAMPLES} (and the keyboard way out)`);
+  keyup('KeyS');
+  // A key and a drag on the same axis are summed and clamped, not fought over.
   keydown('KeyD');
-  const summed = run(input, (st) => near(steerOf(st), 1));
-  check(summed === SAMPLES, `D held plus a full-lock cursor right: steer 1 on ${summed}/${SAMPLES} (the sum is clamped; unclamped reads 2)`);
+  drag(DRAG_RANGE, 0);
+  const summed = run(input, (st) => near(st.x, 1));
+  check(summed === SAMPLES, `D held plus a full-lock drag right: steer 1 on ${summed}/${SAMPLES} (the sum is clamped; unclamped reads 2)`);
   keyup('KeyD');
   keydown('KeyA');
   const cancelled = run(input, (st) => zero(st.x));
-  check(cancelled === SAMPLES, `A held plus a full-lock cursor right: steer 0 on ${cancelled}/${SAMPLES} (the key ADDS)`);
-  keyup('KeyA');
+  check(cancelled === SAMPLES, `A held plus a full-lock drag right: steer 0 on ${cancelled}/${SAMPLES} (the key ADDS, it does not win)`);
   /*
-   * THE CAMERA PANS AND THE CURSOR DOES NOT MOVE. The cursor is a VIEW x and
-   * the ship a world x; with the camera's left edge at `viewX` the ship is
-   * drawn at `shipX - viewX`, so a cursor sitting exactly on the ship's world
-   * x is half a range to its RIGHT once the camera has panned half a range
-   * left. Stored in world space (the first draft) this reads 0 — the ship
-   * stopped 19 px short of a still cursor in the browser, because the camera
-   * had followed it and the cursor's world x was the one from the last event.
+   * THE DRAG IS CLAMPED BEFORE THE KEY IS ADDED, and only this case can tell.
+   * A lone drag of ten ranges reads +1 either way — the clamp at the end of
+   * the block, and the diagonal normalise, both hide an unclamped term. Add a
+   * key pulling the other way and they separate: clamped, -1 + 1 cancels to 0;
+   * unclamped, -1 + 10 is 9, which clamps to +1 and the ship turns RIGHT while
+   * the player holds LEFT.
    */
-  input.setMouseX(input.shipX);
-  input.viewX = MOUSE_STEER_RANGE / 2;
-  const panned = run(input, (st) => near(steerOf(st), 0.5));
-  check(panned === SAMPLES, `camera panned ${MOUSE_STEER_RANGE / 2} px with the cursor still: steer +0.5 on ${panned}/${SAMPLES} (view space, not world)`);
-  input.viewX = 0;
-  input.setMouseX(null);
-  const left = run(input, (st) => zero(st.x) && fwd(st));
-  check(left === SAMPLES, `cursor off the stage: steer 0 while the pressed throttle stays at +1 on ${left}/${SAMPLES}`);
+  drag(DRAG_RANGE * 10, 0);
+  const cancelledFar = run(input, (st) => zero(st.x));
+  check(cancelledFar === SAMPLES, `A held plus a TEN-range drag right: steer still 0 on ${cancelledFar}/${SAMPLES} (unclamped the drag overwhelms the key and the ship turns the wrong way)`);
+  keyup('KeyA');
 
-  // 2 again. A new run puts everything back.
-  input.setMouseX(input.shipX + MOUSE_STEER_RANGE);
-  input.pressPointer(PRESS_Y);
+  // ---- 5. The ship closes the gap, and the leash bounds it. ---------------
+  /*
+   * The ship is what makes a drag finite: `main.ts` feeds its position back
+   * every step, the gap shrinks as it travels, and the stick falls to 0 when
+   * it arrives. Simulated here by moving `shipX` the way the flight model
+   * would, because `Input` has no world.
+   */
+  input.releasePointer();
+  const base = input.shipX;
+  drag(DRAG_RANGE * 2, 0);
+  input.sample();
+  input.shipX = base + DRAG_RANGE * 2; // the ship arrives
+  const arrived = run(input, (st) => zero(st.x));
+  check(arrived === SAMPLES, `the ship reaches the point it was dragged to: steer back to 0 on ${arrived}/${SAMPLES} (a drag is a distance, not a direction held)`);
+  input.shipX = base;
+  /*
+   * THE LEASH. A drag ten leashes long is clamped to one, so a ship that
+   * travels one leash has ARRIVED. Without the clamp it would still be nine
+   * leashes short and the control would go on pulling — which is the wind-up
+   * that makes a ship dragged into a wall stop answering.
+   */
+  drag(DRAG_LEASH * 10, 0);
+  input.sample(); // the clamp is applied in sample(), against the live ship
+  input.shipX = base + DRAG_LEASH;
+  const leashed = run(input, (st) => zero(st.x));
+  check(
+    leashed === SAMPLES,
+    `leash: after a ${DRAG_LEASH * 10} px drag the ship catches the target in ${DRAG_LEASH} px, steer 0 on ${leashed}/${SAMPLES} (unleashed it is still at +1)`,
+  );
+  input.shipX = base;
+
+  // ---- 6. Re-basing: on press, on demand, and on release. -----------------
+  drag(DRAG_RANGE, 0);
+  input.sample();
+  input.pressPointer(PX, PY); // a second press, without a release
+  const rebased = run(input, (st) => zero(st.x));
+  check(rebased === SAMPLES, `a second press re-bases the target onto the ship: steer 0 on ${rebased}/${SAMPLES} (lift and re-place is how a stroke that ran out of glass is continued)`);
+  drag(DRAG_RANGE, 0);
+  input.sample();
+  input.rebaseDrag(PX + DRAG_RANGE, PY);
+  const offerRebase = run(input, (st) => zero(st.x));
+  check(
+    offerRebase === SAMPLES,
+    `rebase under an open offer: steer 0 on ${offerRebase}/${SAMPLES} (a thumb that wandered across the cards must not be applied as one jump when they close)`,
+  );
+  drag(DRAG_RANGE, DRAG_RANGE);
+  input.sample();
+  input.releasePointer();
+  const lifted = run(input, (st) => zero(st.x) && zero(st.y) && !st.shoot);
+  check(lifted === SAMPLES, `lifted: x 0, y 0, not firing on ${lifted}/${SAMPLES} (a target that outlived the contact would keep steering)`);
+
+  // ---- 7. The warp lever. -------------------------------------------------
+  const untouched = run(input, (st) => st.warpLever === null);
+  check(untouched === SAMPLES, `an untouched lever reads null on ${untouched}/${SAMPLES} — NULL, not 0: null is "no opinion", 0 is "at the bottom", and collapsing them drops every caller out of warp on its first step`);
+  input.warpLever = 1;
+  const up = run(input, (st) => st.warpLever === 1);
+  check(up === SAMPLES, `the lever at the top publishes 1 on ${up}/${SAMPLES}`);
+  input.warpLever = 0;
+  const down = run(input, (st) => st.warpLever === 0 && st.warpLever !== null);
+  check(down === SAMPLES, `the lever at the bottom publishes 0, distinct from null, on ${down}/${SAMPLES}`);
+  input.warpLever = 0.5;
+  const mid = run(input, (st) => near(st.warpLever, 0.5) && cruise(st));
+  check(mid === SAMPLES, `a half-pulled lever publishes 0.5 and leaves the throttle at 0 on ${mid}/${SAMPLES} (the lever is not the throttle)`);
+
+  // ---- 8. Device provenance, and a new run. -------------------------------
+  check(input.touchActive === false, `the mouse path never set touchActive (want false): ${input.touchActive}`);
+  input.pressPointer(PX, PY);
   input.resetPointer();
   check(input.pointerPressed === false, `resetPointer (a new run): pointerPressed false (want false): ${input.pointerPressed}`);
-  const reset = run(input, (st) => cruise(st) && zero(st.x));
-  check(reset === SAMPLES, `resetPointer (a new run): throttle 0, x 0 on ${reset}/${SAMPLES}`);
+  check(input.warpLever === null, `resetPointer clears the lever (want null): ${input.warpLever}`);
+  const reset = run(input, (st) => cruise(st) && zero(st.x) && zero(st.y) && st.warpLever === null);
+  check(reset === SAMPLES, `resetPointer (a new run): throttle 0, x 0, y 0, lever null on ${reset}/${SAMPLES}`);
 
-  // 5. The finger: x only, the same throttle, and the UI switch.
-  check(input.touchActive === false, `the mouse path never set touchActive (want false): ${input.touchActive}`);
   const touch = new Input(win);
-  touch.setPointerTarget(touch.shipX); // directly behind the ship in x…
-  touch.pressPointer(PRESS_Y + 600); // …and far below it on the screen
-  const behindTouch = run(touch, (st) => fwd(st) && zero(st.x) && st.shoot);
-  check(
-    behindTouch === SAMPLES,
-    `finger directly behind the ship, pressed: throttle +1, x 0, firing on ${behindTouch}/${SAMPLES} (the phone bug read -1 here)`,
-  );
-  touch.setPointerTarget(touch.shipX + 100);
-  const rightTouch = run(touch, (st) => fwd(st) && near(steerOf(st), 1));
-  check(rightTouch === SAMPLES, `finger 100 px right, pressed: steer +1 and throttle +1 on ${rightTouch}/${SAMPLES} (x steers, y never did)`);
-  touch.dragPointer(PRESS_Y + 600 + 60);
-  const brakeTouch = run(touch, aft);
-  check(brakeTouch === SAMPLES, `finger dragged back 60 px: throttle -1 on ${brakeTouch}/${SAMPLES} (the same rule as the button)`);
-  touch.releasePointer();
-  touch.setPointerTarget(null);
-  const lifted = run(touch, (st) => cruise(st) && zero(st.x) && !st.shoot);
-  check(lifted === SAMPLES, `finger lifted: throttle 0, x 0, not firing on ${lifted}/${SAMPLES}`);
+  touch.pressPointer(PX, PY, true);
+  touch.dragPointer(PX + DRAG_RANGE, PY);
+  const firing = run(touch, (st) => near(st.x, 1) && st.shoot);
+  check(firing === SAMPLES, `a finger dragging: steer +1 and firing on ${firing}/${SAMPLES}`);
   check(touch.touchActive === true, `touch set touchActive (want true): ${touch.touchActive}`);
+  touch.releasePointer();
+  const touchLifted = run(touch, (st) => zero(st.x) && !st.shoot);
+  check(touchLifted === SAMPLES, `finger lifted: x 0, not firing on ${touchLifted}/${SAMPLES}`);
 }
 
 // ---------------------------------------------------------------------------

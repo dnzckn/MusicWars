@@ -2681,6 +2681,14 @@ export class World {
        * their own input literal. See the fallback at the call site.
        */
       throttle?: number;
+      /**
+       * The warp lever's travel, 0 (down) to 1 (up), or null/absent for "no
+       * opinion" — the state a lever nobody is touching is in. Optional for
+       * the same reason `throttle` is: the headless tools build their own
+       * input literal and know nothing about a DOM control. See
+       * `Input.warpLever` for why absent must not collapse to 0.
+       */
+      warpLever?: number | null;
       /*
        * "Show me the level-ups I have banked." Space, in the shipping game.
        *
@@ -2989,6 +2997,14 @@ export class World {
        * being asked to.
        */
       this.throttle = input.throttle ?? -input.y;
+      /*
+       * `?? null` and not `?? 0`. A harness that has never heard of the lever
+       * leaves the field undefined, and undefined must mean "no opinion", not
+       * "lever at the bottom" — the latter would drop every bot out of warp on
+       * the first step and quietly empty every stage measurement in
+       * `tools/warp.mjs`. See `Input.warpLever`.
+       */
+      this.warpLever = input.warpLever ?? null;
       this.updateWarp(simDt);
       /*
        * THE BACK OF THE THROTTLE EASES THE RAIL — EXCEPT IN WARP. See
@@ -4634,7 +4650,40 @@ export class World {
      * is `WARP_ARM` (or a slow bleed here on neutral) — not a return to the
      * reset, which is the thing that was asked to go.
      */
-    if (this.throttle >= WARP_STICK) {
+    /*
+     * THE LEVER SPEAKS FIRST, AND ONLY WHILE IT IS HELD.
+     *
+     * The owner: "let's just make a side bar the user can drag instead, make
+     * it look cool but small, so pulling it up turns on warp then pulling it
+     * down turns it off". So the gesture that arms warp is a distance, not a
+     * duration — the deliberateness that `WARP_ARM`'s 1.4 s was buying is
+     * bought instead by having to drag the thing to the top of its travel.
+     *
+     * MAPPED ONTO THE EXISTING CHARGES RATHER THAN BESIDE THEM. The lever's
+     * travel IS `warpHold`, scaled to `WARP_ARM`; the room left above it IS
+     * `warpBrake`, scaled to `WARP_DROP`. Nothing below this branch changed:
+     * the same two edges arm and drop, `warpCharge` and `warpRelease` still
+     * report the same fractions, and the renderer's fill needs no new source.
+     * A second, parallel latch would have been two states to keep agreeing.
+     *
+     * NULL IS SILENCE. When the thumb lifts, the field goes back to null, this
+     * branch is skipped, and the keyboard's machine below runs — which for a
+     * player who is not touching a key means the neutral branch, which HOLDS.
+     * That is the latch: let go at the top and warp stays on, because nothing
+     * is asking for it to change. A lever that reported 0 on release would
+     * drop the player out the instant they took their thumb off it.
+     *
+     * WHILE HELD, THE LEVER IS THE ONLY VOICE. A player dragging the lever
+     * with one thumb is very likely holding the field with the other, and the
+     * keyboard branches would otherwise fight the lever for the same two
+     * counters.
+     */
+    if (this.warpLever !== null) {
+      const t = Math.max(0, Math.min(1, this.warpLever));
+      this.warpHold = t * WARP_ARM;
+      this.warpBrake = this.warpOn ? (1 - t) * WARP_DROP : 0;
+      this.warpNeutral = 0;
+    } else if (this.throttle >= WARP_STICK) {
       this.warpHold += dt;
       this.warpBrake = 0;
       this.warpNeutral = 0;
@@ -4676,7 +4725,7 @@ export class World {
       this.warpOn = true;
       this.warpBeatDebt = 0;
       this.warpBrake = 0;
-      this.announce('WARP ENGAGED', 'PULL BACK TO DROP OUT', 'phase');
+      this.announce('WARP ENGAGED', 'DRAG THE LEVER DOWN TO DROP OUT', 'phase');
     } else if (this.warpOn && this.warpBrake >= WARP_DROP) {
       if (this.warpOn) this.lastWarpEnd = this.time;
       this.warpOn = false;
@@ -4694,6 +4743,12 @@ export class World {
    * the station-keeping `settle` term is pushing.
    */
   throttle = 0;
+
+  /**
+   * The warp lever's travel this step, 0..1, or null while nobody is holding
+   * it. Set from the input beside `throttle`; read only by `updateWarp`.
+   */
+  warpLever: number | null = null;
 
   /* ---------------------------------------------------------------------- *
    * HOW FAR TO THE NEXT BOSS

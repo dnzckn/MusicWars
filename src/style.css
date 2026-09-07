@@ -1396,6 +1396,108 @@ kbd {
 }
 .hud-foot .resume.hidden { display: none; }
 
+/*
+  THE WARP LEVER.
+
+  Pinned to the right edge at the ship's own station line (0.34 of the stage,
+  the renderer's TRACK_ANCHOR), so the mode control sits on the same glance as
+  the ship and the speed gauge rather than somewhere else on the screen.
+
+  THE BOX IS THE TOUCH TARGET AND THE BAR IS THE PICTURE, and they are
+  deliberately different sizes. The owner asked for something "cool but small";
+  a thumb needs 44 CSS px. So the box is 46 wide and transparent, the visible
+  track is 16, and the 15 px of clear space either side is what makes the thing
+  hittable without making it big. `tools/touchcheck.mjs` measures the BOX.
+
+  `--warp` is the travel, 0..1, written every frame by `hud.ts`. Everything
+  visual here is a function of it, so the keyboard's 1.4 s hold fills the same
+  bar the thumb drags — one picture, two ways in.
+
+  `touch-action: none` because this element IS a vertical drag, and without it
+  the browser claims the gesture as a page scroll on the first 10 px. `z-index`
+  7 puts it over the HUD (6) and under the settings panel (8) and the full
+  screens (10), which is what "over the fight, under the menus" means here.
+*/
+.warp {
+  position: absolute;
+  right: 0;
+  top: 34%;
+  transform: translateY(-50%);
+  z-index: 7;
+  width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+}
+.warp.hidden { display: none; }
+.warp:active { cursor: grabbing; }
+
+.warp-track {
+  position: relative;
+  width: 16px;
+  height: 116px;
+  border-radius: 9px;
+  background: rgba(6, 8, 15, 0.82);
+  border: 1px solid rgba(150, 175, 215, 0.42);
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+/* The fill grows UP, because the gesture does. */
+.warp-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--warp, 0) * 100%);
+  background: linear-gradient(to top, hsla(305, 100%, 52%, 0.55), hsla(305, 100%, 68%, 0.95));
+  box-shadow: 0 0 10px hsla(305, 100%, 60%, 0.55);
+}
+/*
+  The knob overhangs the track on both sides, which is the one detail that
+  makes this read as a thing to GRAB rather than as a progress bar. It sits ON
+  the fill line, so the picture has a handle wherever the travel is.
+*/
+.warp-knob {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--warp, 0) * 100%);
+  width: 26px;
+  height: 9px;
+  margin-left: -13px;
+  margin-bottom: -4.5px;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, hsl(210, 30%, 92%), hsl(210, 22%, 66%));
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.7), 0 0 10px hsla(305, 100%, 70%, calc(var(--warp, 0) * 0.9));
+}
+.warp-cap {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: rgba(198, 212, 236, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* Engaged: the whole control lights, so the mode is legible at a glance and
+   from the corner of the eye. The breathing matches the canvas WARP caption's
+   own pulse rather than inventing a second rhythm. */
+.warp.on .warp-track {
+  border-color: hsla(305, 100%, 72%, 0.85);
+  box-shadow: 0 0 12px hsla(305, 100%, 60%, 0.5), inset 0 0 8px rgba(0, 0, 0, 0.5);
+  animation: warp-breathe 1.16s ease-in-out infinite;
+}
+.warp.on .warp-cap { color: hsl(305, 100%, 84%); }
+@keyframes warp-breathe {
+  0%, 100% { border-color: hsla(305, 100%, 72%, 0.55); }
+  50% { border-color: hsla(305, 100%, 78%, 1); }
+}
+
 /* Over the playfield the rule needs its own ground, unlike everything else
    here: it is a coloured box, and a coloured box on a coloured field reads as
    a powerup unless it is opaque. */
@@ -1912,6 +2014,8 @@ kbd {
   .hud-mult { transition: none; }
   .live i { animation: none; }
   .movement { animation: none; }
+  /* The lever still lights when engaged; it just stops breathing. */
+  .warp.on .warp-track { animation: none; border-color: hsla(305, 100%, 78%, 1); }
 }
 
 /*
